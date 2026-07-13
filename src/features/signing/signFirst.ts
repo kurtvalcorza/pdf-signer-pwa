@@ -115,16 +115,12 @@ function lastWidget(doc: PDFDocument, page: ReturnType<PDFDocument['getPages']>[
   return doc.context.lookup(ref, PDFDict);
 }
 
-interface AppearanceLine {
-  text: string;
-  bold: boolean;
-}
-
 /**
  * Compose the signature appearance. With no label and no date, the image fills the
- * box. Otherwise: image on the left, and a vertical stack of text lines on the right
- * ("Digitally signed by" / {name} / "Date: …") — the Adobe-style layout. Each line
- * is optional, so the user can turn the label and/or date off.
+ * box. Otherwise: image on the left, and a vertical stack of uniform text lines on
+ * the right ("Digitally signed by" / {name} / "Date: …") — Adobe-style. All lines
+ * share one font/size/colour, and the size is fitted to the widest line and the box
+ * height so nothing clips. Each line is optional (user can turn label/date off).
  */
 async function buildAppearance(
   doc: PDFDocument,
@@ -133,12 +129,9 @@ async function buildAppearance(
   imageRef: PDFRef,
   opts: { name: string | null; dateStr: string | null },
 ): Promise<{ content: string; resources: Record<string, unknown> }> {
-  const lines: AppearanceLine[] = [];
-  if (opts.name) {
-    lines.push({ text: 'Digitally signed by', bold: false });
-    lines.push({ text: opts.name, bold: true });
-  }
-  if (opts.dateStr) lines.push({ text: opts.dateStr, bold: false });
+  const lines: string[] = [];
+  if (opts.name) lines.push('Digitally signed by', opts.name);
+  if (opts.dateStr) lines.push(opts.dateStr);
 
   if (lines.length === 0) {
     return {
@@ -148,47 +141,39 @@ async function buildAppearance(
   }
 
   const helv = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 
-  // Image left ~40%, text right.
-  const imgW = w * 0.38;
+  // Image on the left; text fills the rest with a small margin on each side.
+  const imgW = w * 0.28;
   const imgH = h * 0.82;
   const imgX = w * 0.02;
   const imgY = h * 0.09;
-  const textX = w * 0.44;
-  const maxTextW = w * 0.54;
+  const textX = w * 0.34;
+  const maxTextW = w * 0.64; // textX + maxTextW ≈ 0.98·w
 
-  // Size the bold (name) line to fit, then the smaller lines proportionally.
-  const nameLine = lines.find((l) => l.bold);
-  let sName = Math.min(h * 0.3, 16);
-  if (nameLine) {
-    while (sName > 5 && bold.widthOfTextAtSize(nameLine.text, sName) > maxTextW) sName -= 0.5;
-  }
-  let sSmall = Math.min(sName * 0.72, h * 0.22);
-  const longestSmall = lines
-    .filter((l) => !l.bold)
-    .reduce((m, l) => (l.text.length > m.length ? l.text : m), '');
-  while (sSmall > 4 && helv.widthOfTextAtSize(longestSmall, sSmall) > maxTextW) sSmall -= 0.5;
+  const n = lines.length;
+  const gapFrac = 0.4; // gap = size · gapFrac
+  // Fit to the widest line (measured in real points) …
+  const widest = Math.max(...lines.map((t) => helv.widthOfTextAtSize(t, 100) / 100));
+  const sizeByWidth = maxTextW / widest;
+  // … and to the available height for n lines + gaps.
+  const sizeByHeight = (h * 0.86) / (n + (n - 1) * gapFrac);
+  const s = Math.max(4, Math.min(sizeByWidth, sizeByHeight, 13));
 
-  const sizeOf = (l: AppearanceLine) => (l.bold ? sName : sSmall);
-  const gap = h * 0.06;
-  const totalH = lines.reduce((a, l) => a + sizeOf(l), 0) + gap * (lines.length - 1);
+  const gap = s * gapFrac;
+  const totalH = s * n + gap * (n - 1);
 
   const parts = [`q ${imgW} 0 0 ${imgH} ${imgX} ${imgY} cm /Img Do Q`];
-  let top = (h + totalH) / 2; // vertically centered text block
-  for (const l of lines) {
-    const s = sizeOf(l);
+  let top = (h + totalH) / 2; // vertically centered block
+  for (const text of lines) {
     const baseline = top - s * 0.8;
-    const font = l.bold ? '/FN' : '/FL';
-    const color = l.bold ? '0.1 0.1 0.1' : '0.35 0.35 0.35';
     parts.push(
-      `BT ${font} ${s.toFixed(2)} Tf ${color} rg ${textX.toFixed(2)} ${baseline.toFixed(2)} Td (${escPdf(l.text)}) Tj ET`,
+      `BT /FL ${s.toFixed(2)} Tf 0.2 0.2 0.2 rg ${textX.toFixed(2)} ${baseline.toFixed(2)} Td (${escPdf(text)}) Tj ET`,
     );
     top -= s + gap;
   }
 
   return {
     content: parts.join('\n'),
-    resources: { XObject: { Img: imageRef }, Font: { FL: helv.ref, FN: bold.ref } },
+    resources: { XObject: { Img: imageRef }, Font: { FL: helv.ref } },
   };
 }
