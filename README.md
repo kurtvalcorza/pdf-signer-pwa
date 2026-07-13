@@ -1,5 +1,7 @@
 # PDF Signer PWA
 
+**Live:** https://pdf-signer-pwa.vercel.app — install it from Android Chrome (menu → Install app).
+
 A privacy-first, **offline-first** Progressive Web App that signs PDFs entirely **on your device** —
 nothing is ever uploaded. Add a signature image (upload or phone camera), place it on the document,
 and optionally apply a real **PKCS#12 digital signature** that Adobe Acrobat validates. Installable
