@@ -7,7 +7,11 @@ import { renderPage } from './features/viewer/renderPage';
 import { readImageFile } from './features/ingest/imageInput';
 import { createPlacement, type Placement } from './features/placement/placement';
 import { downloadPdf, exportVisualStamped } from './features/signing/export';
-import type { PlacementInput } from './features/signing/types';
+import { stampVisual } from './features/signing/stampVisual';
+import { signFirst } from './features/signing/signFirst';
+import { BadPasswordError, type PlacementInput } from './features/signing/types';
+import { CertSheet, type SignRequest } from './components/CertSheet';
+import { saveCertificate } from './features/persistence/certStore';
 
 interface ImageAsset {
   url: string;
@@ -30,6 +34,7 @@ export default function App() {
   const [pageSize, setPageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<'stamp' | 'cert'>('stamp');
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -120,6 +125,48 @@ export default function App() {
     }
   }, [doc, placements, images]);
 
+  const signWithCert = useCallback(
+    async (req: SignRequest) => {
+      if (!doc || placements.length === 0) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const toInput = (p: Placement): PlacementInput => ({
+          imageBytes: images[p.imageId].bytes,
+          format: images[p.imageId].format,
+          pageIndex: p.pageIndex,
+          nx: p.nx,
+          ny: p.ny,
+          nw: p.nw,
+          nh: p.nh,
+        });
+        // The selected (or last) placement becomes the cryptographic signature;
+        // any others are baked in as visual stamps FIRST (ordering rule, FR-014).
+        const crypto = placements.find((p) => p.id === selectedId) ?? placements[placements.length - 1];
+        const visuals = placements.filter((p) => p.id !== crypto.id).map(toInput);
+        const base = visuals.length ? await stampVisual(doc.bytes, visuals) : doc.bytes;
+        const signed = await signFirst(base, toInput(crypto), {
+          p12Bytes: req.p12Bytes,
+          password: req.password,
+        });
+        if (req.remember) await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
+        downloadPdf(signed, doc.name.replace(/\.pdf$/i, '') + '-signed.pdf');
+        setMode('stamp');
+      } catch (e) {
+        setError(
+          e instanceof BadPasswordError
+            ? 'Incorrect certificate password.'
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [doc, placements, images, selectedId],
+  );
+
   const pagePlacements = placements.filter((p) => p.pageIndex === pageIndex);
 
   return (
@@ -164,63 +211,81 @@ export default function App() {
 
         {error && <p className="mb-2 rounded bg-amber-500/20 px-3 py-2 text-xs text-amber-200">{error}</p>}
 
-        <div className="flex flex-col gap-2">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => pdfInput.current?.click()}
-              className="flex-1 rounded-lg bg-white/10 px-4 py-3 font-medium hover:bg-white/15"
-            >
-              {doc ? 'Open different PDF' : 'Open PDF'}
-            </button>
-            <button
-              type="button"
-              disabled={!doc}
-              onClick={() => imgInput.current?.click()}
-              className="flex-1 rounded-lg bg-white/10 px-4 py-3 font-medium hover:bg-white/15 disabled:opacity-40"
-            >
-              Add signature
-            </button>
-          </div>
-
-          {doc && doc.pageCount > 1 && (
-            <div className="flex items-center justify-center gap-4 text-sm">
+        {mode === 'cert' ? (
+          <CertSheet
+            canSign={!!doc && placements.length > 0}
+            busy={busy}
+            onSign={signWithCert}
+            onCancel={() => setMode('stamp')}
+          />
+        ) : (
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
-                disabled={pageIndex === 0}
-                className="rounded px-3 py-1 hover:bg-white/10 disabled:opacity-40"
+                onClick={() => pdfInput.current?.click()}
+                className="flex-1 rounded-lg bg-white/10 px-4 py-3 font-medium hover:bg-white/15"
               >
-                ‹ Prev
+                {doc ? 'Open different PDF' : 'Open PDF'}
               </button>
-              <span className="text-white/60">
-                Page {pageIndex + 1} / {doc.pageCount}
-              </span>
               <button
                 type="button"
-                onClick={() => setPageIndex((i) => Math.min(doc.pageCount - 1, i + 1))}
-                disabled={pageIndex >= doc.pageCount - 1}
-                className="rounded px-3 py-1 hover:bg-white/10 disabled:opacity-40"
+                disabled={!doc}
+                onClick={() => imgInput.current?.click()}
+                className="flex-1 rounded-lg bg-white/10 px-4 py-3 font-medium hover:bg-white/15 disabled:opacity-40"
               >
-                Next ›
+                Add signature
               </button>
             </div>
-          )}
 
-          <button
-            type="button"
-            disabled={!doc || placements.length === 0 || busy}
-            onClick={applyAndDownload}
-            className="rounded-lg bg-blue-500 px-4 py-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
-          >
-            {busy ? 'Preparing…' : `Apply & Download${placements.length ? ` (${placements.length})` : ''}`}
-          </button>
+            {doc && doc.pageCount > 1 && (
+              <div className="flex items-center justify-center gap-4 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
+                  disabled={pageIndex === 0}
+                  className="rounded px-3 py-1 hover:bg-white/10 disabled:opacity-40"
+                >
+                  ‹ Prev
+                </button>
+                <span className="text-white/60">
+                  Page {pageIndex + 1} / {doc.pageCount}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPageIndex((i) => Math.min(doc.pageCount - 1, i + 1))}
+                  disabled={pageIndex >= doc.pageCount - 1}
+                  className="rounded px-3 py-1 hover:bg-white/10 disabled:opacity-40"
+                >
+                  Next ›
+                </button>
+              </div>
+            )}
 
-          <p className="px-1 text-xs text-white/40">
-            Private &amp; on-device — nothing leaves your phone. A visible signature stamp, not a
-            legally-binding e-signature service.
-          </p>
-        </div>
+            <button
+              type="button"
+              disabled={!doc || placements.length === 0 || busy}
+              onClick={applyAndDownload}
+              className="rounded-lg bg-blue-500 px-4 py-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
+            >
+              {busy ? 'Preparing…' : `Apply & Download${placements.length ? ` (${placements.length})` : ''}`}
+            </button>
+
+            <button
+              type="button"
+              disabled={!doc || placements.length === 0 || busy}
+              onClick={() => setMode('cert')}
+              className="rounded-lg border border-white/15 px-4 py-3 text-sm font-medium hover:bg-white/5 disabled:opacity-40"
+            >
+              Sign with a certificate (.p12)…
+            </button>
+
+            <p className="px-1 text-xs text-white/40">
+              Private &amp; on-device — nothing leaves your phone. A visible signature or an
+              optional digital signature, not a legally-binding e-signature service.
+            </p>
+          </div>
+        )}
       </BottomSheet>
     </div>
   );

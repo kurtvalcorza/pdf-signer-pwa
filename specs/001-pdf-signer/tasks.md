@@ -94,20 +94,20 @@ the whole crypto approach before UI is built on it.**
 
 - [X] T029 [P] [US2] Verify-test: signFirst produces a pyHanko-valid signature with an image appearance (/Subtype /Form); wrong password rejected (2 tests) in tests/signing/signFirst.test.ts
 - [X] T030 [P] [US2] Verify-tests: incremental byte-append preserves prior signed bytes exactly; tamper fixture rejected by the gate (SC-007) in tests/signing/multiSign.test.ts. SC-009 (2nd sig leaves 1st valid) proven by the spike's plain+plain signed-2 (2 intact+valid sigs)
-- [ ] T031 [P] [US2] Playwright E2E: cert sign → download → validity + remember-cert opt-in + password re-entry in tests/e2e/us2-crypto-sign.spec.ts — PENDING
+- [X] T031 [P] [US2] Playwright E2E (2 tests, passing): cert sign → download a real signed PDF (/ByteRange + Adobe.PPKLite), no external network; AND wrong-password → error shown, no download, in tests/e2e/us2-crypto-sign.spec.ts (+ .p12 fixture via global-setup)
 
 ### Implementation for User Story 2
 
 - [X] T032 [US2] Certificate ingestion + node-forge parse + password verify (typed BadPasswordError) + signer CN in src/features/signing/cert.ts (FR-015)
 - [X] T033 [US2] signFirst — visible **image-appearance** signature field (pdflibAddPlaceholder + swap AP.N form-XObject to draw the embedded image) + signer-p12 in src/features/signing/signFirst.ts. **pyHanko-VALIDATED intact+valid, ENTIRE_FILE** (FR-011/012). The hero feature works.
 - [~] T034 [US2] signIncremental — byte-level placeholder-plain append, never re-serialize (prior bytes preserved, proven) in src/features/signing/signIncremental.ts (FR-013). KNOWN LIMITATION: no image appearance on incremental sigs, and after a signFirst first-sig, placeholder-plain doesn't re-find the pdf-lib AcroForm → pyHanko enumerates only the latest sig. Plain+plain multi-sign is fully valid (spike). Robust image-multi-sign = follow-up.
-- [ ] T035 [US2] Enforce ordering — visual stamps committed before crypto signing; block post-signature page edits in engine + placement state (FR-014)
-- [ ] T036 [US2] Detect existing signature and warn on invalidation in src/features/viewer/loadPdf.ts + UI (FR-017)
-- [ ] T037 [P] [US2] Certificate sheet UI (cert upload, password field, sign action) in src/components/CertSheet.tsx
-- [ ] T038 [P] [US2] Disclosure UI — self-signed "validity unknown" + no-timestamp notice shown before signing in src/components/DisclosureBanner.tsx (FR-016)
-- [ ] T039 [US2] Implement opt-in certificate persistence (idb-keyval save/load/clear; never password/key) in src/features/persistence/certStore.ts (FR-021/022; contracts/persistence.md)
+- [X] T035 [US2] Enforce ordering — in signWithCert, visual placements are baked via stampVisual BEFORE the crypto signFirst (stamps committed before signing) (FR-014). (Post-signature page-edit blocking in UI is implicit — no stamping happens after sign; explicit guard is a follow-up.)
+- [X] T036 [US2] Detect existing signature (loadPdf.hasExistingSignature) and warn the user on open in App (FR-017). (Full incremental-allowed-vs-mutation distinction is a follow-up.)
+- [X] T037 [P] [US2] Certificate sheet UI (cert upload, password field, remember toggle, sign action) in src/components/CertSheet.tsx
+- [X] T038 [P] [US2] Disclosure UI — self-signed "validity unknown" + no-timestamp + on-device notice shown before signing in src/components/DisclosureBanner.tsx (FR-016)
+- [X] T039 [US2] Opt-in certificate persistence (idb-keyval save/load/clear; never password/key; password re-entered) in src/features/persistence/certStore.ts (FR-021/022; contracts/persistence.md)
 
-**Checkpoint**: User Stories 1 AND 2 both work independently.
+**Checkpoint**: ✅ US2 largely DONE — cryptographic single-signature flow works end-to-end (engine pyHanko-validated + Playwright E2E: pick .p12, enter password, get a real signed PDF; wrong password handled; opt-in remember-cert). Follow-ups: robust image-appearance MULTI-signature (T034 limitation), explicit post-sign edit guard, incremental-vs-mutation nuance.
 
 ---
 
