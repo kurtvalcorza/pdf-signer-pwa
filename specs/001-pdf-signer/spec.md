@@ -115,7 +115,8 @@ A person without a digital signature image photographs their handwritten signatu
 - **FR-015**: The system MUST verify the certificate password before signing and MUST report an incorrect password without producing output.
 - **FR-016**: The system MUST disclose, before signing, that a self-signed or untrusted certificate will show as "validity unknown" in readers, and that signatures are not timestamped.
 - **FR-017**: The system MUST detect and clearly communicate when an action would invalidate a pre-existing signature on the document (distinguishing an allowed incremental signature addition from a disallowed page-content change).
-- **FR-018**: The system MUST act only as a signer using a user-supplied `.p12`/`.pfx`; it MUST NOT generate certificates or act as a certificate authority in v1.
+- **FR-018**: The system MUST accept a user-supplied `.p12`/`.pfx`, AND MAY generate a self-signed `.p12` Digital ID on-device for users who have none. It MUST allow exporting the generated `.p12` (the signing Digital ID) and the public certificate (`.cer`, for others to trust). It does not act as a certificate authority for third parties. *(Amends the original "BYO only" decision at the product owner's request.)*
+- **FR-030**: When signing with a certificate, the signature appearance MUST show "Digitally signed by {name}" text beside the signature image (Adobe-style), where {name} is the certificate's common name.
 
 **Privacy & data handling**
 - **FR-019**: The system MUST perform all document, image, and cryptographic processing on-device, and MUST NOT transmit any PDF, signature image, certificate, password, or derived material off the device.
@@ -172,5 +173,5 @@ A person without a digital signature image photographs their handwritten signatu
 The three initial open questions were resolved with the product owner:
 
 - **Multi-signature scope**: v1 supports **full multi-signature** — multiple placements across pages and multiple cryptographic signature fields, applied via incremental signing so earlier signatures remain valid (FR-009, FR-013, FR-014).
-- **Certificate source**: v1 is **bring-your-own `.p12` only**; no in-app certificate generation (FR-018).
+- **Certificate source**: originally bring-your-own `.p12` only; **later amended** (owner request) to ALSO support in-app self-signed `.p12` generation + export of the `.p12` and public `.cer` (FR-018). Rationale: most casual users have no certificate, and Adobe signs with a `.p12` Digital ID (not a `.p7c`, which is the public-cert-only export used for trust).
 - **Persistence for v1**: **remember the certificate** as an opt-in convenience (never the password or key); documents and signature images are not remembered (FR-020, FR-021, FR-022).

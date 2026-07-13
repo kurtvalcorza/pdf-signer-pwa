@@ -53,6 +53,8 @@ describe('signFirst (Tier B — image-appearance signature)', () => {
     expect(text).toContain('/ByteRange');
     expect(text).toContain('Adobe.PPKLite');
     expect(text).toContain('/Subtype /Form'); // the image appearance XObject
+    expect(text).toContain('Digitally signed by'); // Adobe-style label
+    expect(text).toContain('Test Signer'); // certificate common name
   }, 30000);
 
   it('rejects a wrong password without producing output (FR-015)', async () => {

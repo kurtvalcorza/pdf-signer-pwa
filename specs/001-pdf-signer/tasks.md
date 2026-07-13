@@ -236,3 +236,16 @@ each an independently testable, deployable increment.
   every push until GitHub Actions is wired.
 - Never re-serialize a signed PDF (incremental appends only) — the core invariant behind US2.
 - Commit after each task or logical group.
+
+---
+
+## Addendum: In-app certificate generation + signature label (owner request, post-plan)
+
+Amends the "BYO cert only" grill decision — see spec FR-018/FR-030.
+
+- [X] T054 Generate a self-signed `.p12` Digital ID on-device (node-forge, keyUsage digitalSignature/nonRepudiation) + extract public cert DER in src/features/signing/generateCert.ts (+ 2 unit tests)
+- [X] T055 Export helpers — download the `.p12` (Digital ID) and the public `.cer` (share for trust) via downloadBytes in src/features/signing/export.ts; wired into CertSheet "Create a certificate" panel
+- [X] T056 Signature appearance shows "Digitally signed by {name}" text beside the image (Adobe-style), name from the cert CN, in src/features/signing/signFirst.ts (FR-030; signing tests assert the label text; pyHanko gate still green)
+- [X] T057 CertSheet "Create one" flow (name + password → generate → download .p12/.cer → sign). E2E-verified in tests/e2e/us2-create-cert.spec.ts (create cert in-app → save .p12 → sign → signed PDF)
+
+**Note (format clarification):** `.p12`/`.pfx` (PKCS#12 = private key + cert) is the signing Digital ID Adobe uses. `.p7c`/`.cer` is the public-cert-only export used to establish trust (add signer to Trusted Identities) — not a signing format.

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { DisclosureBanner } from './DisclosureBanner';
 import { loadCertificate, clearCertificate } from '../features/persistence/certStore';
+import { generateSelfSignedP12 } from '../features/signing/generateCert';
+import { downloadBytes } from '../features/signing/export';
 
 export interface SignRequest {
   p12Bytes: Uint8Array;
@@ -16,10 +18,6 @@ interface Props {
   onCancel: () => void;
 }
 
-/**
- * Certificate sheet (FR-005/015/016/021): pick a .p12, enter its password (never
- * persisted), optionally remember the certificate, and sign.
- */
 export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [p12Bytes, setP12Bytes] = useState<Uint8Array | null>(null);
   const [certLabel, setCertLabel] = useState<string | null>(null);
@@ -28,7 +26,12 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [remembered, setRemembered] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Pre-fill from a remembered certificate (password still required, FR-022).
+  // Create-a-certificate state.
+  const [creating, setCreating] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [certDer, setCertDer] = useState<Uint8Array | null>(null);
+  const [genError, setGenError] = useState<string | null>(null);
+
   useEffect(() => {
     loadCertificate().then((c) => {
       if (c) {
@@ -44,6 +47,7 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
     setP12Bytes(new Uint8Array(await file.arrayBuffer()));
     setCertLabel(file.name);
     setRemembered(false);
+    setCertDer(null);
   }
 
   async function forget() {
@@ -54,7 +58,21 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
     setRemembered(false);
   }
 
+  function createCert() {
+    setGenError(null);
+    try {
+      const { p12Bytes: p12, certDer: der } = generateSelfSignedP12(fullName.trim(), password);
+      setP12Bytes(p12);
+      setCertDer(der);
+      setCertLabel(`${fullName.trim()}.p12`);
+      setRemembered(false);
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   const ready = !!p12Bytes && password.length > 0 && canSign && !busy;
+  const canCreate = creating && fullName.trim().length > 0 && password.length > 0 && !certDer;
 
   return (
     <div className="flex flex-col gap-3">
@@ -73,20 +91,81 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         onChange={(e) => e.target.files?.[0] && pickCert(e.target.files[0])}
       />
 
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          className="flex-1 rounded-lg bg-white/10 px-4 py-3 text-left text-sm hover:bg-white/15"
-        >
-          {certLabel ? `📄 ${certLabel}` : 'Choose certificate (.p12 / .pfx)'}
-        </button>
-        {remembered && (
-          <button type="button" onClick={forget} className="text-xs text-white/50 hover:text-white">
-            Forget
+      {!creating ? (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="flex-1 rounded-lg bg-white/10 px-4 py-3 text-left text-sm hover:bg-white/15"
+          >
+            {certLabel ? `📄 ${certLabel}` : 'Choose certificate (.p12 / .pfx)'}
           </button>
-        )}
-      </div>
+          {remembered && (
+            <button type="button" onClick={forget} className="text-xs text-white/50 hover:text-white">
+              Forget
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 rounded-lg bg-white/5 p-3">
+          <span className="text-xs font-medium text-white/70">Create a certificate</span>
+          <input
+            type="text"
+            placeholder="Your full name (e.g. Kurt Valcorza)"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
+          />
+          <p className="text-xs text-white/40">
+            The password below protects the new certificate. Choose one you’ll remember.
+          </p>
+          {genError && <p className="text-xs text-amber-200">{genError}</p>}
+          {!certDer ? (
+            <button
+              type="button"
+              disabled={!canCreate}
+              onClick={createCert}
+              className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
+            >
+              Create certificate
+            </button>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-green-300">✓ Certificate created — ready to sign.</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => p12Bytes && downloadBytes(p12Bytes, certLabel ?? 'certificate.p12', 'application/x-pkcs12')}
+                  className="flex-1 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
+                >
+                  ⬇ Save .p12 (Digital ID)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadBytes(certDer, `${fullName.trim() || 'certificate'}.cer`, 'application/x-x509-ca-cert')}
+                  className="flex-1 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
+                >
+                  ⬇ Save public .cer
+                </button>
+              </div>
+              <p className="text-xs text-white/40">
+                Keep the .p12 private (it signs). Share the .cer so others can trust your signature.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => {
+          setCreating((v) => !v);
+          setCertDer(null);
+        }}
+        className="self-start text-xs text-blue-300 hover:text-blue-200"
+      >
+        {creating ? 'Use an existing certificate' : "Don't have a certificate? Create one"}
+      </button>
 
       <input
         type="password"
@@ -97,10 +176,12 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         className="rounded-lg bg-white/10 px-4 py-3 text-sm outline-none placeholder:text-white/30"
       />
 
-      <label className="flex items-center gap-2 text-xs text-white/60">
-        <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-        Remember this certificate on this device (never the password)
-      </label>
+      {!creating && (
+        <label className="flex items-center gap-2 text-xs text-white/60">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          Remember this certificate on this device (never the password)
+        </label>
+      )}
 
       <DisclosureBanner />
 
