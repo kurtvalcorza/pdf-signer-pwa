@@ -14,13 +14,24 @@ export interface GeneratedCertificate {
   certDer: Uint8Array;
 }
 
+export interface CertSubject {
+  /** Full name (Common Name / CN) — required. */
+  commonName: string;
+  /** Organization (O). */
+  organization?: string;
+  /** Division / department (Organizational Unit / OU). */
+  organizationalUnit?: string;
+  /** Email address (added to the subject DN and as a subjectAltName). */
+  email?: string;
+}
+
 /**
  * Generate a self-signed PKCS#12 Digital ID entirely on-device (Principle I).
  * Self-signed → readers show "validity unknown" until the public cert is trusted
  * (FR-016). This is the same kind of ID Adobe creates for a new Digital ID.
  */
 export function generateSelfSignedP12(
-  commonName: string,
+  subject: CertSubject,
   password: string,
   years = 5,
 ): GeneratedCertificate {
@@ -32,13 +43,23 @@ export function generateSelfSignedP12(
   cert.validity.notAfter = new Date();
   cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + years);
 
-  const attrs = [{ name: 'commonName', value: commonName }];
+  const attrs: forge.pki.CertificateField[] = [{ name: 'commonName', value: subject.commonName }];
+  if (subject.organization) attrs.push({ name: 'organizationName', value: subject.organization });
+  if (subject.organizationalUnit)
+    attrs.push({ name: 'organizationalUnitName', value: subject.organizationalUnit });
+  if (subject.email) attrs.push({ name: 'emailAddress', value: subject.email });
   cert.setSubject(attrs);
   cert.setIssuer(attrs);
-  cert.setExtensions([
+
+  const extensions: object[] = [
     { name: 'basicConstraints', cA: false },
     { name: 'keyUsage', digitalSignature: true, nonRepudiation: true },
-  ]);
+  ];
+  if (subject.email) {
+    // rfc822Name (email) subjectAltName — where Adobe reads the signer's email.
+    extensions.push({ name: 'subjectAltName', altNames: [{ type: 1, value: subject.email }] });
+  }
+  cert.setExtensions(extensions);
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
   const p12Der = forge.asn1

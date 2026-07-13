@@ -35,6 +35,9 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   // Create-a-certificate state.
   const [creating, setCreating] = useState(false);
   const [fullName, setFullName] = useState('');
+  const [org, setOrg] = useState('');
+  const [unit, setUnit] = useState('');
+  const [email, setEmail] = useState('');
   const [certDer, setCertDer] = useState<Uint8Array | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
@@ -67,7 +70,15 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   function createCert() {
     setGenError(null);
     try {
-      const { p12Bytes: p12, certDer: der } = generateSelfSignedP12(fullName.trim(), password);
+      const { p12Bytes: p12, certDer: der } = generateSelfSignedP12(
+        {
+          commonName: fullName.trim(),
+          organization: org.trim() || undefined,
+          organizationalUnit: unit.trim() || undefined,
+          email: email.trim() || undefined,
+        },
+        password,
+      );
       setP12Bytes(p12);
       setCertDer(der);
       setCertLabel(`${fullName.trim()}.p12`);
@@ -117,9 +128,31 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
           <span className="text-xs font-medium text-white/70">Create a certificate</span>
           <input
             type="text"
-            placeholder="Your full name (e.g. Kurt Valcorza)"
+            placeholder="Full name (e.g. Kurt Valcorza) — required"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
+          />
+          <input
+            type="text"
+            placeholder="Organization (optional)"
+            value={org}
+            onChange={(e) => setOrg(e.target.value)}
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
+          />
+          <input
+            type="text"
+            placeholder="Division / unit (optional)"
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
+          />
+          <input
+            type="email"
+            placeholder="Email address (optional)"
+            value={email}
+            autoComplete="off"
+            onChange={(e) => setEmail(e.target.value)}
             className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
           />
           <p className="text-xs text-white/40">
