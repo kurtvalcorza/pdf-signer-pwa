@@ -64,7 +64,7 @@ Gates derived from Constitution v1.0.0 (6 principles):
 | II. Offline-First & Installable | SW precache of shell + all signing deps; valid manifest; installable | ✅ `vite-plugin-pwa`/Workbox precache; manifest + icons in Phase 1 |
 | III. Cryptographic Correctness (NON-NEG) | Real PKCS#7/CMS over correct ByteRange; no page mutation after placeholder; no mocked crypto; multi-sig via incremental updates | ✅ Design honors — see research R3/R4; **early spike required** to de-risk visible appearance + incremental multi-sign |
 | IV. Honest Security Posture & Purpose | UI discloses self-signed/no-timestamp; no legal-binding claims | ✅ FR-016/FR-022/FR-027; disclosure copy in Phase 1 UI contract |
-| V. Verify Against Real Readers (Test-First) | pyHanko/`pdfsig` validation gate + Acrobat spot-check; TDD | ⚠️ Honored, but CI deferred (git local per owner) → gate runs via local `npm run verify:signatures` until GitHub Actions is wired. Documented, not skipped |
+| V. Verify Against Real Readers (Test-First) | pyHanko/`pdfsig` validation gate + Acrobat spot-check; TDD | ⚠️ Honored, but CI deferred (git local per owner) → gate runs via `npm run verify:signatures`, **enforced by a local pre-push git hook (task T008)** until GitHub Actions is wired. Documented, not skipped |
 | VI. On-Device Data Minimization | In-memory default; opt-in cert only; never password/key | ✅ FR-020/021/022; `idb-keyval` cert-only store |
 
 **Result**: PASS. No violations. One accepted, documented deviation: the V gate is currently
@@ -103,7 +103,7 @@ src/
 │   ├── viewer/               # pdf.js rendering + page navigation
 │   ├── placement/            # drag/pinch model, normalized coordinates
 │   ├── signing/              # THE ENGINE: Tier A stamp + Tier B crypto + incremental multi-sign
-│   ├── camera/               # capture + optional background cleanup
+│   ├── ingest/               # image input (upload + camera capture) + optional background cleanup
 │   └── persistence/          # opt-in certificate store (idb-keyval)
 ├── lib/                      # coordinate transforms, pdf byte utils, csp/manifest helpers
 └── styles/                   # Tailwind entry

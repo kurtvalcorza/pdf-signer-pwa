@@ -32,7 +32,7 @@ pyHanko validation gate. Signing/coordinate code is TDD; UI is covered by Playwr
 - [ ] T005 [P] Configure ESLint + Prettier (2-space, single quotes, semicolons) in .eslintrc + .prettierrc
 - [ ] T006 [P] Set up Vitest in vitest.config.ts with tests/unit/ directory
 - [ ] T007 [P] Set up Playwright (headless Chromium) in playwright.config.ts with tests/e2e/ directory
-- [ ] T008 Add npm scripts (dev, build, preview, test, e2e, verify:signatures) to package.json and document pyHanko prerequisite in README.md
+- [ ] T008 Add npm scripts (dev, build, preview, test, e2e, verify:signatures) to package.json, document pyHanko prerequisite in README.md, and add a local **pre-push git hook** (Husky) that runs `npm run verify:signatures` so the Principle V gate is enforced locally until GitHub Actions is wired (closes analysis finding C1)
 - [ ] T009 [P] Add strict CSP (target `connect-src 'none'`) via index.html meta + vite config, and object-src/base-uri/form-action lockdown per research R9
 - [ ] T010 [P] Add PWA manifest.webmanifest + placeholder 192/512/maskable icons in public/
 
@@ -66,12 +66,12 @@ the whole crypto approach before UI is built on it.**
 ### Tests for User Story 1
 
 - [ ] T020 [P] [US1] Unit test FIRST: stampVisual draws image and clamps out-of-bounds placements in tests/unit/stampVisual.test.ts
-- [ ] T021 [P] [US1] Playwright E2E: open → place → download → signature present, offline run, no data-bearing network request in tests/e2e/us1-visual-stamp.spec.ts
+- [ ] T021 [P] [US1] Playwright E2E: open → place → download → signature present, offline run, no data-bearing network request, AND assert the document occupies the majority of the viewport (SC-006) in tests/e2e/us1-visual-stamp.spec.ts
 
 ### Implementation for User Story 1
 
 - [ ] T022 [US1] Implement Tier A stampVisual(pdf, placements) — embedPng/embedJpg + drawImage + bounds clamp in src/features/signing/stampVisual.ts (make T020 pass; FR-008/009/010)
-- [ ] T023 [P] [US1] Implement signature-image upload ingestion (PNG/JPEG decode, format/alpha detect) in src/features/camera/ingest.ts
+- [ ] T023 [P] [US1] Implement signature-image upload ingestion (PNG/JPEG decode, format/alpha detect) in src/features/ingest/imageInput.ts
 - [ ] T024 [P] [US1] Implement placement model + drag/pinch/resize gestures (normalized coords, 60fps) in src/features/placement/placement.ts
 - [ ] T025 [US1] Implement SignatureOverlay component (draggable/resizable image over the page) in src/components/SignatureOverlay.tsx (depends on T024)
 - [ ] T026 [US1] Support multiple placements across pages (add/select/delete) in placement state + overlay UI (FR-009)
@@ -123,7 +123,7 @@ the whole crypto approach before UI is built on it.**
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Finalize manifest.webmanifest (standalone, theme/background colors) + real 192/512/maskable icons in public/ (FR-020/025)
+- [ ] T041 [US3] Finalize manifest.webmanifest (standalone, theme/background colors) + real 192/512/maskable icons in public/ (FR-025)
 - [ ] T042 [US3] Configure Workbox precache of app shell + all signing deps for full offline in vite.config.ts (FR-019; honor CSP from T019)
 
 **Checkpoint**: App is installable and offline-capable.
@@ -142,8 +142,8 @@ the whole crypto approach before UI is built on it.**
 
 ### Implementation for User Story 4
 
-- [ ] T044 [US4] Add camera capture input (accept=image/*, capture=environment) in src/features/camera/ingest.ts (FR-004)
-- [ ] T045 [US4] Implement canvas background cleanup (threshold + adjustable slider → cleanedBytes) in src/features/camera/backgroundClean.ts (make T043 pass; optional path, FR-024)
+- [ ] T044 [US4] Add camera capture input (accept=image/*, capture=environment) in src/features/ingest/imageInput.ts (FR-004)
+- [ ] T045 [US4] Implement canvas background cleanup (threshold + adjustable slider → cleanedBytes) in src/features/ingest/backgroundClean.ts (make T043 pass; optional path, FR-029)
 - [ ] T046 [US4] Add skippable cleanup UI step (preview + threshold slider) in src/components/CleanupSheet.tsx (FR-029)
 
 **Checkpoint**: All four user stories independently functional.
@@ -153,7 +153,7 @@ the whole crypto approach before UI is built on it.**
 ## Phase 7: Polish & Cross-Cutting Concerns
 
 - [ ] T047 [P] Error handling + user-friendly messages for all edge cases (encrypted PDF, corrupt file/.p12, storage denied, first-load-offline) across features (FR-028)
-- [ ] T048 [P] Honest-copy pass — purpose/non-goal and no-legal-binding text in UI (FR-022/027)
+- [ ] T048 [P] Honest-copy pass — purpose/non-goal and no-legal-binding text in UI (FR-027)
 - [ ] T049 [P] Best-effort memory cleanup — drop refs to document/image/decrypted key/password after export (FR-023)
 - [ ] T050 [P] Performance pass — 60 fps placement, large-PDF responsiveness (plan Performance Goals)
 - [ ] T051 [P] Accessibility pass — ARIA, focus order, contrast (workspace guidelines)
@@ -198,7 +198,7 @@ Task: "Unit test stampVisual bounds in tests/unit/stampVisual.test.ts"    # T020
 Task: "Playwright E2E visual stamp in tests/e2e/us1-visual-stamp.spec.ts"  # T021
 
 # Then parallel implementation:
-Task: "Signature image ingestion in src/features/camera/ingest.ts"        # T023
+Task: "Signature image ingestion in src/features/ingest/imageInput.ts"    # T023
 Task: "Placement model + gestures in src/features/placement/placement.ts" # T024
 ```
 
@@ -229,7 +229,8 @@ each an independently testable, deployable increment.
 
 - [P] = different files, no incomplete-task dependency.
 - Signing-path and coordinate tasks are TDD (test before implementation) per Constitution V.
-- `npm run verify:signatures` (pyHanko) must pass for any signing-path task to be "done" — CI
-  automation deferred (git local), so run it locally until GitHub Actions is wired.
+- `npm run verify:signatures` (pyHanko) must pass for any signing-path task to be "done". CI
+  automation is deferred (git local); a **local pre-push git hook (T008)** enforces the gate on
+  every push until GitHub Actions is wired.
 - Never re-serialize a signed PDF (incremental appends only) — the core invariant behind US2.
 - Commit after each task or logical group.

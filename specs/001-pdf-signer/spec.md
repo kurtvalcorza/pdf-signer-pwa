@@ -8,6 +8,8 @@
 
 **Input**: User description: "Privacy-first, zero-server, offline-first PWA to sign PDFs entirely on-device. Open a PDF, add a signature image (upload or phone camera), visually place/scale it, and optionally apply a PKCS#12 (.p12) cryptographic digital signature that Adobe Acrobat validates (the image IS the clickable signature field). Both the visual image stamp and the p12 digital signature are core v1. Minimalist UI where the document is the center. Mobile-first (Android/Chrome), installable PWA, deployed static on Vercel."
 
+**Terminology**: "Tier A" = the **visual image stamp** (non-cryptographic signature drawn onto the page). "Tier B" = the **cryptographic PKCS#12 signature** (the placed image becomes the appearance of a real, verifiable signature field). These labels are used interchangeably with the plain-language terms across the plan, tasks, and design notes.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Place a visible signature and download the PDF (Priority: P1)

@@ -32,5 +32,5 @@
 ## Notes
 
 - All three initial [NEEDS CLARIFICATION] markers resolved with the product owner (see spec "Resolved Decisions"): full multi-signature; bring-your-own `.p12` only; remember-certificate opt-in. Checklist fully passing.
-- Implementation/technology detail is intentionally held in the constitution and `specs.md` (design authority); this spec stays technology-agnostic per Spec Kit guidance.
+- Implementation/technology detail is intentionally held in the constitution and `DESIGN.md` (technical design notes at repo root); this spec stays technology-agnostic per Spec Kit guidance.
 - Scope flag for planning: **full multi-signature** is the highest-complexity path — it requires incremental/serial signing so later signatures do not invalidate earlier ones, and an ordering rule that visual-only stamps are committed before cryptographic signing. `/speckit-plan` must design for this explicitly.

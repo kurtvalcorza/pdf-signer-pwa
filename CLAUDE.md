@@ -5,7 +5,7 @@ digital signature). Installable on Android, deployed static on Vercel.
 
 - **Constitution**: [.specify/memory/constitution.md](.specify/memory/constitution.md) (v1.0.0) —
   6 principles; I (zero-server) and III (crypto correctness) are NON-NEGOTIABLE.
-- **Design spec (technical)**: [specs.md](specs.md)
+- **Design notes (technical origin)**: [DESIGN.md](DESIGN.md) — the original technical design doc; the formal, technology-agnostic spec is `specs/001-pdf-signer/spec.md`.
 
 <!-- SPECKIT START -->
 ## Active feature: 001-pdf-signer
