@@ -13,6 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "e2e:pwa": "npm run build && playwright test --config playwright.pwa.config.ts",
+    "icons": "node scripts/make-icons.mjs",
     "verify:signatures": "node scripts/verify-signatures.mjs"
   },
   "dependencies": {

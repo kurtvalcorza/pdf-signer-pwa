@@ -20,6 +20,7 @@ export default defineConfig({
     }),
   ],
   server: { port: Number(process.env.PORT) || 5190 },
+  preview: { port: 4183 },
   worker: { format: 'es' },
   test: {
     // Signing + coordinate logic run in Node; component tests opt into jsdom per-file.
