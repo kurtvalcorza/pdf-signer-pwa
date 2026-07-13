@@ -148,10 +148,12 @@ export default function App() {
         const crypto = placements.find((p) => p.id === selectedId) ?? placements[placements.length - 1];
         const visuals = placements.filter((p) => p.id !== crypto.id).map(toInput);
         const base = visuals.length ? await stampVisual(doc.bytes, visuals) : doc.bytes;
-        const signed = await signFirst(base, toInput(crypto), {
-          p12Bytes: req.p12Bytes,
-          password: req.password,
-        });
+        const signed = await signFirst(
+          base,
+          toInput(crypto),
+          { p12Bytes: req.p12Bytes, password: req.password },
+          { label: req.showLabel, date: req.showDate },
+        );
         if (req.remember) await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
         downloadPdf(signed, doc.name.replace(/\.pdf$/i, '') + '-signed.pdf');
         setMode('stamp');

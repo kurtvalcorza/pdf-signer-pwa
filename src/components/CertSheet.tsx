@@ -9,6 +9,10 @@ export interface SignRequest {
   password: string;
   remember: boolean;
   label?: string;
+  /** Show "Digitally signed by {name}" in the appearance. */
+  showLabel: boolean;
+  /** Show the "Date: …" line in the appearance. */
+  showDate: boolean;
 }
 
 interface Props {
@@ -24,6 +28,8 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [remembered, setRemembered] = useState(false);
+  const [showLabel, setShowLabel] = useState(true);
+  const [showDate, setShowDate] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Create-a-certificate state.
@@ -183,12 +189,28 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         </label>
       )}
 
+      <div className="flex flex-col gap-1 rounded-lg bg-white/5 p-3">
+        <span className="text-xs font-medium text-white/70">Signature appearance</span>
+        <label className="flex items-center gap-2 text-xs text-white/60">
+          <input type="checkbox" checked={showLabel} onChange={(e) => setShowLabel(e.target.checked)} />
+          Show “Digitally signed by {'{name}'}”
+        </label>
+        <label className="flex items-center gap-2 text-xs text-white/60">
+          <input type="checkbox" checked={showDate} onChange={(e) => setShowDate(e.target.checked)} />
+          Show date
+        </label>
+        <span className="text-white/30 text-[11px]">Off = just your signature image, no text.</span>
+      </div>
+
       <DisclosureBanner />
 
       <button
         type="button"
         disabled={!ready}
-        onClick={() => p12Bytes && onSign({ p12Bytes, password, remember, label: certLabel ?? 'certificate' })}
+        onClick={() =>
+          p12Bytes &&
+          onSign({ p12Bytes, password, remember, label: certLabel ?? 'certificate', showLabel, showDate })
+        }
         className="rounded-lg bg-blue-500 px-4 py-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
       >
         {busy ? 'Signing…' : 'Sign & Download'}

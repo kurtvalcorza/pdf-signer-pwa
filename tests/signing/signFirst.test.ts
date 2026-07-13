@@ -55,6 +55,19 @@ describe('signFirst (Tier B — image-appearance signature)', () => {
     expect(text).toContain('/Subtype /Form'); // the image appearance XObject
     expect(text).toContain('Digitally signed by'); // Adobe-style label
     expect(text).toContain('Test Signer'); // certificate common name
+    expect(text).toContain('Date:'); // date line (on by default)
+  }, 30000);
+
+  it('omits the label and date when the user turns them off', async () => {
+    const base = await makeBasePdf();
+    const signed = await signFirst(base, placement(), { p12Bytes: p12, password: PASS }, {
+      label: false,
+      date: false,
+    });
+    const text = Buffer.from(signed).toString('latin1');
+    expect(text).not.toContain('Digitally signed by');
+    expect(text).not.toContain('Date:');
+    expect(text).toContain('/ByteRange'); // still a valid signature, just image-only
   }, 30000);
 
   it('rejects a wrong password without producing output (FR-015)', async () => {

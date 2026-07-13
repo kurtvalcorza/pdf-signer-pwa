@@ -9,11 +9,18 @@ import { clampBox, normalizedBoxToPdfRect, type Rotation } from '../../lib/coord
 export interface SignFirstOptions {
   /** Show "Digitally signed by {name}" text beside the image (Adobe-style). Default true. */
   label?: boolean;
+  /** Show a "Date: …" line in the appearance. Default true. */
+  date?: boolean;
   /** Override the display name; defaults to the certificate's common name. */
   displayName?: string;
 }
 
 const escPdf = (s: string) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+
+function formatDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 /**
  * Tier B — first cryptographic signature (research R3; contracts/signing-engine.md).
@@ -40,6 +47,7 @@ export async function signFirst(
   }
 
   const showLabel = opts.label !== false;
+  const showDate = opts.date !== false;
   const signerName =
     opts.displayName ?? getSignerCommonName(cert.p12Bytes, cert.password) ?? 'Signer';
 
@@ -79,13 +87,10 @@ export async function signFirst(
   const widget = lastWidget(doc, page);
   const apDict = widget.lookup(PDFName.of('AP'), PDFDict);
 
-  const { content: apContent, resources } = await buildAppearance(
-    doc,
-    rect.w,
-    rect.h,
-    image.ref,
-    showLabel ? signerName : null,
-  );
+  const { content: apContent, resources } = await buildAppearance(doc, rect.w, rect.h, image.ref, {
+    name: showLabel ? signerName : null,
+    dateStr: showDate ? `Date: ${formatDate(new Date())}` : null,
+  });
   const apStream = doc.context.stream(apContent, {
     Type: 'XObject',
     Subtype: 'Form',
@@ -110,19 +115,32 @@ function lastWidget(doc: PDFDocument, page: ReturnType<PDFDocument['getPages']>[
   return doc.context.lookup(ref, PDFDict);
 }
 
+interface AppearanceLine {
+  text: string;
+  bold: boolean;
+}
+
 /**
- * Compose the signature appearance. Without a name: the image fills the box.
- * With a name: image on the left, "Digitally signed by / {name}" on the right
- * (the Adobe-style layout).
+ * Compose the signature appearance. With no label and no date, the image fills the
+ * box. Otherwise: image on the left, and a vertical stack of text lines on the right
+ * ("Digitally signed by" / {name} / "Date: …") — the Adobe-style layout. Each line
+ * is optional, so the user can turn the label and/or date off.
  */
 async function buildAppearance(
   doc: PDFDocument,
   w: number,
   h: number,
   imageRef: PDFRef,
-  name: string | null,
+  opts: { name: string | null; dateStr: string | null },
 ): Promise<{ content: string; resources: Record<string, unknown> }> {
-  if (!name) {
+  const lines: AppearanceLine[] = [];
+  if (opts.name) {
+    lines.push({ text: 'Digitally signed by', bold: false });
+    lines.push({ text: opts.name, bold: true });
+  }
+  if (opts.dateStr) lines.push({ text: opts.dateStr, bold: false });
+
+  if (lines.length === 0) {
     return {
       content: `q ${w} 0 0 ${h} 0 0 cm /Img Do Q`,
       resources: { XObject: { Img: imageRef } },
@@ -132,7 +150,7 @@ async function buildAppearance(
   const helv = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 
-  // Image occupies the left ~40%; text the right.
+  // Image left ~40%, text right.
   const imgW = w * 0.38;
   const imgH = h * 0.82;
   const imgX = w * 0.02;
@@ -140,18 +158,37 @@ async function buildAppearance(
   const textX = w * 0.44;
   const maxTextW = w * 0.54;
 
-  let sName = Math.min(h * 0.34, 18);
-  while (sName > 5 && bold.widthOfTextAtSize(name, sName) > maxTextW) sName -= 0.5;
-  const sLabel = Math.min(sName * 0.72, h * 0.24);
+  // Size the bold (name) line to fit, then the smaller lines proportionally.
+  const nameLine = lines.find((l) => l.bold);
+  let sName = Math.min(h * 0.3, 16);
+  if (nameLine) {
+    while (sName > 5 && bold.widthOfTextAtSize(nameLine.text, sName) > maxTextW) sName -= 0.5;
+  }
+  let sSmall = Math.min(sName * 0.72, h * 0.22);
+  const longestSmall = lines
+    .filter((l) => !l.bold)
+    .reduce((m, l) => (l.text.length > m.length ? l.text : m), '');
+  while (sSmall > 4 && helv.widthOfTextAtSize(longestSmall, sSmall) > maxTextW) sSmall -= 0.5;
 
-  const content = [
-    `q ${imgW} 0 0 ${imgH} ${imgX} ${imgY} cm /Img Do Q`,
-    `BT /FL ${sLabel.toFixed(2)} Tf 0.35 0.35 0.35 rg ${textX.toFixed(2)} ${(h * 0.6).toFixed(2)} Td (${escPdf('Digitally signed by')}) Tj ET`,
-    `BT /FN ${sName.toFixed(2)} Tf 0.1 0.1 0.1 rg ${textX.toFixed(2)} ${(h * 0.28).toFixed(2)} Td (${escPdf(name)}) Tj ET`,
-  ].join('\n');
+  const sizeOf = (l: AppearanceLine) => (l.bold ? sName : sSmall);
+  const gap = h * 0.06;
+  const totalH = lines.reduce((a, l) => a + sizeOf(l), 0) + gap * (lines.length - 1);
+
+  const parts = [`q ${imgW} 0 0 ${imgH} ${imgX} ${imgY} cm /Img Do Q`];
+  let top = (h + totalH) / 2; // vertically centered text block
+  for (const l of lines) {
+    const s = sizeOf(l);
+    const baseline = top - s * 0.8;
+    const font = l.bold ? '/FN' : '/FL';
+    const color = l.bold ? '0.1 0.1 0.1' : '0.35 0.35 0.35';
+    parts.push(
+      `BT ${font} ${s.toFixed(2)} Tf ${color} rg ${textX.toFixed(2)} ${baseline.toFixed(2)} Td (${escPdf(l.text)}) Tj ET`,
+    );
+    top -= s + gap;
+  }
 
   return {
-    content,
+    content: parts.join('\n'),
     resources: { XObject: { Img: imageRef }, Font: { FL: helv.ref, FN: bold.ref } },
   };
 }
