@@ -35,3 +35,4 @@ venv/
 
 # Generated signing test artifacts
 tests/signing/out/
+tests/signing/tampered/

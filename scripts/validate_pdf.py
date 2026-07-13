@@ -1,10 +1,12 @@
 """Validate PDF signatures with pyHanko (Constitution Principle V gate).
 
-Reports per-signature integrity/validity. Self-signed certs are expected to be
-UNTRUSTED — the gate cares about INTACT + VALID (the signature covers the bytes
-and has not been tampered with), not trust.
+Default: every signature in every file must be INTACT + VALID (self-signed certs
+are expected UNTRUSTED — the gate cares about integrity, not trust).
 
-Exit code 0 iff every signature in every file is intact and valid.
+With --expect-invalid: every file must FAIL to validate cleanly (used for tamper
+fixtures, SC-007) — a file that still validates cleanly is a gate failure.
+
+Exit 0 iff expectations hold for all files.
 """
 
 import sys
@@ -13,46 +15,54 @@ from pyhanko.sign.validation import validate_pdf_signature
 from pyhanko_certvalidator import ValidationContext
 
 
-def validate_file(path: str) -> bool:
+def is_cleanly_valid(path: str) -> bool:
+    """True iff the file has >=1 signature and all are intact + valid."""
     with open(path, "rb") as fh:
         reader = PdfFileReader(fh)
         sigs = reader.embedded_signatures
         if not sigs:
-            print(f"FAIL {path}: no signatures found")
+            print(f"  {path}: no signatures")
             return False
-
-        # No trust roots on purpose: self-signed test certs are untrusted-but-valid.
         vc = ValidationContext(allow_fetching=False)
-        ok = True
+        clean = True
         for i, sig in enumerate(sigs):
             status = validate_pdf_signature(sig, signer_validation_context=vc)
             intact = bool(status.intact)
             valid = bool(status.valid)
-            coverage = getattr(status, "coverage", None)
             trusted = bool(getattr(status, "trusted", False))
-            verdict = "OK" if (intact and valid) else "FAIL"
-            if not (intact and valid):
-                ok = False
+            coverage = getattr(status, "coverage", None)
             print(
-                f"{verdict} {path} sig[{i}]: intact={intact} valid={valid} "
+                f"  {path} sig[{i}]: intact={intact} valid={valid} "
                 f"trusted={trusted} coverage={coverage}"
             )
-        return ok
+            if not (intact and valid):
+                clean = False
+        return clean
 
 
 def main() -> int:
-    paths = sys.argv[1:]
+    args = sys.argv[1:]
+    expect_invalid = "--expect-invalid" in args
+    paths = [a for a in args if not a.startswith("--")]
     if not paths:
-        print("usage: validate_pdf.py <file.pdf> [more.pdf ...]")
+        print("usage: validate_pdf.py [--expect-invalid] <file.pdf> ...")
         return 2
+
     all_ok = True
     for p in paths:
         try:
-            if not validate_file(p):
-                all_ok = False
-        except Exception as exc:  # noqa: BLE001
-            print(f"FAIL {p}: {type(exc).__name__}: {exc}")
+            clean = is_cleanly_valid(p)
+        except Exception as exc:  # noqa: BLE001 — unreadable == not cleanly valid
+            print(f"  {p}: {type(exc).__name__}: {exc}")
+            clean = False
+
+        met = (not clean) if expect_invalid else clean
+        verdict = "OK" if met else "FAIL"
+        expectation = "expect-invalid" if expect_invalid else "expect-valid"
+        print(f"{verdict} [{expectation}] {p}")
+        if not met:
             all_ok = False
+
     print("\nRESULT:", "PASS" if all_ok else "FAIL")
     return 0 if all_ok else 1
 
