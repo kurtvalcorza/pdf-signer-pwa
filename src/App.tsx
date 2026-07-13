@@ -11,12 +11,14 @@ import { stampVisual } from './features/signing/stampVisual';
 import { signFirst } from './features/signing/signFirst';
 import { BadPasswordError, type PlacementInput } from './features/signing/types';
 import { CertSheet, type SignRequest } from './components/CertSheet';
+import { CleanupSheet } from './components/CleanupSheet';
 import { saveCertificate } from './features/persistence/certStore';
 
 interface ImageAsset {
   url: string;
   bytes: Uint8Array;
   format: 'png' | 'jpeg';
+  originalBytes: Uint8Array;
 }
 
 interface Doc {
@@ -34,12 +36,13 @@ export default function App() {
   const [pageSize, setPageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<'stamp' | 'cert'>('stamp');
+  const [mode, setMode] = useState<'stamp' | 'cert' | 'clean'>('stamp');
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfInput = useRef<HTMLInputElement>(null);
   const imgInput = useRef<HTMLInputElement>(null);
+  const camInput = useRef<HTMLInputElement>(null);
 
   // Render the current page whenever the doc or page changes.
   useEffect(() => {
@@ -82,7 +85,7 @@ export default function App() {
         const { bytes, format } = await readImageFile(file);
         const url = URL.createObjectURL(new Blob([bytes as BlobPart]));
         const id = `img_${Object.keys(images).length + 1}`;
-        setImages((m) => ({ ...m, [id]: { url, bytes, format } }));
+        setImages((m) => ({ ...m, [id]: { url, bytes, format, originalBytes: bytes } }));
         const placement = createPlacement(id, pageIndex);
         setPlacements((ps) => [...ps, placement]);
         setSelectedId(placement.id);
@@ -167,6 +170,26 @@ export default function App() {
     [doc, placements, images, selectedId],
   );
 
+  const applyCleaned = useCallback(
+    (cleaned: Uint8Array) => {
+      const sel = placements.find((p) => p.id === selectedId);
+      if (!sel) return;
+      const imageId = sel.imageId;
+      setImages((m) => {
+        const prev = m[imageId];
+        if (prev?.url) URL.revokeObjectURL(prev.url);
+        return {
+          ...m,
+          [imageId]: { ...prev, url: URL.createObjectURL(new Blob([cleaned as BlobPart])), bytes: cleaned, format: 'png' },
+        };
+      });
+      setMode('stamp');
+    },
+    [selectedId, placements],
+  );
+
+  const selectedPlacement = placements.find((p) => p.id === selectedId) ?? null;
+  const selectedAsset = selectedPlacement ? images[selectedPlacement.imageId] : null;
   const pagePlacements = placements.filter((p) => p.pageIndex === pageIndex);
 
   return (
@@ -208,6 +231,14 @@ export default function App() {
           hidden
           onChange={(e) => e.target.files?.[0] && addSignature(e.target.files[0])}
         />
+        <input
+          ref={camInput}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(e) => e.target.files?.[0] && addSignature(e.target.files[0])}
+        />
 
         {error && <p className="mb-2 rounded bg-amber-500/20 px-3 py-2 text-xs text-amber-200">{error}</p>}
 
@@ -216,6 +247,12 @@ export default function App() {
             canSign={!!doc && placements.length > 0}
             busy={busy}
             onSign={signWithCert}
+            onCancel={() => setMode('stamp')}
+          />
+        ) : mode === 'clean' && selectedAsset ? (
+          <CleanupSheet
+            originalBytes={selectedAsset.originalBytes}
+            onApply={applyCleaned}
             onCancel={() => setMode('stamp')}
           />
         ) : (
@@ -235,6 +272,25 @@ export default function App() {
                 className="flex-1 rounded-lg bg-white/10 px-4 py-3 font-medium hover:bg-white/15 disabled:opacity-40"
               >
                 Add signature
+              </button>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={!doc}
+                onClick={() => camInput.current?.click()}
+                className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
+              >
+                📷 Take photo
+              </button>
+              <button
+                type="button"
+                disabled={!selectedAsset}
+                onClick={() => setMode('clean')}
+                className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
+              >
+                Clean up background
               </button>
             </div>
 

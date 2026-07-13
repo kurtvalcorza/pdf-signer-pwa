@@ -39,7 +39,7 @@ test('US1: open a PDF, place a signature, download — on-device, no external ne
   expect(box!.width / viewport!.width).toBeGreaterThan(0.5);
 
   // Add a signature image; an overlay appears over the page.
-  await page.locator('input[type="file"][accept*="image"]').setInputFiles(SIGNATURE_PNG);
+  await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
   // Apply & Download → a signed PDF is produced client-side.

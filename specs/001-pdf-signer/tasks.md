@@ -138,13 +138,15 @@ the whole crypto approach before UI is built on it.**
 
 ### Tests for User Story 4
 
-- [ ] T043 [P] [US4] Unit test FIRST: luminance threshold yields a transparent-background PNG in tests/unit/bgClean.test.ts
+- [X] T043 [P] [US4] Unit tests: removeBackground makes near-white pixels transparent, respects threshold, no mutation (3 tests) in tests/unit/bgClean.test.ts
 
 ### Implementation for User Story 4
 
-- [ ] T044 [US4] Add camera capture input (accept=image/*, capture=environment) in src/features/ingest/imageInput.ts (FR-004)
-- [ ] T045 [US4] Implement canvas background cleanup (threshold + adjustable slider → cleanedBytes) in src/features/ingest/backgroundClean.ts (make T043 pass; optional path, FR-029)
-- [ ] T046 [US4] Add skippable cleanup UI step (preview + threshold slider) in src/components/CleanupSheet.tsx (FR-029)
+- [X] T044 [US4] Camera capture input (accept=image/*, capture=environment) + "📷 Take photo" button in App (FR-004)
+- [X] T045 [US4] Canvas background cleanup (luminance threshold → transparent PNG) in src/features/ingest/backgroundClean.ts (T043 green; optional, FR-029). Decode via <img> element (createImageBitmap fails in headless-shell Chromium).
+- [X] T046 [US4] Skippable cleanup UI (preview on checkerboard + threshold slider + Use cleaned/Keep original + honest error) in src/components/CleanupSheet.tsx (FR-029). E2E-verified (tests/e2e/us4-cleanup.spec.ts).
+
+**Checkpoint**: ✅ US4 DONE — camera capture wired; background cleanup works in-browser (E2E: add signature → Clean up → adjust slider → Use cleaned → stays placed). ALL FOUR USER STORIES COMPLETE.
 
 **Checkpoint**: All four user stories independently functional.
 
