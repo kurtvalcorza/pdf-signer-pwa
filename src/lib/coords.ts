@@ -60,6 +60,15 @@ export function isWithinPage(box: NormBox): boolean {
   );
 }
 
+/** Clamp a normalized box so it fits within the page (FR-008), preserving size where possible. */
+export function clampBox(box: NormBox): NormBox {
+  const nw = Math.min(Math.max(box.nw, 0), 1);
+  const nh = Math.min(Math.max(box.nh, 0), 1);
+  const nx = Math.min(Math.max(box.nx, 0), 1 - nw);
+  const ny = Math.min(Math.max(box.ny, 0), 1 - nh);
+  return { nx, ny, nw, nh };
+}
+
 /**
  * Normalized box (top-left origin, relative to the displayed page) → PDF rect
  * (bottom-left origin, points), accounting for page rotation.
