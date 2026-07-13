@@ -31,7 +31,7 @@ pyHanko validation gate. Signing/coordinate code is TDD; UI is covered by Playwr
 - [X] T004 [P] Install runtime deps in package.json: pdfjs-dist, pdf-lib, @signpdf/signpdf, @signpdf/placeholder-pdf-lib, @signpdf/placeholder-plain, @signpdf/signer-p12, node-forge, idb-keyval
 - [X] T005 [P] Configure ESLint + Prettier (2-space, single quotes, semicolons) — eslint.config.js (flat) + .prettierrc
 - [X] T006 [P] Set up Vitest (test config in vite.config.ts; tests/ directory)
-- [ ] T007 [P] Set up Playwright (headless Chromium) in playwright.config.ts with tests/e2e/ directory
+- [X] T007 [P] Set up Playwright (Chromium, Pixel 7 device) in playwright.config.ts with tests/e2e/ + fixtures
 - [ ] T008 Add npm scripts (dev, build, preview, test, e2e, verify:signatures) to package.json, document pyHanko prerequisite in README.md, and add a local **pre-push git hook** (Husky) that runs `npm run verify:signatures` so the Principle V gate is enforced locally until GitHub Actions is wired (closes analysis finding C1) — PARTIAL: npm scripts done; README + pre-push hook pending
 - [X] T009 [P] Add strict CSP (target `connect-src 'none'`) via index.html meta + vite config, and object-src/base-uri/form-action lockdown per research R9
 - [ ] T010 [P] Add PWA manifest.webmanifest + placeholder 192/512/maskable icons in public/ — PARTIAL: manifest done; icon PNGs pending
@@ -66,7 +66,7 @@ the whole crypto approach before UI is built on it.**
 ### Tests for User Story 1
 
 - [X] T020 [P] [US1] Unit test FIRST: stampVisual draws image and clamps out-of-bounds placements in tests/unit/stampVisual.test.ts (4 tests pass)
-- [ ] T021 [P] [US1] Playwright E2E: open → place → download → signature present, offline run, no data-bearing network request, AND assert the document occupies the majority of the viewport (SC-006) in tests/e2e/us1-visual-stamp.spec.ts — PENDING (Playwright not set up)
+- [X] T021 [P] [US1] Playwright E2E (Pixel 7): open → render → place → Apply&Download produces a valid larger PDF; asserts SC-006 (document >50% viewport) and SC-003 (no external network) in tests/e2e/us1-visual-stamp.spec.ts — PASSING (offline-run assertion not yet added; deferred to US3)
 
 ### Implementation for User Story 1
 
@@ -78,7 +78,7 @@ the whole crypto approach before UI is built on it.**
 - [X] T027 [US1] Implement page navigation for multi-page documents (renderPage + App page state) (FR-003)
 - [X] T028 [US1] Wire "Apply & Download" visual-only export (Blob download) in src/features/signing/export.ts + bottom-sheet action
 
-**Checkpoint**: US1 ASSEMBLED — engine unit-tested (stampVisual/coords/ingest/placement, 18 tests), UI builds clean and **renders live** (empty state + controls, no console errors). REMAINING to call US1 "done": end-to-end click-through (drag a signature onto a real PDF and download) is not yet automated — T021 Playwright E2E pending; live drag+download not click-verified in-browser this session.
+**Checkpoint**: ✅ US1 DONE (MVP) — engine unit-tested (18 tests) AND end-to-end verified by a passing Playwright E2E on a Pixel 7 profile: open a real 2-page PDF → render → place signature → Apply & Download yields a valid larger PDF, with SC-006 (document dominance) and SC-003 (no external network) asserted. Follow-ups: add an explicit offline-run assertion (US3), image-as-signature-appearance is US2/T033.
 
 ---
 
