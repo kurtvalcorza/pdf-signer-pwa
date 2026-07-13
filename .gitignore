@@ -32,3 +32,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Generated signing test artifacts
+tests/signing/out/

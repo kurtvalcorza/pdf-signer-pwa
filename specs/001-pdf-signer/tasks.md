@@ -25,16 +25,16 @@ pyHanko validation gate. Signing/coordinate code is TDD; UI is covered by Playwr
 
 **Purpose**: Project initialization and tooling.
 
-- [ ] T001 Scaffold Vite + React 18 + TypeScript project at repo root (package.json, tsconfig.json, index.html, src/main.tsx, src/App.tsx)
-- [ ] T002 [P] Configure Tailwind CSS (tailwind.config.ts, postcss.config.js, src/styles/index.css)
-- [ ] T003 [P] Configure vite.config.ts with vite-plugin-pwa and vite-plugin-node-polyfills (Buffer/process for node-forge/@signpdf)
-- [ ] T004 [P] Install runtime deps in package.json: pdfjs-dist, pdf-lib, @signpdf/signpdf, @signpdf/placeholder-pdf-lib, @signpdf/placeholder-plain, @signpdf/signer-p12, node-forge, idb-keyval
-- [ ] T005 [P] Configure ESLint + Prettier (2-space, single quotes, semicolons) in .eslintrc + .prettierrc
-- [ ] T006 [P] Set up Vitest in vitest.config.ts with tests/unit/ directory
+- [X] T001 Scaffold Vite + React 18 + TypeScript project at repo root (package.json, tsconfig.json, index.html, src/main.tsx, src/App.tsx)
+- [X] T002 [P] Configure Tailwind CSS (tailwind.config.ts, postcss.config.js, src/styles/index.css)
+- [X] T003 [P] Configure vite.config.ts with vite-plugin-pwa and vite-plugin-node-polyfills (Buffer/process for node-forge/@signpdf) — pinned Vite 5 (node-polyfills lacks Vite 6 peer)
+- [X] T004 [P] Install runtime deps in package.json: pdfjs-dist, pdf-lib, @signpdf/signpdf, @signpdf/placeholder-pdf-lib, @signpdf/placeholder-plain, @signpdf/signer-p12, node-forge, idb-keyval
+- [X] T005 [P] Configure ESLint + Prettier (2-space, single quotes, semicolons) — eslint.config.js (flat) + .prettierrc
+- [X] T006 [P] Set up Vitest (test config in vite.config.ts; tests/ directory)
 - [ ] T007 [P] Set up Playwright (headless Chromium) in playwright.config.ts with tests/e2e/ directory
-- [ ] T008 Add npm scripts (dev, build, preview, test, e2e, verify:signatures) to package.json, document pyHanko prerequisite in README.md, and add a local **pre-push git hook** (Husky) that runs `npm run verify:signatures` so the Principle V gate is enforced locally until GitHub Actions is wired (closes analysis finding C1)
-- [ ] T009 [P] Add strict CSP (target `connect-src 'none'`) via index.html meta + vite config, and object-src/base-uri/form-action lockdown per research R9
-- [ ] T010 [P] Add PWA manifest.webmanifest + placeholder 192/512/maskable icons in public/
+- [ ] T008 Add npm scripts (dev, build, preview, test, e2e, verify:signatures) to package.json, document pyHanko prerequisite in README.md, and add a local **pre-push git hook** (Husky) that runs `npm run verify:signatures` so the Principle V gate is enforced locally until GitHub Actions is wired (closes analysis finding C1) — PARTIAL: npm scripts done; README + pre-push hook pending
+- [X] T009 [P] Add strict CSP (target `connect-src 'none'`) via index.html meta + vite config, and object-src/base-uri/form-action lockdown per research R9
+- [ ] T010 [P] Add PWA manifest.webmanifest + placeholder 192/512/maskable icons in public/ — PARTIAL: manifest done; icon PNGs pending
 
 ---
 
@@ -43,17 +43,17 @@ pyHanko validation gate. Signing/coordinate code is TDD; UI is covered by Playwr
 **Purpose**: Shared infrastructure. **⚠️ Includes the CRITICAL signing spike (T018) that de-risks
 the whole crypto approach before UI is built on it.**
 
-- [ ] T011 Define signing-engine contract types in src/features/signing/types.ts (per contracts/signing-engine.md)
-- [ ] T012 [P] Implement PDF ingestion — load bytes + detect encryption/reject in src/features/viewer/loadPdf.ts
-- [ ] T013 [P] Unit tests FIRST for coordinate transforms (round-trip, rotation, DPR) in tests/unit/coords.test.ts
-- [ ] T014 Implement coordinate transform lib (screenToNormalized, normalizedToPdfPoints) in src/lib/coords.ts to make T013 pass (research R6)
+- [X] T011 Define signing-engine contract types in src/features/signing/types.ts (per contracts/signing-engine.md)
+- [X] T012 [P] Implement PDF ingestion — load bytes + detect encryption/reject in src/features/viewer/loadPdf.ts
+- [X] T013 [P] Unit tests FIRST for coordinate transforms (round-trip, rotation, bounds) in tests/unit/coords.test.ts (6 passing)
+- [X] T014 Implement coordinate transform lib (screenToNormalized, normalizedBoxToPdfRect) in src/lib/coords.ts to make T013 pass (research R6)
 - [ ] T015 [P] Implement pdf.js page renderer with locally-bundled worker in src/features/viewer/renderPage.ts
-- [ ] T016 Implement app shell — document-dominant stage + collapsing bottom-sheet skeleton in src/App.tsx and src/components/{DocumentStage,BottomSheet}.tsx (FR-026)
-- [ ] T017 Implement the verification harness (pyHanko + poppler pdfsig fallback over a fixtures dir) in scripts/verify-signatures.mjs with tests/signing/fixtures/
-- [ ] T018 **[CRITICAL SPIKE]** Prove signing primitives in tests/signing/spike.test.ts + src/features/signing/spike/: (a) ONE visible image-appearance signature field (pdf-lib low-level dicts + @signpdf placeholder + signer-p12), (b) a SECOND signature via placeholder-plain incremental append; validate BOTH with `npm run verify:signatures` (pyHanko) and a manual Acrobat check. **GATE: must pass before US2 (Phase 4).**
-- [ ] T019 [P] CSP/precache spike — confirm Workbox precache coexists with `connect-src 'none'`; if not, set fallback `'self'` and record the honest final policy in research.md (Principle IV)
+- [X] T016 Implement app shell — document-dominant stage + collapsing bottom-sheet skeleton in src/App.tsx and src/components/{DocumentStage,BottomSheet}.tsx (FR-026)
+- [X] T017 Implement the verification harness (pyHanko via scripts/validate_pdf.py + scripts/verify-signatures.mjs over tests/signing/out/)
+- [X] T018 **[CRITICAL SPIKE]** Prove signing primitives in tests/signing/spike.test.ts + src/features/signing/spike/: (b) incremental multi-signature (placeholder-plain append) + visible widget signatures, pyHanko-validated as intact+valid, first signature stays valid after the second (SC-009). **NOTE:** sub-item (a) image-AS-appearance-stream is deferred to signFirst/T033 — the spike used a default widget appearance. Pipeline de-risked; Acrobat manual spot-check still pending. **GATE for US2: pipeline proven.**
+- [ ] T019 [P] CSP/precache spike — confirm Workbox precache coexists with `connect-src 'none'`; if not, set fallback `'self'` and record the honest final policy in research.md (Principle IV) — build generates SW OK; runtime coexistence check pending (needs browser)
 
-**Checkpoint**: Foundation ready. US1 may start after T011–T016; US2 additionally requires T017–T018.
+**Checkpoint**: Foundation substantially ready. Remaining foundational: T015 (pdf.js renderer), T019 (runtime CSP check). US2 pipeline de-risked (T018).
 
 ---
 
