@@ -12,20 +12,38 @@ interface StoredCert {
   savedAt: number;
 }
 
+// Storage may be unavailable (private mode / denied / quota). Opt-in persistence
+// is a convenience, so degrade to memory-only silently rather than erroring.
 export async function saveCertificate(p12Bytes: Uint8Array, label: string): Promise<void> {
   const record: StoredCert = { p12Bytes, label, savedAt: Date.now() };
-  await set(KEY, record);
+  try {
+    await set(KEY, record);
+  } catch {
+    /* storage unavailable — remain memory-only */
+  }
 }
 
 export async function loadCertificate(): Promise<{ p12Bytes: Uint8Array; label: string } | null> {
-  const v = (await get(KEY)) as StoredCert | undefined;
-  return v ? { p12Bytes: v.p12Bytes, label: v.label } : null;
+  try {
+    const v = (await get(KEY)) as StoredCert | undefined;
+    return v ? { p12Bytes: v.p12Bytes, label: v.label } : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function clearCertificate(): Promise<void> {
-  await del(KEY);
+  try {
+    await del(KEY);
+  } catch {
+    /* nothing to clear if storage is unavailable */
+  }
 }
 
 export async function hasRememberedCertificate(): Promise<boolean> {
-  return (await get(KEY)) != null;
+  try {
+    return (await get(KEY)) != null;
+  } catch {
+    return false;
+  }
 }

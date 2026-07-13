@@ -199,7 +199,12 @@ export default function App() {
       <DocumentStage empty={!doc}>
         {doc && (
           <div className="relative" style={{ width: pageSize.w || undefined }}>
-            <canvas ref={canvasRef} className="block rounded shadow-lg" />
+            <canvas
+              ref={canvasRef}
+              className="block rounded shadow-lg"
+              role="img"
+              aria-label={`Page ${pageIndex + 1}${doc ? ` of ${doc.pageCount}` : ''} of ${doc?.name ?? 'the document'}`}
+            />
             {pageSize.w > 0 &&
               pagePlacements.map((p) => (
                 <SignatureOverlay

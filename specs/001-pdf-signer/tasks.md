@@ -154,13 +154,13 @@ the whole crypto approach before UI is built on it.**
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T047 [P] Error handling + user-friendly messages for all edge cases (encrypted PDF, corrupt file/.p12, storage denied, first-load-offline) across features (FR-028)
-- [ ] T048 [P] Honest-copy pass — purpose/non-goal and no-legal-binding text in UI (FR-027)
-- [ ] T049 [P] Best-effort memory cleanup — drop refs to document/image/decrypted key/password after export (FR-023)
-- [ ] T050 [P] Performance pass — 60 fps placement, large-PDF responsiveness (plan Performance Goals)
-- [ ] T051 [P] Accessibility pass — ARIA, focus order, contrast (workspace guidelines)
-- [ ] T052 Run full quickstart.md validation (V1–V5) and confirm `npm run verify:signatures` is green
-- [ ] T053 [P] Update CLAUDE.md / research.md with any deviations discovered (e.g., final CSP)
+- [X] T047 [P] Error handling — friendly messages for encrypted PDF, corrupt/non-PDF file, wrong password, cleanup decode failure; certStore now degrades to memory-only silently when storage is denied (private mode/quota) (FR-028)
+- [X] T048 [P] Honest-copy pass — reviewed: "not a legally-binding e-signature service" + "private & on-device" copy and the DisclosureBanner (self-signed/no-timestamp/on-device) are accurate; no overclaims (FR-027)
+- [X] T049 [P] Best-effort memory cleanup — secrets (password, decrypted key) are never retained beyond the signing call (architectural); CertSheet state (cert bytes + password) is dropped on successful sign when it unmounts. Document/image are retained intentionally for continued editing (FR-023)
+- [ ] T050 [P] Performance pass — NOT formally benchmarked. Placement uses lightweight pointer events + CSS transforms; large-PDF responsiveness unmeasured. Deferred (low urgency for a personal tool)
+- [~] T051 [P] Accessibility — light pass: canvas has role=img + aria-label; all controls have text labels; inputs have placeholders/labels. A full audit (focus order, contrast tokens) is a follow-up
+- [X] T052 Quickstart V1–V5 — covered by the automated suite: V1 us1 E2E, V2 crypto E2E + pyHanko gate, V3 multi-sign (spike; image-multi-sign caveat), V4 offline E2E, V5 cert-only persistence. `npm run verify:signatures` green
+- [X] T053 [P] research.md updated with implementation deviations (Vite 5 pin, Image-decode, CSP stays 'none', multi-sign limit, pyHanko API-only)
 
 ---
 

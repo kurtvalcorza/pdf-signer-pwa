@@ -153,6 +153,18 @@ to Trusted Identities), not a signing format. Our `.p12` usage was already corre
 **Alternatives considered**: keeping BYO-only (rejected — too narrow); acting as a CA for third
 parties (rejected — out of scope, self-signed only).
 
+## Implementation deviations discovered during build (T053)
+
+- **Vite pinned to 5** (not 6): `vite-plugin-node-polyfills` has no Vite 6 peer.
+- **`createImageBitmap` fails in the headless-shell Chromium** ("source image could not be
+  decoded"); decode via an `<img>` element + blob URL instead (works everywhere).
+- **CSP stays `connect-src 'none'`** — the offline/precache E2E confirms Workbox coexists with it;
+  the `'self'` fallback (R9) was not needed.
+- **Multi-signature limitation**: `signFirst` (pdf-lib AcroForm) + `signIncremental`
+  (`placeholder-plain`) surfaces only the latest signature to pyHanko; plain+plain multi-sign is
+  fully valid. Robust image-appearance multi-sign is a follow-up.
+- **pyHanko installed API-only** (no CLI here) — the gate uses `pyhanko.sign.validation` directly.
+
 ## Open risks carried into Phase 1
 
 - **Primary risk**: R3 + R4 (visible image appearance + incremental multi-signature). Mitigation:
