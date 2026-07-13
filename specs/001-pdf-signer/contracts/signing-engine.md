@@ -28,14 +28,30 @@ stampVisual(pdf: Uint8Array, placements: PlacementInput[]): Promise<Uint8Array>
 - MUST clamp/reject placements outside page bounds (FR-008).
 - Returns a full PDF. Safe to call ONLY before any signature exists.
 
+## Certificate generation (in-app, FR-018/032)
+
+```ts
+generateSelfSignedP12(subject: CertSubject, password: string, years?): { p12Bytes; certDer }
+extractPublicCertDer(p12Bytes: Uint8Array, password: string): Uint8Array
+```
+
+- `generateSelfSignedP12` builds a self-signed Digital ID on-device (node-forge): keyUsage
+  digitalSignature/nonRepudiation, subject CN + optional O/OU/email (email also as subjectAltName).
+- Returns the `.p12` (private Digital ID) and the DER public cert (export as `.cer` for trust).
+- No network, no persistence (Principle I/VI).
+
 ## Tier B — first cryptographic signature
 
 ```ts
-signFirst(pdf: Uint8Array, placement: PlacementInput, cert: Pkcs12): Promise<Uint8Array>
+signFirst(pdf: Uint8Array, placement: PlacementInput, cert: Pkcs12, opts?: SignFirstOptions): Promise<Uint8Array>
+// SignFirstOptions: { label?: boolean; date?: boolean; displayName?: string }
 ```
 
 - Builds an AcroForm signature field with a **visible widget** whose appearance stream draws the
   image (FR-011/012) — the image IS the field appearance (research R3).
+- **Appearance** (FR-030/031): image on the left; optional uniform text stack on the right —
+  "Digitally signed by {name}" (name = cert CN) and/or "Date: …", each toggleable via `opts`.
+  Text is fitted to the widest line and box height so it never clips. Both off → image only.
 - Adds a ByteRange/`/Contents` placeholder, saves once, hashes the ByteRange, produces a detached
   PKCS#7/CMS with `cert`, splices it byte-safe (research R3/R5).
 - MUST verify `cert.password` first; on failure throw a typed `BadPasswordError` and produce no

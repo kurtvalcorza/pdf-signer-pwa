@@ -31,7 +31,7 @@ A person opens a PDF on their phone, adds an image of their signature (choosing 
 
 ### User Story 2 - Apply cryptographic digital signature(s) with a .p12 (Priority: P2)
 
-A person who has a PKCS#12 (`.p12`/`.pfx`) certificate cryptographically signs the document. They supply the certificate and its password; each placed signature image becomes the visible face of a real digital signature field. When the signed PDF is opened in Adobe Acrobat, each signature is clickable and shows the certificate and validity status. Multiple signatures can be applied (e.g., a document signed in more than one place, or by the same user for multiple roles), and adding a later signature does not invalidate an earlier one.
+A person cryptographically signs the document with a PKCS#12 (`.p12`/`.pfx`) certificate — one they already have, OR one they create in the app (a self-signed Digital ID, since most casual users have none). They supply/create the certificate and its password; each placed signature image becomes the visible face of a real digital signature field, shown Adobe-style as the image plus "Digitally signed by {name}" and a date (both optional). When the signed PDF is opened in Adobe Acrobat, each signature is clickable and shows the certificate and validity status. Multiple signatures can be applied, and adding a later signature does not invalidate an earlier one.
 
 **Why this priority**: Core to v1 and the product's differentiator, but it depends on the placement loop from US1 and serves users who have a certificate. US1 delivers value without it; US2 makes the signature verifiable and tamper-evident.
 
@@ -45,6 +45,8 @@ A person who has a PKCS#12 (`.p12`/`.pfx`) certificate cryptographically signs t
 4. **Given** a self-signed certificate, **When** the document is signed and opened in a reader, **Then** the signature is cryptographically intact but shows "validity unknown / not trusted", and the app has disclosed this outcome to the user beforehand.
 5. **Given** a signed document, **When** any byte covered by a signature is altered afterward, **Then** a compliant reader reports that signature as invalid.
 6. **Given** the user wants both visual-only stamps and a cryptographic signature, **When** they proceed, **Then** the app requires visual-only (non-cryptographic) stamps to be committed before cryptographic signing, and communicates this ordering, because page-content changes after signing would invalidate signatures.
+7. **Given** a user with no certificate, **When** they choose "create a certificate", enter at least a full name (and optionally organization, division, email) and a password, **Then** the app generates a self-signed `.p12` on-device, lets them export the `.p12` (Digital ID) and the public `.cer` (to share for trust), and lets them sign with it immediately.
+8. **Given** the user is signing with a certificate, **When** they toggle the "Digitally signed by {name}" label and/or the date off, **Then** the signature appearance shows only the signature image; with either on, the text is uniform and fully visible (never clipped).
 
 ---
 
@@ -116,7 +118,9 @@ A person without a digital signature image photographs their handwritten signatu
 - **FR-016**: The system MUST disclose, before signing, that a self-signed or untrusted certificate will show as "validity unknown" in readers, and that signatures are not timestamped.
 - **FR-017**: The system MUST detect and clearly communicate when an action would invalidate a pre-existing signature on the document (distinguishing an allowed incremental signature addition from a disallowed page-content change).
 - **FR-018**: The system MUST accept a user-supplied `.p12`/`.pfx`, AND MAY generate a self-signed `.p12` Digital ID on-device for users who have none. It MUST allow exporting the generated `.p12` (the signing Digital ID) and the public certificate (`.cer`, for others to trust). It does not act as a certificate authority for third parties. *(Amends the original "BYO only" decision at the product owner's request.)*
-- **FR-030**: When signing with a certificate, the signature appearance MUST show "Digitally signed by {name}" text beside the signature image (Adobe-style), where {name} is the certificate's common name.
+- **FR-030**: When signing with a certificate, the signature appearance MUST be able to show, beside the signature image (Adobe-style), a "Digitally signed by {name}" label (name = certificate common name) and a date line. The appearance text MUST be uniform and sized to fit its box so it never clips.
+- **FR-031**: The user MUST be able to toggle the appearance label and the date line independently on or off; with both off, the appearance is the signature image alone.
+- **FR-032**: When generating a certificate in-app (FR-018), the user MUST be able to supply a full name (required) and optionally an organization, division/unit, and email; these MUST be recorded in the certificate subject (email also as a subjectAltName).
 
 **Privacy & data handling**
 - **FR-019**: The system MUST perform all document, image, and cryptographic processing on-device, and MUST NOT transmit any PDF, signature image, certificate, password, or derived material off the device.
@@ -156,6 +160,7 @@ A person without a digital signature image photographs their handwritten signatu
 - **SC-007**: An altered signed document is reported as invalid by a compliant reader in 100% of tamper tests.
 - **SC-008**: No user document, signature image, or password remains in on-device storage after a session; a certificate remains only if the user explicitly opted in to remember it.
 - **SC-009**: Adding a second cryptographic signature leaves the first signature valid in a compliant reader in 100% of multi-signature tests.
+- **SC-010**: A user with no certificate can create one in-app and produce a validly-signed PDF in a single session, and can export both the `.p12` and the public `.cer`.
 
 ## Assumptions
 

@@ -247,5 +247,10 @@ Amends the "BYO cert only" grill decision — see spec FR-018/FR-030.
 - [X] T055 Export helpers — download the `.p12` (Digital ID) and the public `.cer` (share for trust) via downloadBytes in src/features/signing/export.ts; wired into CertSheet "Create a certificate" panel
 - [X] T056 Signature appearance shows "Digitally signed by {name}" text beside the image (Adobe-style), name from the cert CN, in src/features/signing/signFirst.ts (FR-030; signing tests assert the label text; pyHanko gate still green)
 - [X] T057 CertSheet "Create one" flow (name + password → generate → download .p12/.cer → sign). E2E-verified in tests/e2e/us2-create-cert.spec.ts (create cert in-app → save .p12 → sign → signed PDF)
+- [X] T058 Date line + user toggles — appearance renders optional "Digitally signed by {name}" and "Date: …" lines; CertSheet checkboxes toggle each on/off (both off → image only). Threaded SignRequest.showLabel/showDate → App → signFirst opts (FR-030/031; unit test asserts on/off)
+- [X] T059 Uniform, non-clipping appearance text — single font/size/colour, sized to the widest line's real width + box height so long names/dates never clip (FR-030). Verified with a long-name demo
+- [X] T060 Richer certificate subject — generateSelfSignedP12 takes CertSubject {commonName, organization?, organizationalUnit?, email?}; email in subject DN + subjectAltName; CertSheet gains optional Org/Division/Email inputs (FR-032; unit test parses cert + asserts O/OU/emailAddress + SAN)
 
 **Note (format clarification):** `.p12`/`.pfx` (PKCS#12 = private key + cert) is the signing Digital ID Adobe uses. `.p7c`/`.cer` is the public-cert-only export used to establish trust (add signer to Trusted Identities) — not a signing format.
+
+**Spec integration:** these additions are now reflected in spec.md (US2 scenarios 7-8; FR-030/031/032; SC-010), data-model.md (CertificateSubject/GeneratedCertificate, AppearanceOptions), contracts/signing-engine.md, and research.md (R12).

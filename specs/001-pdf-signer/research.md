@@ -139,6 +139,20 @@ Principles I and II and Android installability (FR-019/020/025).
 **Alternatives considered**: Hand-written service worker — more control, more maintenance;
 unnecessary for a precache-only strategy.
 
+## R12 — In-app certificate generation + Adobe-style appearance (post-plan, owner request)
+
+**Decision**: Reverse the "bring-your-own `.p12` only" scoping. Generate a self-signed PKCS#12
+Digital ID on-device with node-forge (keyUsage digitalSignature/nonRepudiation; subject CN +
+optional O/OU/email, email also as subjectAltName); allow exporting the `.p12` and the public
+`.cer`. The signature appearance composes the image + optional uniform "Digitally signed by
+{name}" / "Date: …" text (fitted so it never clips), each line user-toggleable.
+**Rationale**: Most casual users have no certificate; without in-app generation Tier B serves
+almost no one. **Format clarification**: `.p12`/`.pfx` (private key + cert) is the signing Digital
+ID Adobe uses; `.p7c`/`.cer` is the public-cert-only export used to establish *trust* (add signer
+to Trusted Identities), not a signing format. Our `.p12` usage was already correct.
+**Alternatives considered**: keeping BYO-only (rejected — too narrow); acting as a CA for third
+parties (rejected — out of scope, self-signed only).
+
 ## Open risks carried into Phase 1
 
 - **Primary risk**: R3 + R4 (visible image appearance + incremental multi-signature). Mitigation:

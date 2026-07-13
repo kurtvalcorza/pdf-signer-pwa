@@ -61,7 +61,7 @@ Where a signature image sits on the document. A document may have many.
 
 ## Certificate
 
-The user's PKCS#12 container.
+The user's PKCS#12 container — either supplied by the user or generated in-app.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -72,6 +72,31 @@ The user's PKCS#12 container.
 
 **Validation**: `p12Bytes` parses; password unlocks it before signing (FR-015).
 **Persisted?** `p12Bytes` only if `remember === true`; `password` and `unlocked` **never**.
+
+## CertificateSubject / GeneratedCertificate (in-app cert generation, FR-018/032)
+
+Input for generating a self-signed Digital ID on-device.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `commonName` | `string` | Full name (CN) — required |
+| `organization` | `string?` | O |
+| `organizationalUnit` | `string?` | OU / division |
+| `email` | `string?` | Subject `emailAddress` + `subjectAltName` (rfc822) |
+
+Output `GeneratedCertificate`: `{ p12Bytes: Uint8Array; certDer: Uint8Array }` — the `.p12`
+(Digital ID, keep private) and the DER public cert (`.cer`, export to share for trust).
+**Persisted?** No (generated in memory; user may explicitly download or opt-in-remember).
+
+## AppearanceOptions (signature appearance config, FR-030/031)
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `label` | `boolean` | Show "Digitally signed by {name}" (default true) |
+| `date` | `boolean` | Show "Date: …" line (default true) |
+| `displayName` | `string?` | Overrides the name; defaults to the cert common name |
+
+Both off → the appearance is the image alone. Text is uniform and fitted so it never clips.
 
 ## PersistedCertificate (storage shape)
 
