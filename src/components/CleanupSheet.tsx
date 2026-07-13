@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cleanImageBackground } from '../features/ingest/backgroundClean';
 
 interface Props {
@@ -17,6 +17,15 @@ export function CleanupSheet({ originalBytes, onApply, onCancel }: Props) {
   const [cleaned, setCleaned] = useState<Uint8Array | null>(null);
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+
+  // Revoke the last preview URL when the sheet unmounts (Back/Cancel).
+  useEffect(
+    () => () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -28,7 +37,9 @@ export function CleanupSheet({ originalBytes, onApply, onCancel }: Props) {
         setCleaned(bytes);
         setPreviewUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
-          return URL.createObjectURL(new Blob([bytes as BlobPart]));
+          const next = URL.createObjectURL(new Blob([bytes as BlobPart]));
+          previewUrlRef.current = next;
+          return next;
         });
       })
       .catch((e) => !cancelled && setErr(e instanceof Error ? e.message : String(e)))

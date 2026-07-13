@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
 import { stampVisual } from '../../src/features/signing/stampVisual';
 import { clampBox } from '../../src/lib/coords';
 
@@ -39,6 +39,19 @@ describe('stampVisual', () => {
     ]);
     const reloaded = await PDFDocument.load(out);
     expect(reloaded.getPageCount()).toBe(3);
+  });
+
+  it('stamps a rotated page and returns a valid PDF (in-bounds)', async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 400]);
+    page.setRotation(degrees(90));
+    const base = await doc.save();
+    const out = await stampVisual(base, [
+      { imageBytes: PNG_1x1, format: 'png', pageIndex: 0, nx: 0.2, ny: 0.3, nw: 0.4, nh: 0.15 },
+    ]);
+    const reloaded = await PDFDocument.load(out);
+    expect(reloaded.getPageCount()).toBe(1);
+    expect(reloaded.getPage(0).getRotation().angle).toBe(90);
   });
 
   it('throws on a placement targeting a missing page', async () => {

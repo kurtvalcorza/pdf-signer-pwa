@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,6 +68,18 @@ describe('signFirst (Tier B — image-appearance signature)', () => {
     expect(text).not.toContain('Digitally signed by');
     expect(text).not.toContain('Date:');
     expect(text).toContain('/ByteRange'); // still a valid signature, just image-only
+  }, 30000);
+
+  it('signs a rotated page and pre-rotates the appearance (/Matrix)', async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 400]);
+    page.setRotation(degrees(90));
+    const base = await doc.save();
+    const signed = await signFirst(base, placement(), { p12Bytes: p12, password: PASS });
+    const text = Buffer.from(signed).toString('latin1');
+    expect(text).toContain('/ByteRange');
+    expect(text).toContain('/Subtype /Form');
+    expect(text).toContain('/Matrix'); // appearance is rotated to match the page
   }, 30000);
 
   it('rejects a wrong password without producing output (FR-015)', async () => {

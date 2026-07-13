@@ -1,6 +1,6 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, degrees } from 'pdf-lib';
 import type { PlacementInput } from './types';
-import { clampBox, normalizedBoxToPdfRect, type Rotation } from '../../lib/coords';
+import { clampBox, normalizedBoxToDrawParams, type Rotation } from '../../lib/coords';
 
 /**
  * Tier A — draw each signature image onto its target page as page content
@@ -25,14 +25,20 @@ export async function stampVisual(
     const box = clampBox({ nx: p.nx, ny: p.ny, nw: p.nw, nh: p.nh });
     const { width, height } = page.getSize();
     const rotation = (((page.getRotation().angle % 360) + 360) % 360) as Rotation;
-    const rect = normalizedBoxToPdfRect(box, { widthPt: width, heightPt: height, rotation });
+    const draw = normalizedBoxToDrawParams(box, { widthPt: width, heightPt: height, rotation });
 
     const image =
       p.format === 'png'
         ? await doc.embedPng(p.imageBytes)
         : await doc.embedJpg(p.imageBytes);
 
-    page.drawImage(image, { x: rect.x, y: rect.y, width: rect.w, height: rect.h });
+    page.drawImage(image, {
+      x: draw.x,
+      y: draw.y,
+      width: draw.width,
+      height: draw.height,
+      rotate: degrees(draw.rotate),
+    });
   }
 
   return doc.save();

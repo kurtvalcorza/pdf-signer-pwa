@@ -43,6 +43,26 @@ export default function App() {
   const pdfInput = useRef<HTMLInputElement>(null);
   const imgInput = useRef<HTMLInputElement>(null);
   const camInput = useRef<HTMLInputElement>(null);
+  const imageSeq = useRef(0);
+
+  // Free any image asset no longer referenced by a placement (removed, or cleared on
+  // opening a new PDF). Revokes its object URL so blobs don't leak for the session.
+  useEffect(() => {
+    setImages((m) => {
+      const used = new Set(placements.map((p) => p.imageId));
+      let changed = false;
+      const next: Record<string, ImageAsset> = {};
+      for (const [id, asset] of Object.entries(m)) {
+        if (used.has(id)) {
+          next[id] = asset;
+        } else {
+          if (asset.url) URL.revokeObjectURL(asset.url);
+          changed = true;
+        }
+      }
+      return changed ? next : m;
+    });
+  }, [placements]);
 
   // Render the current page whenever the doc or page changes.
   useEffect(() => {
@@ -71,6 +91,7 @@ export default function App() {
       }
       setDoc({ bytes, pageCount: info.pageCount, name: file.name });
       setPlacements([]);
+      setSelectedId(null);
       setPageIndex(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -84,7 +105,9 @@ export default function App() {
       try {
         const { bytes, format } = await readImageFile(file);
         const url = URL.createObjectURL(new Blob([bytes as BlobPart]));
-        const id = `img_${Object.keys(images).length + 1}`;
+        // Monotonic id: never reuse a number even after images are pruned, so a new
+        // asset can't collide with an existing key.
+        const id = `img_${++imageSeq.current}`;
         setImages((m) => ({ ...m, [id]: { url, bytes, format, originalBytes: bytes } }));
         const placement = createPlacement(id, pageIndex);
         setPlacements((ps) => [...ps, placement]);

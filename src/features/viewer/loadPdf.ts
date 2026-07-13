@@ -29,8 +29,17 @@ export async function loadPdf(bytes: Uint8Array): Promise<LoadedPdf> {
   };
 }
 
-/** Cheap byte-level check for an existing signature dictionary. */
+/**
+ * Cheap byte-level check for an existing signature dictionary. A bare `/ByteRange`
+ * is too loose (it appears in unrelated content and false-positives), so require an
+ * actual signature dictionary: a `/Type /Sig` object, or a `/ByteRange` paired with
+ * a recognised signature sub-filter (PKCS#7 / CAdES).
+ */
 function detectSignature(bytes: Uint8Array): boolean {
   const text = new TextDecoder('latin1').decode(bytes);
-  return text.includes('/Type /Sig') || text.includes('/Type/Sig') || /\/ByteRange\s*\[/.test(text);
+  if (text.includes('/Type /Sig') || text.includes('/Type/Sig')) return true;
+  return (
+    /\/ByteRange\s*\[/.test(text) &&
+    /\/SubFilter\s*\/(adbe\.pkcs7|ETSI\.CAdES)/i.test(text)
+  );
 }

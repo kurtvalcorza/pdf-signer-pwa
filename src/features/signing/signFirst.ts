@@ -4,7 +4,12 @@ import { P12Signer } from '@signpdf/signer-p12';
 import { pdflibAddPlaceholder } from '@signpdf/placeholder-pdf-lib';
 import type { PlacementInput, Pkcs12 } from './types';
 import { verifyCertPassword, getSignerCommonName } from './cert';
-import { clampBox, normalizedBoxToPdfRect, type Rotation } from '../../lib/coords';
+import {
+  clampBox,
+  normalizedBoxToPdfRect,
+  appearanceLayout,
+  type Rotation,
+} from '../../lib/coords';
 
 export interface SignFirstOptions {
   /** Show "Digitally signed by {name}" text beside the image (Adobe-style). Default true. */
@@ -15,7 +20,21 @@ export interface SignFirstOptions {
   displayName?: string;
 }
 
-const escPdf = (s: string) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+/**
+ * Restrict text to code points a StandardFont (WinAnsi) can encode and that survive
+ * pdf-lib's byte-truncating stream serialization: printable ASCII and the Latin-1
+ * supplement (0xA0–0xFF, where WinAnsi matches Unicode). Everything else — CJK,
+ * emoji, control chars — becomes '?', so a signer whose common name contains such
+ * characters gets a safe placeholder instead of a corrupted appearance stream.
+ */
+const toWinAnsi = (s: string): string =>
+  Array.from(s, (ch) => {
+    const c = ch.codePointAt(0)!;
+    return (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) ? ch : '?';
+  }).join('');
+
+const escPdf = (s: string) =>
+  toWinAnsi(s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 
 function formatDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -58,13 +77,17 @@ export async function signFirst(
   const { width, height } = page.getSize();
   const rotation = (((page.getRotation().angle % 360) + 360) % 360) as Rotation;
   const box = clampBox({ nx: placement.nx, ny: placement.ny, nw: placement.nw, nh: placement.nh });
-  const rect = normalizedBoxToPdfRect(box, { widthPt: width, heightPt: height, rotation });
+  const geom = { widthPt: width, heightPt: height, rotation };
+  const rect = normalizedBoxToPdfRect(box, geom);
   const widgetRect: [number, number, number, number] = [
     rect.x,
     rect.y,
     rect.x + rect.w,
     rect.y + rect.h,
   ];
+  // Content is composed upright in this box; a /Matrix pre-rotation keeps it upright
+  // on rotated pages (the widget /Rect above rotates with the page).
+  const appearance = appearanceLayout(box, geom);
 
   // Embed the image as an XObject we can reference from the appearance stream.
   const image =
@@ -87,15 +110,22 @@ export async function signFirst(
   const widget = lastWidget(doc, page);
   const apDict = widget.lookup(PDFName.of('AP'), PDFDict);
 
-  const { content: apContent, resources } = await buildAppearance(doc, rect.w, rect.h, image.ref, {
-    name: showLabel ? signerName : null,
-    dateStr: showDate ? `Date: ${formatDate(new Date())}` : null,
-  });
+  const { content: apContent, resources } = await buildAppearance(
+    doc,
+    appearance.widthPt,
+    appearance.heightPt,
+    image.ref,
+    {
+      name: showLabel ? signerName : null,
+      dateStr: showDate ? `Date: ${formatDate(new Date())}` : null,
+    },
+  );
   const apStream = doc.context.stream(apContent, {
     Type: 'XObject',
     Subtype: 'Form',
     FormType: 1,
-    BBox: [0, 0, rect.w, rect.h],
+    BBox: [0, 0, appearance.widthPt, appearance.heightPt],
+    Matrix: appearance.matrix,
     Resources: resources,
   } as Parameters<typeof doc.context.stream>[1]);
   apDict.set(PDFName.of('N'), doc.context.register(apStream));
@@ -129,9 +159,10 @@ async function buildAppearance(
   imageRef: PDFRef,
   opts: { name: string | null; dateStr: string | null },
 ): Promise<{ content: string; resources: Record<string, unknown> }> {
+  // Sanitize up front so glyph measurement and stream emission agree on encodable text.
   const lines: string[] = [];
-  if (opts.name) lines.push('Digitally signed by', opts.name);
-  if (opts.dateStr) lines.push(opts.dateStr);
+  if (opts.name) lines.push('Digitally signed by', toWinAnsi(opts.name));
+  if (opts.dateStr) lines.push(toWinAnsi(opts.dateStr));
 
   if (lines.length === 0) {
     return {
