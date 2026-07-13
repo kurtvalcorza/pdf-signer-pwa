@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.local
+
+# Vite / PWA
+dev-dist/
+
+# Test / coverage
+coverage/
+playwright-report/
+test-results/
+
+# Env & secrets — NEVER commit certificates or passwords
+.env
+.env.*
+*.p12
+*.pfx
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Python (pyHanko verification tooling)
+__pycache__/
+*.pyc
+.venv/
+venv/
