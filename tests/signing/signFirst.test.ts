@@ -82,6 +82,23 @@ describe('signFirst (Tier B — image-appearance signature)', () => {
     expect(text).toContain('/Matrix'); // appearance is rotated to match the page
   }, 30000);
 
+  it('signs with a non-ASCII / CP1252 display name without corrupting the stream', async () => {
+    const base = await makeBasePdf();
+    // Accented Latin (é), smart quote (U+2019), em dash (U+2014), € (U+20AC), and a
+    // CJK char that must degrade to '?'. Signing must succeed and stay valid.
+    const displayName = 'José O’Brien — € 中';
+    const signed = await signFirst(
+      base,
+      placement(),
+      { p12Bytes: p12, password: PASS },
+      { displayName },
+    );
+    const text = Buffer.from(signed).toString('latin1');
+    expect(text).toContain('/ByteRange');
+    expect(text).toContain('/Subtype /Form');
+    expect(text).toContain('Digitally signed by');
+  }, 30000);
+
   it('rejects a wrong password without producing output (FR-015)', async () => {
     const base = await makeBasePdf();
     await expect(

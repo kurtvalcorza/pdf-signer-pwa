@@ -21,24 +21,51 @@ export interface SignFirstOptions {
 }
 
 /**
- * Restrict text to code points a StandardFont (WinAnsi) can encode and that survive
- * pdf-lib's byte-truncating stream serialization: printable ASCII and the Latin-1
- * supplement (0xA0–0xFF, where WinAnsi matches Unicode). Everything else — CJK,
- * emoji, control chars — becomes '?', so a signer whose common name contains such
- * characters gets a safe placeholder instead of a corrupted appearance stream.
+ * Windows-1252 high block (0x80–0x9F): Unicode code point → CP1252 byte. WinAnsiEncoding
+ * renders these glyphs (smart quotes, dashes, €, …); their Unicode code points are > 0xFF,
+ * so we must emit the raw CP1252 byte rather than the (truncated) code point.
+ */
+const CP1252_HIGH_BYTE: Record<number, number> = {
+  0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86,
+  0x2021: 0x87, 0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c,
+  0x017d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95,
+  0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98, 0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b,
+  0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f,
+};
+
+/** WinAnsi byte for a Unicode code point a StandardFont can render, else null. */
+const winAnsiByte = (c: number): number | null =>
+  (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) ? c : (CP1252_HIGH_BYTE[c] ?? null);
+
+/**
+ * Sanitize text to what a StandardFont (WinAnsiEncoding) can render, for glyph
+ * measurement: printable ASCII, the Latin-1 supplement, and the CP1252 high block.
+ * Anything else — CJK, emoji, control chars — becomes '?', so `widthOfTextAtSize`
+ * never throws and the signer's name degrades gracefully instead of failing the sign.
  */
 const toWinAnsi = (s: string): string =>
-  Array.from(s, (ch) => {
-    const c = ch.codePointAt(0)!;
-    return (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) ? ch : '?';
-  }).join('');
+  Array.from(s, (ch) => (winAnsiByte(ch.codePointAt(0)!) === null ? '?' : ch)).join('');
 
-const escPdf = (s: string) =>
-  toWinAnsi(s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+/**
+ * Encode text as a PDF literal-string body: each character becomes its WinAnsi byte
+ * (unrenderable → '?'), with `\ ( )` escaped. Emitting the byte — not the JS code
+ * point — is what keeps CP1252 punctuation from being truncated by pdf-lib's stream
+ * serialization (which writes `charCodeAt & 0xff`).
+ */
+const escPdf = (s: string): string =>
+  Array.from(s, (ch) => {
+    const byte = winAnsiByte(ch.codePointAt(0)!) ?? 0x3f; // '?'
+    const out = String.fromCharCode(byte);
+    return byte === 0x5c || byte === 0x28 || byte === 0x29 ? `\\${out}` : out;
+  }).join('');
 
 function formatDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  // Local wall-clock time with an explicit UTC offset, so the appearance is
+  // unambiguous across timezones (e.g. "2026.07.14 11:45 +08:00").
+  const offMin = -d.getTimezoneOffset();
+  const tz = `${offMin >= 0 ? '+' : '-'}${p(Math.floor(Math.abs(offMin) / 60))}:${p(Math.abs(offMin) % 60)}`;
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${tz}`;
 }
 
 /**

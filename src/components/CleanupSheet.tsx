@@ -35,12 +35,11 @@ export function CleanupSheet({ originalBytes, onApply, onCancel }: Props) {
       .then((bytes) => {
         if (cancelled) return;
         setCleaned(bytes);
-        setPreviewUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          const next = URL.createObjectURL(new Blob([bytes as BlobPart]));
-          previewUrlRef.current = next;
-          return next;
-        });
+        // Revoke the previous URL outside the setState updater (updaters must stay pure).
+        const next = URL.createObjectURL(new Blob([bytes as BlobPart]));
+        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = next;
+        setPreviewUrl(next);
       })
       .catch((e) => !cancelled && setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => !cancelled && setWorking(false));

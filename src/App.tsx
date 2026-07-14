@@ -48,21 +48,19 @@ export default function App() {
   // Free any image asset no longer referenced by a placement (removed, or cleared on
   // opening a new PDF). Revokes its object URL so blobs don't leak for the session.
   useEffect(() => {
+    const used = new Set(placements.map((p) => p.imageId));
+    const orphanIds = Object.keys(images).filter((id) => !used.has(id));
+    if (orphanIds.length === 0) return;
+    // Revoke outside the setState updater (updaters must stay pure).
+    for (const id of orphanIds) {
+      if (images[id]?.url) URL.revokeObjectURL(images[id].url);
+    }
     setImages((m) => {
-      const used = new Set(placements.map((p) => p.imageId));
-      let changed = false;
-      const next: Record<string, ImageAsset> = {};
-      for (const [id, asset] of Object.entries(m)) {
-        if (used.has(id)) {
-          next[id] = asset;
-        } else {
-          if (asset.url) URL.revokeObjectURL(asset.url);
-          changed = true;
-        }
-      }
-      return changed ? next : m;
+      const next = { ...m };
+      for (const id of orphanIds) delete next[id];
+      return next;
     });
-  }, [placements]);
+  }, [placements, images]);
 
   // Render the current page whenever the doc or page changes.
   useEffect(() => {
@@ -116,7 +114,7 @@ export default function App() {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [doc, images, pageIndex],
+    [doc, pageIndex],
   );
 
   const updatePlacement = useCallback((p: Placement) => {

@@ -5,14 +5,18 @@ import type { PlacementInput } from './types';
 export function downloadBytes(bytes: Uint8Array, filename: string, mime: string): void {
   const blob = new Blob([bytes as BlobPart], { type: mime });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener';
-  a.click();
-  // Revoke on a later tick: revoking synchronously (e.g. in a `finally`) can cancel
-  // the download before the browser has read the blob, notably on mobile/Firefox.
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    a.click();
+  } finally {
+    // Revoke on a later tick (not synchronously): revoking right after click can
+    // cancel the download before the browser has read the blob, notably on
+    // mobile/Firefox. The `finally` still guarantees revocation if click() throws.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
 }
 
 /** Trigger a client-side download of PDF bytes. */
