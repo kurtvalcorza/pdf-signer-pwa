@@ -161,14 +161,20 @@ export function appearanceLayout(box: NormBox, page: PageGeom): AppearanceLayout
   const { Wd, Hd } = displayDims(page);
   const widthPt = box.nw * Wd;
   const heightPt = box.nh * Hd;
+  const w = widthPt;
+  const h = heightPt;
 
   // Rotate the content +rotation° CCW so it appears upright after the viewer applies
-  // the page's clockwise /Rotate. The fit-to-/Rect step handles translation/scale.
+  // the page's clockwise /Rotate. Each matrix also carries a translation term that
+  // shifts the rotated content box [0,w]×[0,h] back into positive space so the
+  // transformed BBox is [0,rotatedW]×[0,rotatedH]. A spec-compliant reader re-fits
+  // the transformed BBox into the widget /Rect regardless, but keeping it positive
+  // avoids clipping/offset in readers that don't implement that fit precisely.
   const matrix: Record<Rotation, AppearanceLayout['matrix']> = {
     0: [1, 0, 0, 1, 0, 0],
-    90: [0, 1, -1, 0, 0, 0],
-    180: [-1, 0, 0, -1, 0, 0],
-    270: [0, -1, 1, 0, 0, 0],
+    90: [0, 1, -1, 0, h, 0],
+    180: [-1, 0, 0, -1, w, h],
+    270: [0, -1, 1, 0, 0, w],
   };
   return { widthPt, heightPt, matrix: matrix[page.rotation] };
 }

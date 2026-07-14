@@ -125,18 +125,43 @@ describe('appearanceLayout', () => {
     const page: PageGeom = { widthPt: 200, heightPt: 400, rotation: 90 };
     const a = appearanceLayout(box, page);
     // Displayed width maps to page height (400), displayed height to page width (200).
-    expect(a.widthPt).toBeCloseTo(0.4 * 400);
-    expect(a.heightPt).toBeCloseTo(0.1 * 200);
-    expect(a.matrix).toEqual([0, 1, -1, 0, 0, 0]);
+    expect(a.widthPt).toBeCloseTo(0.4 * 400); // 160
+    expect(a.heightPt).toBeCloseTo(0.1 * 200); // 20
+    // Rotation with a translation term (h) that keeps the rotated BBox positive.
+    expect(a.matrix).toEqual([0, 1, -1, 0, 20, 0]);
   });
 
   it.each([
     [0, [1, 0, 0, 1, 0, 0]],
-    [90, [0, 1, -1, 0, 0, 0]],
-    [180, [-1, 0, 0, -1, 0, 0]],
-    [270, [0, -1, 1, 0, 0, 0]],
-  ] as const)('matrix is a pure rotation for rotation %i', (rotation, expected) => {
+    [90, [0, 1, -1, 0, 20, 0]],
+    [180, [-1, 0, 0, -1, 80, 40]],
+    [270, [0, -1, 1, 0, 0, 160]],
+  ] as const)('matrix rotates and keeps the BBox positive for rotation %i', (rotation, expected) => {
     const page: PageGeom = { widthPt: 200, heightPt: 400, rotation };
     expect(appearanceLayout(box, page).matrix).toEqual(expected);
   });
+
+  it.each([0, 90, 180, 270] as const)(
+    'transformed content BBox stays in positive space at origin (rotation %i)',
+    (rotation) => {
+      const page: PageGeom = { widthPt: 200, heightPt: 400, rotation };
+      const { widthPt: w, heightPt: h, matrix } = appearanceLayout(box, page);
+      const [a, b, c, d, e, f] = matrix;
+      // Transform the four content-box corners [0,w]×[0,h] by the matrix.
+      const corners = [
+        [0, 0],
+        [w, 0],
+        [0, h],
+        [w, h],
+      ].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
+      const xs = corners.map((p) => p[0]);
+      const ys = corners.map((p) => p[1]);
+      expect(Math.min(...xs)).toBeCloseTo(0, 6);
+      expect(Math.min(...ys)).toBeCloseTo(0, 6);
+      // Rotated extents: 0/180 keep w×h, 90/270 swap to h×w.
+      const swap = rotation === 90 || rotation === 270;
+      expect(Math.max(...xs)).toBeCloseTo(swap ? h : w, 6);
+      expect(Math.max(...ys)).toBeCloseTo(swap ? w : h, 6);
+    },
+  );
 });
