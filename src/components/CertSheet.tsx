@@ -198,14 +198,13 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
       <button
         type="button"
         onClick={() => {
-          setCreating((v) => {
-            const next = !v;
-            // The "remember" checkbox is hidden while creating; clear it so a freshly
-            // generated cert isn't silently persisted (and doesn't overwrite a
-            // previously remembered one) using a value inherited from that flow.
-            if (next) setRemember(false);
-            return next;
-          });
+          const enteringCreate = !creating;
+          setCreating(enteringCreate);
+          // The "remember" checkbox is hidden while creating; clear it so a freshly
+          // generated cert isn't silently persisted (and doesn't overwrite a previously
+          // remembered one) with a value inherited from that flow. Computed here, not in
+          // the setCreating updater, so the updater stays pure (StrictMode-safe).
+          if (enteringCreate) setRemember(false);
           setCertDer(null);
         }}
         className="self-start text-xs text-blue-300 hover:text-blue-200"
