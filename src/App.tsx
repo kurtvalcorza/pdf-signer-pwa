@@ -9,6 +9,7 @@ import { createPlacement, type Placement } from './features/placement/placement'
 import { downloadPdf, exportVisualStamped } from './features/signing/export';
 import { stampVisual } from './features/signing/stampVisual';
 import { signFirst } from './features/signing/signFirst';
+import { signIncremental } from './features/signing/signIncremental';
 import { BadPasswordError, type PlacementInput } from './features/signing/types';
 import { CertSheet, type SignRequest } from './components/CertSheet';
 import { CleanupSheet } from './components/CleanupSheet';
@@ -31,6 +32,9 @@ interface Doc {
   bytes: Uint8Array;
   pageCount: number;
   name: string;
+  /** True if the PDF already carries a signature — drives the invalidation warning
+   * and routes certificate-signing through the incremental (non-invalidating) path. */
+  hasExistingSignature: boolean;
 }
 
 export default function App() {
@@ -105,9 +109,14 @@ export default function App() {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const info = await loadPdf(bytes);
       if (info.hasExistingSignature) {
-        setError('Heads up: this PDF is already signed. Adding a visible stamp changes the page and would invalidate that signature.');
+        setError(
+          'Heads up: this PDF is already signed. “Stamp image & Download” rewrites the ' +
+            'pages and would invalidate every existing signature (yours and other signers’). ' +
+            'To add your signature without breaking theirs, use “Sign with a digital ' +
+            'certificate” — it appends your signature without altering the signed pages.',
+        );
       }
-      setDoc({ bytes, pageCount: info.pageCount, name: file.name });
+      setDoc({ bytes, pageCount: info.pageCount, name: file.name, hasExistingSignature: info.hasExistingSignature });
       setPlacements([]);
       setSelectedId(null);
       setPageIndex(0);
@@ -229,20 +238,54 @@ export default function App() {
           nw: p.nw,
           nh: p.nh,
         });
-        // The selected (or last) placement becomes the cryptographic signature;
-        // any others are baked in as visual stamps FIRST (ordering rule, FR-014).
+        // The selected (or last) placement becomes the cryptographic signature.
         const crypto = placements.find((p) => p.id === selectedId) ?? placements[placements.length - 1];
-        const visuals = placements.filter((p) => p.id !== crypto.id).map(toInput);
-        const base = visuals.length ? await stampVisual(doc.bytes, visuals) : doc.bytes;
-        const signed = await signFirst(
-          base,
-          toInput(crypto),
-          { p12Bytes: req.p12Bytes, password: req.password },
-          { label: req.showLabel, date: req.showDate },
-        );
+        const cert = { p12Bytes: req.p12Bytes, password: req.password };
+
+        let signed: Uint8Array;
+        let note: string | null = null;
+        if (doc.hasExistingSignature) {
+          // The PDF already carries signatures. Append ours as a byte-level incremental
+          // update so those earlier signatures stay valid — never re-serialize the signed
+          // bytes (Principle III / FR-013). Trade-offs of this path: no image appearance on
+          // the widget, and extra visual-only stamps can't be baked in (they would rewrite
+          // the signed pages), so they're skipped.
+          try {
+            signed = await signIncremental(doc.bytes, toInput(crypto), cert);
+          } catch (e) {
+            if (e instanceof BadPasswordError) throw e;
+            // The incremental signer can't parse every PDF structure (e.g. cross-reference
+            // streams). Fail honestly rather than silently falling back to a path that would
+            // invalidate the existing signatures.
+            throw new Error(
+              "This signed PDF's structure isn't supported for adding a signature without " +
+                'invalidating the existing one(s). “Stamp image & Download” still works, but it ' +
+                'would invalidate them.',
+            );
+          }
+          const skipped = placements.length - 1;
+          note =
+            'Signed without invalidating the existing signature(s). Note: this appended a ' +
+            'digital signature field without the image appearance' +
+            (skipped > 0
+              ? `, and ${skipped} extra stamp${skipped > 1 ? 's were' : ' was'} skipped ` +
+                '(stamping an already-signed PDF would invalidate it).'
+              : '.');
+        } else {
+          // Unsigned PDF: bake any additional placements as visual stamps FIRST (ordering
+          // rule, FR-014), then apply the image-appearance signature.
+          const visuals = placements.filter((p) => p.id !== crypto.id).map(toInput);
+          const base = visuals.length ? await stampVisual(doc.bytes, visuals) : doc.bytes;
+          signed = await signFirst(base, toInput(crypto), cert, {
+            label: req.showLabel,
+            date: req.showDate,
+          });
+        }
+
         if (req.remember) await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
         downloadPdf(signed, doc.name.replace(/\.pdf$/i, '') + '-signed.pdf');
         setMode('stamp');
+        if (note) setError(note);
       } catch (e) {
         setError(
           e instanceof BadPasswordError
