@@ -125,7 +125,7 @@ A person without a digital signature image photographs their handwritten signatu
 **Privacy & data handling**
 - **FR-019**: The system MUST perform all document, image, and cryptographic processing on-device, and MUST NOT transmit any PDF, signature image, certificate, password, or derived material off the device.
 - **FR-020**: The system MUST default to memory-only handling and MUST NOT persist the user's document, signature image, or certificate to on-device storage unless the user explicitly opts in.
-- **FR-021**: The system MUST offer an opt-in option to remember the user's certificate (`.p12` file) for reuse across sessions; this MUST be disclosed at opt-in and clearable by the user. Remembering the document or signature image is out of scope for v1.
+- **FR-021**: The system MUST offer an opt-in option to remember the user's certificate (`.p12` file) and, independently, the last-used signature image for reuse across sessions; each MUST be disclosed at the point of opt-in and be clearable by the user, and neither may be auto-saved. Remembering the document is out of scope for v1.
 - **FR-022**: The system MUST NEVER persist the certificate password or decrypted private-key material to any store, even when the certificate is remembered — the password MUST be re-entered each session.
 - **FR-023**: After producing output, the system MUST drop in-memory references to sensitive material (document, image, decrypted key, password) on a best-effort basis.
 
@@ -158,7 +158,7 @@ A person without a digital signature image photographs their handwritten signatu
 - **SC-005**: The app is installable to the Android home screen and launches in standalone mode.
 - **SC-006**: On a signing-flow screen, the document occupies the majority of the viewport, with primary controls reachable without obscuring the signature target.
 - **SC-007**: An altered signed document is reported as invalid by a compliant reader in 100% of tamper tests.
-- **SC-008**: No user document, signature image, or password remains in on-device storage after a session; a certificate remains only if the user explicitly opted in to remember it.
+- **SC-008**: No user document or password remains in on-device storage after a session; a certificate or signature image remains only if the user explicitly opted in to remember it (and can clear it).
 - **SC-009**: Adding a second cryptographic signature leaves the first signature valid in a compliant reader in 100% of multi-signature tests.
 - **SC-010**: A user with no certificate can create one in-app and produce a validly-signed PDF in a single session, and can export both the `.p12` and the public `.cer`.
 
@@ -179,4 +179,4 @@ The three initial open questions were resolved with the product owner:
 
 - **Multi-signature scope**: v1 supports **full multi-signature** — multiple placements across pages and multiple cryptographic signature fields, applied via incremental signing so earlier signatures remain valid (FR-009, FR-013, FR-014).
 - **Certificate source**: originally bring-your-own `.p12` only; **later amended** (owner request) to ALSO support in-app self-signed `.p12` generation + export of the `.p12` and public `.cer` (FR-018). Rationale: most casual users have no certificate, and Adobe signs with a `.p12` Digital ID (not a `.p7c`, which is the public-cert-only export used for trust).
-- **Persistence for v1**: **remember the certificate** as an opt-in convenience (never the password or key); documents and signature images are not remembered (FR-020, FR-021, FR-022).
+- **Persistence for v1**: **remember the certificate and/or the last-used signature image** as independent opt-in conveniences (never the password or key); documents are not remembered (FR-020, FR-021, FR-022).

@@ -27,7 +27,9 @@ splice, and incremental subsequent signatures; `idb-keyval` (opt-in certificate 
 
 **Storage**: In-memory by default. IndexedDB (via `idb-keyval`) is used ONLY for the opt-in
 "remember certificate" convenience (stores the password-protected `.p12` bytes; NEVER the
-password or decrypted key). No document or signature-image persistence.
+password or decrypted key) and the opt-in "remember signature" convenience (stores the last-used
+signature image bytes + format). Both are explicit, disclosed, clearable, and never auto-saved.
+No document persistence.
 
 **Testing**: Vitest (unit/component); Playwright (E2E, headless Chromium — drives real
 in-browser signing and captures output); pyHanko CLI (Python — signature validation, the
@@ -65,7 +67,7 @@ Gates derived from Constitution v1.0.0 (6 principles):
 | III. Cryptographic Correctness (NON-NEG) | Real PKCS#7/CMS over correct ByteRange; no page mutation after placeholder; no mocked crypto; multi-sig via incremental updates | ✅ Design honors — see research R3/R4; **early spike required** to de-risk visible appearance + incremental multi-sign |
 | IV. Honest Security Posture & Purpose | UI discloses self-signed/no-timestamp; no legal-binding claims | ✅ FR-016/FR-022/FR-027; disclosure copy in Phase 1 UI contract |
 | V. Verify Against Real Readers (Test-First) | pyHanko/`pdfsig` validation gate + Acrobat spot-check; TDD | ⚠️ Honored, but CI deferred (git local per owner) → gate runs via `npm run verify:signatures`, **enforced by a local pre-push git hook (task T008)** until GitHub Actions is wired. Documented, not skipped |
-| VI. On-Device Data Minimization | In-memory default; opt-in cert only; never password/key | ✅ FR-020/021/022; `idb-keyval` cert-only store |
+| VI. On-Device Data Minimization | In-memory default; opt-in cert + signature image (disclosed, clearable); never password/key/document | ✅ FR-020/021/022; `idb-keyval` cert + signature store |
 
 **Result**: PASS. No violations. One accepted, documented deviation: the V gate is currently
 local-only (CI deferred) — it remains mandatory to run, just not yet automated on push.
@@ -104,7 +106,7 @@ src/
 │   ├── placement/            # drag/pinch model, normalized coordinates
 │   ├── signing/              # THE ENGINE: Tier A stamp + Tier B crypto + incremental multi-sign
 │   ├── ingest/               # image input (upload + camera capture) + optional background cleanup
-│   └── persistence/          # opt-in certificate store (idb-keyval)
+│   └── persistence/          # opt-in certificate + signature store (idb-keyval)
 ├── lib/                      # coordinate transforms, pdf byte utils, csp/manifest helpers
 └── styles/                   # Tailwind entry
 

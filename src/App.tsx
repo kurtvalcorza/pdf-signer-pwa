@@ -13,6 +13,12 @@ import { BadPasswordError, type PlacementInput } from './features/signing/types'
 import { CertSheet, type SignRequest } from './components/CertSheet';
 import { CleanupSheet } from './components/CleanupSheet';
 import { saveCertificate } from './features/persistence/certStore';
+import {
+  saveSignature,
+  loadSignature,
+  clearSignature,
+  hasRememberedSignature,
+} from './features/persistence/signatureStore';
 
 interface ImageAsset {
   url: string;
@@ -37,6 +43,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<'stamp' | 'cert' | 'clean'>('stamp');
+  // Opt-in "remember my signature" (image only, on-device — Principle VI).
+  const [rememberSig, setRememberSig] = useState(false);
+  const [hasSavedSig, setHasSavedSig] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -61,6 +70,17 @@ export default function App() {
       return next;
     });
   }, [placements, images]);
+
+  // Surface a previously remembered signature (opt-in) so "Use saved signature" appears.
+  useEffect(() => {
+    hasRememberedSignature().then(setHasSavedSig);
+  }, []);
+
+  // The "remember this signature" checkbox reflects a per-selection intent; reset it when
+  // the selection changes so it never implies a different image is the saved one.
+  useEffect(() => {
+    setRememberSig(false);
+  }, [selectedId]);
 
   // Render the current page whenever the doc or page changes.
   useEffect(() => {
@@ -116,6 +136,47 @@ export default function App() {
     },
     [doc, pageIndex],
   );
+
+  // Place the remembered signature onto the current page (opt-in convenience).
+  const useSavedSignature = useCallback(async () => {
+    if (!doc) return;
+    setError(null);
+    const saved = await loadSignature();
+    if (!saved) {
+      setHasSavedSig(false);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([saved.bytes as BlobPart]));
+    const id = `img_${++imageSeq.current}`;
+    setImages((m) => ({
+      ...m,
+      [id]: { url, bytes: saved.bytes, format: saved.format, originalBytes: saved.bytes },
+    }));
+    const placement = createPlacement(id, pageIndex);
+    setPlacements((ps) => [...ps, placement]);
+    setSelectedId(placement.id);
+  }, [doc, pageIndex]);
+
+  // Toggle remembering the currently-selected signature image (explicit opt-in).
+  const toggleRememberSignature = useCallback(
+    async (on: boolean, asset: ImageAsset | null) => {
+      setRememberSig(on);
+      if (on && asset) {
+        await saveSignature(asset.bytes, asset.format);
+        setHasSavedSig(true);
+      } else if (!on) {
+        await clearSignature();
+        setHasSavedSig(false);
+      }
+    },
+    [],
+  );
+
+  const forgetSignature = useCallback(async () => {
+    await clearSignature();
+    setHasSavedSig(false);
+    setRememberSig(false);
+  }, []);
 
   const updatePlacement = useCallback((p: Placement) => {
     setPlacements((ps) => ps.map((x) => (x.id === p.id ? p : x)));
@@ -321,6 +382,37 @@ export default function App() {
                 Clean up background
               </button>
             </div>
+
+            {hasSavedSig && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!doc}
+                  onClick={useSavedSignature}
+                  className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
+                >
+                  ↺ Use saved signature
+                </button>
+                <button
+                  type="button"
+                  onClick={forgetSignature}
+                  className="text-xs text-white/50 hover:text-white"
+                >
+                  Forget
+                </button>
+              </div>
+            )}
+
+            {selectedAsset && (
+              <label className="flex items-center gap-2 px-1 text-xs text-white/60">
+                <input
+                  type="checkbox"
+                  checked={rememberSig}
+                  onChange={(e) => toggleRememberSignature(e.target.checked, selectedAsset)}
+                />
+                Remember this signature on this device (image only, never leaves your phone)
+              </label>
+            )}
 
             {doc && doc.pageCount > 1 && (
               <div className="flex items-center justify-center gap-4 text-sm">
