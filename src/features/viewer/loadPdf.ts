@@ -30,15 +30,15 @@ export async function loadPdf(bytes: Uint8Array): Promise<LoadedPdf> {
 }
 
 /**
- * Cheap byte-level check for an existing signature dictionary. A bare `/ByteRange`
- * is too loose (it appears in unrelated content and false-positives), so require an
- * actual signature dictionary: a `/Type /Sig` object, or a `/ByteRange` paired with
- * a signature sub-filter. Match any Adobe (`adbe.*`: pkcs7.detached/sha1,
- * x509.rsa_sha1) or ETSI (`ETSI.*`: CAdES.detached, RFC3161 timestamp) sub-filter
- * rather than a fixed list, so legacy PKCS#1 and timestamp signatures also warn.
+ * Cheap byte-level check for an existing signature dictionary. A signature always
+ * carries a `/ByteRange` array of four integers (the byte ranges it covers), so we
+ * match that structure rather than a bare `/ByteRange [` (too loose — it false-
+ * positives on incidental text) or a `/SubFilter` (too strict — `/SubFilter` and
+ * `/Type /Sig` are both optional, so requiring them would miss a signature that omits
+ * them and drop the invalidation warning). Erring toward a warning is the safe bias.
  */
 function detectSignature(bytes: Uint8Array): boolean {
   const text = new TextDecoder('latin1').decode(bytes);
   if (text.includes('/Type /Sig') || text.includes('/Type/Sig')) return true;
-  return /\/ByteRange\s*\[/.test(text) && /\/SubFilter\s*\/(adbe\.|ETSI\.)/i.test(text);
+  return /\/ByteRange\s*\[\s*\d+\s+\d+\s+\d+\s+\d+/.test(text);
 }
