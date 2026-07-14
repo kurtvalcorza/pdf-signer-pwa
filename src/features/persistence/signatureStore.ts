@@ -8,20 +8,24 @@ import { get, set, del } from 'idb-keyval';
  */
 const KEY = 'pdf-signer:remembered-signature';
 
+// Data-minimization (FR-021/SC-008): store ONLY what's needed to re-place the image —
+// the bytes and how to embed them. No timestamps or other behavioral metadata.
 interface StoredSignature {
   bytes: Uint8Array;
   format: 'png' | 'jpeg';
-  savedAt: number;
 }
 
 // Storage may be unavailable (private mode / denied / quota). Opt-in persistence
 // is a convenience, so degrade to memory-only silently rather than erroring.
-export async function saveSignature(bytes: Uint8Array, format: 'png' | 'jpeg'): Promise<void> {
-  const record: StoredSignature = { bytes, format, savedAt: Date.now() };
+// Returns true only if the write actually landed, so the UI never advertises a
+// remembered signature that isn't really there.
+export async function saveSignature(bytes: Uint8Array, format: 'png' | 'jpeg'): Promise<boolean> {
+  const record: StoredSignature = { bytes, format };
   try {
     await set(KEY, record);
+    return true;
   } catch {
-    /* storage unavailable — remain memory-only */
+    return false; // storage unavailable — remain memory-only
   }
 }
 
@@ -34,11 +38,14 @@ export async function loadSignature(): Promise<{ bytes: Uint8Array; format: 'png
   }
 }
 
-export async function clearSignature(): Promise<void> {
+// Returns true only once the key is confirmed gone, so "Forget" can't falsely report
+// a signature cleared when the delete throws and it actually lingers in storage.
+export async function clearSignature(): Promise<boolean> {
   try {
     await del(KEY);
+    return (await get(KEY)) == null;
   } catch {
-    /* nothing to clear if storage is unavailable */
+    return false;
   }
 }
 

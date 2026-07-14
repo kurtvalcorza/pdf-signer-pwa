@@ -43,24 +43,25 @@ describe('signatureStore (opt-in signature-image persistence)', () => {
     expect(Array.from(loaded!.bytes)).toEqual(Array.from(BYTES));
   });
 
-  it('stores only bytes + format + savedAt — never a password or document', async () => {
+  it('stores only bytes + format — no timestamps or behavioral metadata (data-minimization)', async () => {
     await saveSignature(BYTES, 'jpeg');
     const raw = store.get('pdf-signer:remembered-signature') as Record<string, unknown>;
-    expect(Object.keys(raw).sort()).toEqual(['bytes', 'format', 'savedAt']);
+    expect(Object.keys(raw).sort()).toEqual(['bytes', 'format']);
   });
 
-  it('clears the remembered signature', async () => {
-    await saveSignature(BYTES, 'png');
-    await clearSignature();
+  it('reports success from save and clear', async () => {
+    expect(await saveSignature(BYTES, 'png')).toBe(true);
+    expect(await clearSignature()).toBe(true);
     expect(await hasRememberedSignature()).toBe(false);
     expect(await loadSignature()).toBeNull();
   });
 
-  it('degrades to memory-only silently when storage is unavailable', async () => {
+  it('degrades to memory-only and reports failure when storage is unavailable', async () => {
     failing = true;
-    await expect(saveSignature(BYTES, 'png')).resolves.toBeUndefined();
+    // save/clear must report false (not silently claim success) so the UI can stay honest.
+    await expect(saveSignature(BYTES, 'png')).resolves.toBe(false);
+    await expect(clearSignature()).resolves.toBe(false);
     await expect(loadSignature()).resolves.toBeNull();
     await expect(hasRememberedSignature()).resolves.toBe(false);
-    await expect(clearSignature()).resolves.toBeUndefined();
   });
 });

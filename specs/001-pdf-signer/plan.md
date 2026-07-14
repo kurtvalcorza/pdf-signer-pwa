@@ -22,7 +22,7 @@ collapsing bottom sheet for controls.
 `pdfjs-dist` (page preview); `pdf-lib` (PDF assembly + signature field/widget/appearance
 construction); `@signpdf/signpdf` + `@signpdf/placeholder-pdf-lib` + `@signpdf/placeholder-plain`
 + `@signpdf/signer-p12` (over `node-forge`) for ByteRange placeholder, CMS signing, byte-safe
-splice, and incremental subsequent signatures; `idb-keyval` (opt-in certificate persistence);
+splice, and incremental subsequent signatures; `idb-keyval` (opt-in certificate + signature-image persistence);
 `vite-plugin-node-polyfills` (Buffer/process polyfills required by node-forge/@signpdf).
 
 **Storage**: In-memory by default. IndexedDB (via `idb-keyval`) is used ONLY for the opt-in

@@ -160,12 +160,14 @@ export default function App() {
   // Toggle remembering the currently-selected signature image (explicit opt-in).
   const toggleRememberSignature = useCallback(
     async (on: boolean, asset: ImageAsset | null) => {
-      setRememberSig(on);
+      setRememberSig(on); // reflect the toggle immediately (controlled input)
       if (on && asset) {
-        await saveSignature(asset.bytes, asset.format);
-        setHasSavedSig(true);
-      } else if (!on) {
-        await clearSignature();
+        // Reconcile to what actually persisted: if the write didn't land (storage denied),
+        // revert so the UI never advertises a saved signature that isn't there.
+        const ok = await saveSignature(asset.bytes, asset.format);
+        setRememberSig(ok);
+        setHasSavedSig(ok);
+      } else if (await clearSignature()) {
         setHasSavedSig(false);
       }
     },
@@ -173,9 +175,11 @@ export default function App() {
   );
 
   const forgetSignature = useCallback(async () => {
-    await clearSignature();
-    setHasSavedSig(false);
-    setRememberSig(false);
+    // Only drop the UI's saved state once the delete is confirmed (clearable promise).
+    if (await clearSignature()) {
+      setHasSavedSig(false);
+      setRememberSig(false);
+    }
   }, []);
 
   const updatePlacement = useCallback((p: Placement) => {
@@ -255,7 +259,7 @@ export default function App() {
   );
 
   const applyCleaned = useCallback(
-    (cleaned: Uint8Array) => {
+    async (cleaned: Uint8Array) => {
       const sel = placements.find((p) => p.id === selectedId);
       if (!sel) return;
       const imageId = sel.imageId;
@@ -267,9 +271,17 @@ export default function App() {
           [imageId]: { ...prev, url: URL.createObjectURL(new Blob([cleaned as BlobPart])), bytes: cleaned, format: 'png' },
         };
       });
+      // The selected image's bytes just changed. A prior "remember" opt-in referred to
+      // the pre-cleanup bytes, so drop it rather than leave a stale copy in storage — the
+      // user can re-opt-in to the cleaned signature (persistence stays explicit, never auto).
+      if (rememberSig) {
+        await clearSignature();
+        setRememberSig(false);
+        setHasSavedSig(false);
+      }
       setMode('stamp');
     },
-    [selectedId, placements],
+    [selectedId, placements, rememberSig],
   );
 
   const selectedPlacement = placements.find((p) => p.id === selectedId) ?? null;

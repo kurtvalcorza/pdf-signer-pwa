@@ -47,3 +47,27 @@ test('US: opt-in remember signature persists across a reload and can be reused, 
 
   expect(external, `unexpected external requests: ${external.join(', ')}`).toEqual([]);
 });
+
+test('cleaning the background of a remembered signature drops the stale saved copy', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
+  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
+  await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
+
+  // Opt in to remember, then clean the background of that same signature.
+  const remember = page.getByRole('checkbox', { name: /Remember this signature/ });
+  await remember.check();
+  await expect(page.getByRole('button', { name: /Use saved signature/ })).toBeVisible();
+
+  await page.getByRole('button', { name: /Clean up background/ }).click();
+  await page.locator('input[type="range"]').fill('180');
+  await page.getByRole('button', { name: /Use cleaned/ }).click();
+
+  // The saved copy referred to the pre-cleanup bytes, so it's dropped — re-opt-in required,
+  // and no stale image lingers to be restored later.
+  await expect(remember).not.toBeChecked();
+  await expect(page.getByRole('button', { name: /Use saved signature/ })).toBeHidden();
+});
