@@ -38,6 +38,33 @@ export interface PdfRect {
   h: number;
 }
 
+/** Parameters for pdf-lib `drawImage` that place an upright box on a (possibly rotated) page. */
+export interface DrawParams {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Rotation to pass to pdf-lib (degrees), so the drawn content reads upright to the viewer. */
+  rotate: Rotation;
+}
+
+/** Layout for a signature-widget appearance form XObject on a (possibly rotated) page. */
+export interface AppearanceLayout {
+  /** Natural (upright) content width in points. */
+  widthPt: number;
+  /** Natural (upright) content height in points. */
+  heightPt: number;
+  /** Form XObject `/Matrix` that pre-rotates the appearance so page `/Rotate` renders it upright. */
+  matrix: [number, number, number, number, number, number];
+}
+
+/** Displayed (post-`/Rotate`) page dimensions in points. */
+function displayDims(page: PageGeom): { Wd: number; Hd: number } {
+  return page.rotation === 90 || page.rotation === 270
+    ? { Wd: page.heightPt, Hd: page.widthPt }
+    : { Wd: page.widthPt, Hd: page.heightPt };
+}
+
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 /** Screen point (within a rendered page element `rect`) → normalized 0..1 (top-left origin). */
@@ -93,4 +120,61 @@ export function normalizedBoxToPdfRect(box: NormBox, page: PageGeom): PdfRect {
   }
   // rotation 0: flip y (top-left → bottom-left)
   return { x: box.nx * W, y: H - (box.ny + box.nh) * H, w, h };
+}
+
+/**
+ * Draw parameters for a signature IMAGE placed as page content (Tier A / stampVisual).
+ *
+ * The box is upright in *display* space; on a rotated page the drawn content must be
+ * counter-rotated so the viewer sees it upright. Returns the pivot, size and rotation
+ * for pdf-lib's `drawImage` (whose CTM is translate(x,y)·rotate(θ)·scale(w,h)).
+ */
+export function normalizedBoxToDrawParams(box: NormBox, page: PageGeom): DrawParams {
+  const { widthPt: W, heightPt: H, rotation } = page;
+  const { Wd, Hd } = displayDims(page);
+
+  const dw = box.nw * Wd; // box size in display points
+  const dh = box.nh * Hd;
+  const dx0 = box.nx * Wd; // box lower-left in display points (top-left origin flipped)
+  const dy0 = Hd - (box.ny + box.nh) * Hd;
+
+  switch (rotation) {
+    case 90:
+      return { x: W - dy0, y: dx0, width: dw, height: dh, rotate: 90 };
+    case 180:
+      return { x: W - dx0, y: H - dy0, width: dw, height: dh, rotate: 180 };
+    case 270:
+      return { x: dy0, y: H - dx0, width: dw, height: dh, rotate: 270 };
+    default:
+      return { x: dx0, y: dy0, width: dw, height: dh, rotate: 0 };
+  }
+}
+
+/**
+ * Appearance layout for a signature WIDGET (Tier B / signFirst). The widget `/Rect`
+ * is axis-aligned in user space (use {@link normalizedBoxToPdfRect}); when the page
+ * is displayed with `/Rotate`, that widget rotates with it. To keep the appearance
+ * upright we draw the content in an upright box of `widthPt × heightPt` and set the
+ * form XObject `/Matrix` to a pre-rotation that cancels the page rotation.
+ */
+export function appearanceLayout(box: NormBox, page: PageGeom): AppearanceLayout {
+  const { Wd, Hd } = displayDims(page);
+  const widthPt = box.nw * Wd;
+  const heightPt = box.nh * Hd;
+  const w = widthPt;
+  const h = heightPt;
+
+  // Rotate the content +rotation° CCW so it appears upright after the viewer applies
+  // the page's clockwise /Rotate. Each matrix also carries a translation term that
+  // shifts the rotated content box [0,w]×[0,h] back into positive space so the
+  // transformed BBox is [0,rotatedW]×[0,rotatedH]. A spec-compliant reader re-fits
+  // the transformed BBox into the widget /Rect regardless, but keeping it positive
+  // avoids clipping/offset in readers that don't implement that fit precisely.
+  const matrix: Record<Rotation, AppearanceLayout['matrix']> = {
+    0: [1, 0, 0, 1, 0, 0],
+    90: [0, 1, -1, 0, h, 0],
+    180: [-1, 0, 0, -1, w, h],
+    270: [0, -1, 1, 0, 0, w],
+  };
+  return { widthPt, heightPt, matrix: matrix[page.rotation] };
 }

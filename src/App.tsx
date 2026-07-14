@@ -43,6 +43,24 @@ export default function App() {
   const pdfInput = useRef<HTMLInputElement>(null);
   const imgInput = useRef<HTMLInputElement>(null);
   const camInput = useRef<HTMLInputElement>(null);
+  const imageSeq = useRef(0);
+
+  // Free any image asset no longer referenced by a placement (removed, or cleared on
+  // opening a new PDF). Revokes its object URL so blobs don't leak for the session.
+  useEffect(() => {
+    const used = new Set(placements.map((p) => p.imageId));
+    const orphanIds = Object.keys(images).filter((id) => !used.has(id));
+    if (orphanIds.length === 0) return;
+    // Revoke outside the setState updater (updaters must stay pure).
+    for (const id of orphanIds) {
+      if (images[id]?.url) URL.revokeObjectURL(images[id].url);
+    }
+    setImages((m) => {
+      const next = { ...m };
+      for (const id of orphanIds) delete next[id];
+      return next;
+    });
+  }, [placements, images]);
 
   // Render the current page whenever the doc or page changes.
   useEffect(() => {
@@ -71,6 +89,7 @@ export default function App() {
       }
       setDoc({ bytes, pageCount: info.pageCount, name: file.name });
       setPlacements([]);
+      setSelectedId(null);
       setPageIndex(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -84,7 +103,9 @@ export default function App() {
       try {
         const { bytes, format } = await readImageFile(file);
         const url = URL.createObjectURL(new Blob([bytes as BlobPart]));
-        const id = `img_${Object.keys(images).length + 1}`;
+        // Monotonic id: never reuse a number even after images are pruned, so a new
+        // asset can't collide with an existing key.
+        const id = `img_${++imageSeq.current}`;
         setImages((m) => ({ ...m, [id]: { url, bytes, format, originalBytes: bytes } }));
         const placement = createPlacement(id, pageIndex);
         setPlacements((ps) => [...ps, placement]);
@@ -93,7 +114,7 @@ export default function App() {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [doc, images, pageIndex],
+    [doc, pageIndex],
   );
 
   const updatePlacement = useCallback((p: Placement) => {

@@ -12,7 +12,10 @@ export function downloadBytes(bytes: Uint8Array, filename: string, mime: string)
     a.rel = 'noopener';
     a.click();
   } finally {
-    URL.revokeObjectURL(url);
+    // Revoke on a later tick (not synchronously): revoking right after click can
+    // cancel the download before the browser has read the blob, notably on
+    // mobile/Firefox. The `finally` still guarantees revocation if click() throws.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 }
 

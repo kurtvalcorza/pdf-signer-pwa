@@ -4,7 +4,12 @@ import { P12Signer } from '@signpdf/signer-p12';
 import { pdflibAddPlaceholder } from '@signpdf/placeholder-pdf-lib';
 import type { PlacementInput, Pkcs12 } from './types';
 import { verifyCertPassword, getSignerCommonName } from './cert';
-import { clampBox, normalizedBoxToPdfRect, type Rotation } from '../../lib/coords';
+import {
+  clampBox,
+  normalizedBoxToPdfRect,
+  appearanceLayout,
+  type Rotation,
+} from '../../lib/coords';
 
 export interface SignFirstOptions {
   /** Show "Digitally signed by {name}" text beside the image (Adobe-style). Default true. */
@@ -15,11 +20,52 @@ export interface SignFirstOptions {
   displayName?: string;
 }
 
-const escPdf = (s: string) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+/**
+ * Windows-1252 high block (0x80–0x9F): Unicode code point → CP1252 byte. WinAnsiEncoding
+ * renders these glyphs (smart quotes, dashes, €, …); their Unicode code points are > 0xFF,
+ * so we must emit the raw CP1252 byte rather than the (truncated) code point.
+ */
+const CP1252_HIGH_BYTE: Record<number, number> = {
+  0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86,
+  0x2021: 0x87, 0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c,
+  0x017d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95,
+  0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98, 0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b,
+  0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f,
+};
+
+/** WinAnsi byte for a Unicode code point a StandardFont can render, else null. */
+const winAnsiByte = (c: number): number | null =>
+  (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) ? c : (CP1252_HIGH_BYTE[c] ?? null);
+
+/**
+ * Sanitize text to what a StandardFont (WinAnsiEncoding) can render, for glyph
+ * measurement: printable ASCII, the Latin-1 supplement, and the CP1252 high block.
+ * Anything else — CJK, emoji, control chars — becomes '?', so `widthOfTextAtSize`
+ * never throws and the signer's name degrades gracefully instead of failing the sign.
+ */
+const toWinAnsi = (s: string): string =>
+  Array.from(s, (ch) => (winAnsiByte(ch.codePointAt(0)!) === null ? '?' : ch)).join('');
+
+/**
+ * Encode text as a PDF literal-string body: each character becomes its WinAnsi byte
+ * (unrenderable → '?'), with `\ ( )` escaped. Emitting the byte — not the JS code
+ * point — is what keeps CP1252 punctuation from being truncated by pdf-lib's stream
+ * serialization (which writes `charCodeAt & 0xff`).
+ */
+const escPdf = (s: string): string =>
+  Array.from(s, (ch) => {
+    const byte = winAnsiByte(ch.codePointAt(0)!) ?? 0x3f; // '?'
+    const out = String.fromCharCode(byte);
+    return byte === 0x5c || byte === 0x28 || byte === 0x29 ? `\\${out}` : out;
+  }).join('');
 
 function formatDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  // Local wall-clock time with an explicit UTC offset, so the appearance is
+  // unambiguous across timezones (e.g. "2026.07.14 11:45 +08:00").
+  const offMin = -d.getTimezoneOffset();
+  const tz = `${offMin >= 0 ? '+' : '-'}${p(Math.floor(Math.abs(offMin) / 60))}:${p(Math.abs(offMin) % 60)}`;
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${tz}`;
 }
 
 /**
@@ -58,13 +104,17 @@ export async function signFirst(
   const { width, height } = page.getSize();
   const rotation = (((page.getRotation().angle % 360) + 360) % 360) as Rotation;
   const box = clampBox({ nx: placement.nx, ny: placement.ny, nw: placement.nw, nh: placement.nh });
-  const rect = normalizedBoxToPdfRect(box, { widthPt: width, heightPt: height, rotation });
+  const geom = { widthPt: width, heightPt: height, rotation };
+  const rect = normalizedBoxToPdfRect(box, geom);
   const widgetRect: [number, number, number, number] = [
     rect.x,
     rect.y,
     rect.x + rect.w,
     rect.y + rect.h,
   ];
+  // Content is composed upright in this box; a /Matrix pre-rotation keeps it upright
+  // on rotated pages (the widget /Rect above rotates with the page).
+  const appearance = appearanceLayout(box, geom);
 
   // Embed the image as an XObject we can reference from the appearance stream.
   const image =
@@ -87,15 +137,22 @@ export async function signFirst(
   const widget = lastWidget(doc, page);
   const apDict = widget.lookup(PDFName.of('AP'), PDFDict);
 
-  const { content: apContent, resources } = await buildAppearance(doc, rect.w, rect.h, image.ref, {
-    name: showLabel ? signerName : null,
-    dateStr: showDate ? `Date: ${formatDate(new Date())}` : null,
-  });
+  const { content: apContent, resources } = await buildAppearance(
+    doc,
+    appearance.widthPt,
+    appearance.heightPt,
+    image.ref,
+    {
+      name: showLabel ? signerName : null,
+      dateStr: showDate ? `Date: ${formatDate(new Date())}` : null,
+    },
+  );
   const apStream = doc.context.stream(apContent, {
     Type: 'XObject',
     Subtype: 'Form',
     FormType: 1,
-    BBox: [0, 0, rect.w, rect.h],
+    BBox: [0, 0, appearance.widthPt, appearance.heightPt],
+    Matrix: appearance.matrix,
     Resources: resources,
   } as Parameters<typeof doc.context.stream>[1]);
   apDict.set(PDFName.of('N'), doc.context.register(apStream));
@@ -129,9 +186,10 @@ async function buildAppearance(
   imageRef: PDFRef,
   opts: { name: string | null; dateStr: string | null },
 ): Promise<{ content: string; resources: Record<string, unknown> }> {
+  // Sanitize up front so glyph measurement and stream emission agree on encodable text.
   const lines: string[] = [];
-  if (opts.name) lines.push('Digitally signed by', opts.name);
-  if (opts.dateStr) lines.push(opts.dateStr);
+  if (opts.name) lines.push('Digitally signed by', toWinAnsi(opts.name));
+  if (opts.dateStr) lines.push(toWinAnsi(opts.dateStr));
 
   if (lines.length === 0) {
     return {
