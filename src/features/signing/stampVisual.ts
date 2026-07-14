@@ -1,6 +1,6 @@
 import { PDFDocument, degrees } from 'pdf-lib';
 import type { PlacementInput } from './types';
-import { clampBox, normalizedBoxToDrawParams, type Rotation } from '../../lib/coords';
+import { clampBox, containNormBox, normalizedBoxToDrawParams, type Rotation } from '../../lib/coords';
 
 /**
  * Tier A — draw each signature image onto its target page as page content
@@ -25,12 +25,17 @@ export async function stampVisual(
     const box = clampBox({ nx: p.nx, ny: p.ny, nw: p.nw, nh: p.nh });
     const { width, height } = page.getSize();
     const rotation = (((page.getRotation().angle % 360) + 360) % 360) as Rotation;
-    const draw = normalizedBoxToDrawParams(box, { widthPt: width, heightPt: height, rotation });
+    const geom = { widthPt: width, heightPt: height, rotation };
 
     const image =
       p.format === 'png'
         ? await doc.embedPng(p.imageBytes)
         : await doc.embedJpg(p.imageBytes);
+
+    // Preserve the image's aspect ratio inside the placement box (matches the on-screen
+    // `object-contain` preview) instead of stretching to fill it.
+    const contained = containNormBox(box, geom, image.width, image.height);
+    const draw = normalizedBoxToDrawParams(contained, geom);
 
     page.drawImage(image, {
       x: draw.x,

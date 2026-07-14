@@ -6,6 +6,7 @@ import type { PlacementInput, Pkcs12 } from './types';
 import { verifyCertPassword, getSignerCommonName } from './cert';
 import {
   clampBox,
+  containIn,
   normalizedBoxToPdfRect,
   appearanceLayout,
   type Rotation,
@@ -141,7 +142,7 @@ export async function signFirst(
     doc,
     appearance.widthPt,
     appearance.heightPt,
-    image.ref,
+    image,
     {
       name: showLabel ? signerName : null,
       dateStr: showDate ? `Date: ${formatDate(new Date())}` : null,
@@ -183,7 +184,7 @@ async function buildAppearance(
   doc: PDFDocument,
   w: number,
   h: number,
-  imageRef: PDFRef,
+  image: { ref: PDFRef; width: number; height: number },
   opts: { name: string | null; dateStr: string | null },
 ): Promise<{ content: string; resources: Record<string, unknown> }> {
   // Sanitize up front so glyph measurement and stream emission agree on encodable text.
@@ -191,20 +192,28 @@ async function buildAppearance(
   if (opts.name) lines.push('Digitally signed by', toWinAnsi(opts.name));
   if (opts.dateStr) lines.push(toWinAnsi(opts.dateStr));
 
+  // Draw the image preserving its aspect ratio inside a region, centered — never stretched.
+  const drawImg = (regionW: number, regionH: number, regionX: number, regionY: number) => {
+    const fit = containIn(regionW, regionH, image.width, image.height);
+    const x = (regionX + fit.dx).toFixed(2);
+    const y = (regionY + fit.dy).toFixed(2);
+    return `q ${fit.width.toFixed(2)} 0 0 ${fit.height.toFixed(2)} ${x} ${y} cm /Img Do Q`;
+  };
+
   if (lines.length === 0) {
     return {
-      content: `q ${w} 0 0 ${h} 0 0 cm /Img Do Q`,
-      resources: { XObject: { Img: imageRef } },
+      content: drawImg(w, h, 0, 0),
+      resources: { XObject: { Img: image.ref } },
     };
   }
 
   const helv = await doc.embedFont(StandardFonts.Helvetica);
 
   // Image on the left; text fills the rest with a small margin on each side.
-  const imgW = w * 0.28;
-  const imgH = h * 0.82;
-  const imgX = w * 0.02;
-  const imgY = h * 0.09;
+  const regionW = w * 0.28;
+  const regionH = h * 0.82;
+  const regionX = w * 0.02;
+  const regionY = h * 0.09;
   const textX = w * 0.34;
   const maxTextW = w * 0.64; // textX + maxTextW ≈ 0.98·w
 
@@ -220,7 +229,7 @@ async function buildAppearance(
   const gap = s * gapFrac;
   const totalH = s * n + gap * (n - 1);
 
-  const parts = [`q ${imgW} 0 0 ${imgH} ${imgX} ${imgY} cm /Img Do Q`];
+  const parts = [drawImg(regionW, regionH, regionX, regionY)];
   let top = (h + totalH) / 2; // vertically centered block
   for (const text of lines) {
     const baseline = top - s * 0.8;
@@ -232,6 +241,6 @@ async function buildAppearance(
 
   return {
     content: parts.join('\n'),
-    resources: { XObject: { Img: imageRef }, Font: { FL: helv.ref } },
+    resources: { XObject: { Img: image.ref }, Font: { FL: helv.ref } },
   };
 }

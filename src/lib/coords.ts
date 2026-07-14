@@ -123,6 +123,42 @@ export function normalizedBoxToPdfRect(box: NormBox, page: PageGeom): PdfRect {
 }
 
 /**
+ * Fit a `imgW × imgH` box inside a `boxW × boxH` box preserving aspect ratio ("contain"),
+ * centered. Returns the fitted size and the offset from the outer box's origin. Mirrors the
+ * on-screen preview's `object-contain`, so the exported image matches what the user placed.
+ */
+export function containIn(
+  boxW: number,
+  boxH: number,
+  imgW: number,
+  imgH: number,
+): { width: number; height: number; dx: number; dy: number } {
+  if (imgW <= 0 || imgH <= 0) return { width: boxW, height: boxH, dx: 0, dy: 0 };
+  const scale = Math.min(boxW / imgW, boxH / imgH);
+  const width = imgW * scale;
+  const height = imgH * scale;
+  return { width, height, dx: (boxW - width) / 2, dy: (boxH - height) / 2 };
+}
+
+/**
+ * Shrink a normalized box to an image's aspect ratio ("contain"), re-centered within the
+ * original box — all in display space, so the result feeds straight back into
+ * {@link normalizedBoxToDrawParams} with the page-rotation math unchanged.
+ */
+export function containNormBox(box: NormBox, page: PageGeom, imgW: number, imgH: number): NormBox {
+  const { Wd, Hd } = displayDims(page);
+  const fit = containIn(box.nw * Wd, box.nh * Hd, imgW, imgH);
+  const cnw = fit.width / Wd;
+  const cnh = fit.height / Hd;
+  return {
+    nx: box.nx + (box.nw - cnw) / 2,
+    ny: box.ny + (box.nh - cnh) / 2,
+    nw: cnw,
+    nh: cnh,
+  };
+}
+
+/**
  * Draw parameters for a signature IMAGE placed as page content (Tier A / stampVisual).
  *
  * The box is upright in *display* space; on a rotated page the drawn content must be

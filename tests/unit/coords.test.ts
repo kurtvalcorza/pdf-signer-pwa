@@ -4,6 +4,8 @@ import {
   normalizedBoxToPdfRect,
   normalizedBoxToDrawParams,
   appearanceLayout,
+  containIn,
+  containNormBox,
   isWithinPage,
   type PageGeom,
   type NormBox,
@@ -83,6 +85,47 @@ function aabbOfDraw(dp: DrawParams) {
   const y0 = Math.min(...ys);
   return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
 }
+
+describe('containIn (aspect-preserving fit)', () => {
+  it('letterboxes a wide image inside a square box (centered vertically)', () => {
+    // 4:1 image into a 100×100 box → 100×25, centered with dy = 37.5.
+    expect(containIn(100, 100, 4, 1)).toEqual({ width: 100, height: 25, dx: 0, dy: 37.5 });
+  });
+
+  it('pillarboxes a tall image inside a wide box (centered horizontally)', () => {
+    // 1:4 image into a 100×100 box → 25×100, centered with dx = 37.5.
+    expect(containIn(100, 100, 1, 4)).toEqual({ width: 25, height: 100, dx: 37.5, dy: 0 });
+  });
+
+  it('fills exactly when aspects match (no offset)', () => {
+    expect(containIn(200, 100, 8, 4)).toEqual({ width: 200, height: 100, dx: 0, dy: 0 });
+  });
+
+  it('falls back to the full box for a degenerate image size', () => {
+    expect(containIn(50, 30, 0, 0)).toEqual({ width: 50, height: 30, dx: 0, dy: 0 });
+  });
+});
+
+describe('containNormBox (aspect-preserving box in display space)', () => {
+  it('shrinks a box to a wide image aspect and re-centers it', () => {
+    const page: PageGeom = { widthPt: 200, heightPt: 400, rotation: 0 };
+    // Box 0.5×0.5 → 100×200 pt. A 4:1 image contains to 100×25 pt → nh = 25/400 = 0.0625.
+    const box: NormBox = { nx: 0.25, ny: 0.25, nw: 0.5, nh: 0.5 };
+    const c = containNormBox(box, page, 4, 1);
+    expect(c.nw).toBeCloseTo(0.5, 6); // width unchanged (width-limited)
+    expect(c.nh).toBeCloseTo(0.0625, 6);
+    expect(c.nx).toBeCloseTo(0.25, 6); // still centered horizontally
+    expect(c.ny).toBeCloseTo(0.25 + (0.5 - 0.0625) / 2, 6); // re-centered vertically
+  });
+
+  it('accounts for rotated display dims (90°) when fitting', () => {
+    const page: PageGeom = { widthPt: 200, heightPt: 400, rotation: 90 };
+    // Displayed dims are 400×200. Box 0.5×0.5 → 200×100 display pt; a 4:1 image → 200×50.
+    const c = containNormBox({ nx: 0.25, ny: 0.25, nw: 0.5, nh: 0.5 }, page, 4, 1);
+    expect(c.nw).toBeCloseTo(0.5, 6);
+    expect(c.nh).toBeCloseTo(50 / 200, 6);
+  });
+});
 
 describe('normalizedBoxToDrawParams', () => {
   const box: NormBox = { nx: 0.15, ny: 0.62, nw: 0.4, nh: 0.1 };
