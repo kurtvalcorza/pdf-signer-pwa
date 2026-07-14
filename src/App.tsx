@@ -350,22 +350,28 @@ export default function App() {
               type="button"
               disabled={!doc || placements.length === 0 || busy}
               onClick={applyAndDownload}
-              className="rounded-lg bg-blue-500 px-4 py-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
+              className="rounded-lg bg-blue-500 px-4 pb-1 pt-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
             >
-              {busy ? 'Preparing…' : `Apply & Download${placements.length ? ` (${placements.length})` : ''}`}
+              {busy ? 'Preparing…' : `Stamp image & Download${placements.length ? ` (${placements.length})` : ''}`}
+              <span className="block text-xs font-normal text-white/70">
+                Visible image only — no digital certificate
+              </span>
             </button>
 
             <button
               type="button"
               disabled={!doc || placements.length === 0 || busy}
               onClick={() => setMode('cert')}
-              className="rounded-lg border border-white/15 px-4 py-3 text-sm font-medium hover:bg-white/5 disabled:opacity-40"
+              className="rounded-lg border border-white/15 px-4 pb-1 pt-3 text-sm font-medium hover:bg-white/5 disabled:opacity-40"
             >
-              Sign with a certificate (.p12)…
+              Sign with a digital certificate (.p12)…
+              <span className="block text-xs font-normal text-white/50">
+                Adds a verifiable digital signature you can validate in a PDF reader
+              </span>
             </button>
 
             <p className="px-1 text-xs text-white/40">
-              Private &amp; on-device — nothing leaves your phone. A visible signature or an
+              Private &amp; on-device — nothing leaves your phone. A visible stamp or an
               optional digital signature, not a legally-binding e-signature service.
             </p>
           </div>
