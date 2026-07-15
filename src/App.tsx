@@ -10,7 +10,7 @@ import { downloadPdf, exportVisualStamped } from './features/signing/export';
 import { stampVisual } from './features/signing/stampVisual';
 import { signFirst } from './features/signing/signFirst';
 import { signIncremental } from './features/signing/signIncremental';
-import { BadPasswordError, type PlacementInput } from './features/signing/types';
+import { BadPasswordError, CertificationLockedError, type PlacementInput } from './features/signing/types';
 import { CertSheet, type SignRequest } from './components/CertSheet';
 import { CleanupSheet } from './components/CleanupSheet';
 import { saveCertificate } from './features/persistence/certStore';
@@ -26,6 +26,9 @@ interface ImageAsset {
   bytes: Uint8Array;
   format: 'png' | 'jpeg';
   originalBytes: Uint8Array;
+  /** True if these bytes were placed from the remembered-signature store, so mutating
+   * them (e.g. background cleanup) must also drop the now-stale stored copy. */
+  fromSaved?: boolean;
 }
 
 interface Doc {
@@ -159,7 +162,7 @@ export default function App() {
     const id = `img_${++imageSeq.current}`;
     setImages((m) => ({
       ...m,
-      [id]: { url, bytes: saved.bytes, format: saved.format, originalBytes: saved.bytes },
+      [id]: { url, bytes: saved.bytes, format: saved.format, originalBytes: saved.bytes, fromSaved: true },
     }));
     const placement = createPlacement(id, pageIndex);
     setPlacements((ps) => [...ps, placement]);
@@ -171,13 +174,24 @@ export default function App() {
     async (on: boolean, asset: ImageAsset | null) => {
       setRememberSig(on); // reflect the toggle immediately (controlled input)
       if (on && asset) {
-        // Reconcile to what actually persisted: if the write didn't land (storage denied),
-        // revert so the UI never advertises a saved signature that isn't there.
         const ok = await saveSignature(asset.bytes, asset.format);
-        setRememberSig(ok);
-        setHasSavedSig(ok);
+        if (ok) {
+          setHasSavedSig(true);
+        } else {
+          // The write didn't land. An OLDER record may still exist (a failed overwrite
+          // doesn't delete it), so reconcile both flags to what is actually persisted
+          // rather than to the attempted operation.
+          setRememberSig(false);
+          setHasSavedSig(await hasRememberedSignature());
+        }
       } else if (await clearSignature()) {
         setHasSavedSig(false);
+      } else {
+        // The delete didn't land — the record persists, so reflect that truth instead
+        // of an unchecked box that would hide a signature still sitting in storage.
+        const stillSaved = await hasRememberedSignature();
+        setRememberSig(stillSaved);
+        setHasSavedSig(stillSaved);
       }
     },
     [],
@@ -253,7 +267,7 @@ export default function App() {
           try {
             signed = await signIncremental(doc.bytes, toInput(crypto), cert);
           } catch (e) {
-            if (e instanceof BadPasswordError) throw e;
+            if (e instanceof BadPasswordError || e instanceof CertificationLockedError) throw e;
             // The incremental signer can't parse every PDF structure (e.g. cross-reference
             // streams). Fail honestly rather than silently falling back to a path that would
             // invalidate the existing signatures.
@@ -311,20 +325,29 @@ export default function App() {
         if (prev?.url) URL.revokeObjectURL(prev.url);
         return {
           ...m,
-          [imageId]: { ...prev, url: URL.createObjectURL(new Blob([cleaned as BlobPart])), bytes: cleaned, format: 'png' },
+          [imageId]: {
+            ...prev,
+            url: URL.createObjectURL(new Blob([cleaned as BlobPart])),
+            bytes: cleaned,
+            format: 'png',
+            // The cleaned bytes are no longer what the store holds.
+            fromSaved: false,
+          },
         };
       });
-      // The selected image's bytes just changed. A prior "remember" opt-in referred to
-      // the pre-cleanup bytes, so drop it rather than leave a stale copy in storage — the
-      // user can re-opt-in to the cleaned signature (persistence stays explicit, never auto).
-      if (rememberSig) {
+      // The selected image's bytes just changed. If those bytes are what the store holds
+      // — a prior "remember" opt-in OR an image placed via "Use saved signature" — drop
+      // the stored copy rather than leave a stale one that a later reuse would restore;
+      // the user can re-opt-in to the cleaned signature (persistence stays explicit,
+      // never auto). Reconcile to what's actually persisted in case the delete fails.
+      if (rememberSig || images[imageId]?.fromSaved) {
         await clearSignature();
         setRememberSig(false);
-        setHasSavedSig(false);
+        setHasSavedSig(await hasRememberedSignature());
       }
       setMode('stamp');
     },
-    [selectedId, placements, rememberSig],
+    [selectedId, placements, rememberSig, images],
   );
 
   const selectedPlacement = placements.find((p) => p.id === selectedId) ?? null;

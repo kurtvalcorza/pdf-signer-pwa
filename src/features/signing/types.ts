@@ -23,3 +23,19 @@ export class BadPasswordError extends Error {
     this.name = 'BadPasswordError';
   }
 }
+
+/**
+ * Thrown when the loaded PDF carries a certification (DocMDP) signature whose policy
+ * disallows any further changes — appending even an incremental signature would be a
+ * disallowed modification, so compliant validators would flag the certification as
+ * broken. The document is left untouched.
+ */
+export class CertificationLockedError extends Error {
+  constructor(
+    message = 'This PDF is certified with a “no changes allowed” policy. Adding any ' +
+      'signature would break that certification, so it was not signed.',
+  ) {
+    super(message);
+    this.name = 'CertificationLockedError';
+  }
+}

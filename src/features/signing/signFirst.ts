@@ -134,6 +134,17 @@ export async function signFirst(
     widgetRect,
   });
 
+  // pdf-lib omits /Type on the AcroForm dict, but a later incremental counter-sign
+  // (signIncremental → placeholder-plain) re-finds the form by scanning for
+  // "/Type /AcroForm" as the dict's FIRST entry; without it the update rewrites
+  // /Fields with only the new widget and this signature vanishes from validators.
+  // Reorder the dict so /Type /AcroForm leads and /Fields follows.
+  const acro = doc.catalog.lookup(PDFName.of('AcroForm'), PDFDict);
+  const acroEntries = acro.entries().filter(([k]) => k !== PDFName.of('Type'));
+  for (const [k] of [...acro.entries()]) acro.delete(k);
+  acro.set(PDFName.of('Type'), PDFName.of('AcroForm'));
+  for (const [k, v] of acroEntries) acro.set(k, v);
+
   // Replace the widget's empty appearance (AP.N) with the composed image (+ text).
   const widget = lastWidget(doc, page);
   const apDict = widget.lookup(PDFName.of('AP'), PDFDict);
