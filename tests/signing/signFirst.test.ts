@@ -99,6 +99,32 @@ describe('signFirst (Tier B — image-appearance signature)', () => {
     expect(text).toContain('Digitally signed by');
   }, 30000);
 
+  it('preserves the image aspect ratio in the appearance (no stretch)', async () => {
+    // A 4:1 image drawn image-only into a 0.4×0.1 box on a 300×400 page. The box is
+    // 120×40 pt (3:1), so a stretch-to-fill would draw 120×40; a contained fit keeps
+    // the image 4:1 → 120×30, centered (dy = 5).
+    const wide = Uint8Array.from(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAQAAAABCAYAAAAF8+DUAAAADklEQVR42mP8z8BQz0AEAAd9Av5cQEfLAAAAAElFTkSuQmCC',
+        'base64',
+      ),
+    );
+    const base = await makeBasePdf();
+    const signed = await signFirst(
+      base,
+      { imageBytes: wide, format: 'png', pageIndex: 0, nx: 0.15, ny: 0.62, nw: 0.4, nh: 0.1 },
+      { p12Bytes: p12, password: PASS },
+      { label: false, date: false },
+    );
+    const text = Buffer.from(signed).toString('latin1');
+    const m = text.match(/q\s+([\d.]+) 0 0 ([\d.]+) ([\d.]+) ([\d.]+) cm\s*\/Img Do/);
+    expect(m).toBeTruthy();
+    const [w, h, , y] = m!.slice(1).map(Number);
+    // Aspect preserved at 4:1 (not the box's 3:1), and vertically centered in the 40pt box.
+    expect(w / h).toBeCloseTo(4, 2);
+    expect(y).toBeCloseTo((40 - h) / 2, 1);
+  }, 30000);
+
   it('rejects a wrong password without producing output (FR-015)', async () => {
     const base = await makeBasePdf();
     await expect(

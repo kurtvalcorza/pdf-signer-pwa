@@ -13,7 +13,7 @@ test('US2: create a certificate in-app, then sign with it', async ({ page }) => 
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole('button', { name: /Sign with a certificate/ }).click();
+  await page.getByRole('button', { name: /Sign with a digital certificate/ }).click();
 
   // Create a certificate in-app.
   await page.getByRole('button', { name: /Create one/ }).click();

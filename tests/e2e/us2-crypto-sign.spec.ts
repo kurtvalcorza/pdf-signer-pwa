@@ -26,7 +26,7 @@ test('US2: sign a placed signature with a .p12 and download a signed PDF', async
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
   // Enter the certificate flow.
-  await page.getByRole('button', { name: /Sign with a certificate/ }).click();
+  await page.getByRole('button', { name: /Sign with a digital certificate/ }).click();
   await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(CERT_P12);
   await page.getByPlaceholder('Certificate password').fill(CERT_PASSWORD);
 
@@ -56,7 +56,7 @@ test('US2: a wrong certificate password shows an error and produces no download'
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole('button', { name: /Sign with a certificate/ }).click();
+  await page.getByRole('button', { name: /Sign with a digital certificate/ }).click();
   await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(CERT_P12);
   await page.getByPlaceholder('Certificate password').fill('definitely-wrong');
   await page.getByRole('button', { name: /Sign & Download/ }).click();

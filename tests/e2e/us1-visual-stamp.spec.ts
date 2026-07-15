@@ -42,10 +42,10 @@ test('US1: open a PDF, place a signature, download — on-device, no external ne
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
-  // Apply & Download → a signed PDF is produced client-side.
+  // Stamp image & Download → a signed PDF is produced client-side.
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('button', { name: /Apply & Download/ }).click(),
+    page.getByRole('button', { name: /Stamp image & Download/ }).click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/-signed\.pdf$/);
 

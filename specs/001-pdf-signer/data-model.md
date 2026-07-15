@@ -1,7 +1,8 @@
 # Phase 1 Data Model: PDF Signer PWA
 
 Client-side, in-memory state models (no server, no relational store). "Persisted?" notes whether
-an entity may touch on-device storage — only the remembered certificate may, and only on opt-in.
+an entity may touch on-device storage — only a remembered certificate or a remembered signature
+image may, and only on explicit opt-in.
 
 ---
 
@@ -42,7 +43,9 @@ The visual signature.
 | `cleanedBytes` | `Uint8Array \| null` | Optional background-removed variant (US4); null if not applied |
 | `hasAlpha` | `boolean` | Whether transparency present |
 
-**Validation**: decodable PNG/JPEG. **Persisted?** No (v1 does not remember images).
+**Validation**: decodable PNG/JPEG. **Persisted?** Only the last-used image's `bytes` + `format`,
+and only if the user explicitly opts in to "remember this signature" (FR-021); disclosed at opt-in,
+clearable, never auto-saved. The `cleanedBytes`/`source`/`hasAlpha` metadata is not persisted.
 
 ## Placement
 
