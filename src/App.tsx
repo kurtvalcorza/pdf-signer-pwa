@@ -26,10 +26,13 @@ interface ImageAsset {
   bytes: Uint8Array;
   format: 'png' | 'jpeg';
   originalBytes: Uint8Array;
-  /** True if these bytes were placed from the remembered-signature store, so mutating
-   * them (e.g. background cleanup) must also drop the now-stale stored copy. */
-  fromSaved?: boolean;
 }
+
+const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
 
 interface Doc {
   bytes: Uint8Array;
@@ -162,7 +165,7 @@ export default function App() {
     const id = `img_${++imageSeq.current}`;
     setImages((m) => ({
       ...m,
-      [id]: { url, bytes: saved.bytes, format: saved.format, originalBytes: saved.bytes, fromSaved: true },
+      [id]: { url, bytes: saved.bytes, format: saved.format, originalBytes: saved.bytes },
     }));
     const placement = createPlacement(id, pageIndex);
     setPlacements((ps) => [...ps, placement]);
@@ -262,8 +265,15 @@ export default function App() {
           // The PDF already carries signatures. Append ours as a byte-level incremental
           // update so those earlier signatures stay valid — never re-serialize the signed
           // bytes (Principle III / FR-013). Trade-offs of this path: no image appearance on
-          // the widget, and extra visual-only stamps can't be baked in (they would rewrite
-          // the signed pages), so they're skipped.
+          // the widget, extra visual-only stamps can't be baked in (they would rewrite
+          // the signed pages) so they're skipped, and the signature field can only be
+          // attached to page 1 (the incremental signer always targets the first page).
+          if (crypto.pageIndex !== 0) {
+            throw new Error(
+              'On an already-signed PDF the new signature must be placed on page 1 — ' +
+                'move your signature there and try again.',
+            );
+          }
           try {
             signed = await signIncremental(doc.bytes, toInput(crypto), cert);
           } catch (e) {
@@ -320,6 +330,7 @@ export default function App() {
       const sel = placements.find((p) => p.id === selectedId);
       if (!sel) return;
       const imageId = sel.imageId;
+      const replacedBytes = images[imageId]?.bytes;
       setImages((m) => {
         const prev = m[imageId];
         if (prev?.url) URL.revokeObjectURL(prev.url);
@@ -330,24 +341,25 @@ export default function App() {
             url: URL.createObjectURL(new Blob([cleaned as BlobPart])),
             bytes: cleaned,
             format: 'png',
-            // The cleaned bytes are no longer what the store holds.
-            fromSaved: false,
           },
         };
       });
-      // The selected image's bytes just changed. If those bytes are what the store holds
-      // — a prior "remember" opt-in OR an image placed via "Use saved signature" — drop
-      // the stored copy rather than leave a stale one that a later reuse would restore;
-      // the user can re-opt-in to the cleaned signature (persistence stays explicit,
-      // never auto). Reconcile to what's actually persisted in case the delete fails.
-      if (rememberSig || images[imageId]?.fromSaved) {
+      // If the bytes just replaced are exactly what the store holds — remembered this
+      // session, or placed via "Use saved signature", regardless of what the UI flags
+      // say (the checkbox resets on selection changes) — the stored copy is now stale:
+      // drop it rather than let a later reuse restore the pre-cleanup image. The user
+      // can re-opt-in to the cleaned signature (persistence stays explicit, never auto).
+      // Comparing against the store itself also means cleaning some OTHER image never
+      // touches a newer remembered signature. Reconcile to what actually persisted.
+      const saved = replacedBytes ? await loadSignature() : null;
+      if (saved && replacedBytes && bytesEqual(saved.bytes, replacedBytes)) {
         await clearSignature();
         setRememberSig(false);
         setHasSavedSig(await hasRememberedSignature());
       }
       setMode('stamp');
     },
-    [selectedId, placements, rememberSig, images],
+    [selectedId, placements, images],
   );
 
   const selectedPlacement = placements.find((p) => p.id === selectedId) ?? null;

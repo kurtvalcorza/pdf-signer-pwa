@@ -67,6 +67,7 @@ function activeFieldsRefs(pdf: Uint8Array): string[] {
 async function makeFakeSignedPdf(opts: {
   acroFormType: boolean;
   docMdpP?: number;
+  fieldMdp?: boolean;
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([300, 400]);
@@ -87,6 +88,18 @@ async function makeFakeSignedPdf(opts: {
           Type: 'SigRef',
           TransformMethod: 'DocMDP',
           TransformParams: ctx.obj({ Type: 'TransformParams', P: opts.docMdpP, V: '1.2' }),
+        }),
+      ]),
+    );
+  }
+  if (opts.fieldMdp) {
+    sigDict.set(
+      PDFName.of('Reference'),
+      ctx.obj([
+        ctx.obj({
+          Type: 'SigRef',
+          TransformMethod: 'FieldMDP',
+          TransformParams: ctx.obj({ Type: 'TransformParams', Action: 'All', V: '1.2' }),
         }),
       ]),
     );
@@ -200,6 +213,28 @@ describe('multi-signature (incremental)', () => {
     // Pure append; the pre-existing field is still enumerated alongside the new one.
     expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
     expect(activeFieldsRefs(out)).toHaveLength(2);
+  }, 40000);
+
+  it('rejects a FieldMDP-locked PDF (e.g. "lock all fields after signing")', async () => {
+    // Adding our field rewrites /Fields — a form modification the lock may disallow;
+    // we can't prove it's permitted, so the guard must refuse conservatively.
+    const bytes = await makeFakeSignedPdf({ acroFormType: true, fieldMdp: true });
+    await expect(
+      signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS }),
+    ).rejects.toThrow(CertificationLockedError);
+  }, 40000);
+
+  it('rejects a counter-signature placed on any page but the first', async () => {
+    // placeholder-plain always attaches the widget to /Kids[0]; a page-2 placement
+    // would silently land the signed field on page 1 with page-2 coordinates.
+    const doc = await PDFDocument.create();
+    doc.addPage([300, 400]);
+    doc.addPage([300, 400]);
+    const base = await doc.save();
+    const signed = await signFirst(base, at(0.62), { p12Bytes: p12, password: PASS });
+    await expect(
+      signIncremental(signed, { ...at(0.42), pageIndex: 1 }, { p12Bytes: p12, password: PASS }),
+    ).rejects.toThrow(/placed on page 1/);
   }, 40000);
 
   it('writes a tampered copy for the gate to reject (SC-007)', async () => {
