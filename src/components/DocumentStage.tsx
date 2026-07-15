@@ -6,7 +6,9 @@ import type { ReactNode } from 'react';
  */
 export function DocumentStage({ children, empty }: { children?: ReactNode; empty?: boolean }) {
   return (
-    <main className="absolute inset-0 flex items-center justify-center overflow-auto bg-stage p-4 pb-40">
+    // pt-16 reserves the strip occupied by the fixed top-right GitHubLink so the
+    // editable document (and its signature overlays) never sits under it.
+    <main className="absolute inset-0 flex items-center justify-center overflow-auto bg-stage px-4 pb-40 pt-16">
       {empty ? (
         <div className="text-center text-white/60">
           <p className="text-lg font-medium">No document open</p>
