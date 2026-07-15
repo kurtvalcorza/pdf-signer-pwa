@@ -12,9 +12,9 @@ loadCertificate(): Promise<{ p12Bytes: Uint8Array; label: string } | null>
 clearCertificate(): Promise<void>                                     // user-invokable
 hasRememberedCertificate(): Promise<boolean>
 
-saveSignature(bytes: Uint8Array, format: 'png' | 'jpeg'): Promise<void>   // only on explicit opt-in
+saveSignature(bytes: Uint8Array, format: 'png' | 'jpeg'): Promise<boolean>   // only on explicit opt-in; true iff the write landed
 loadSignature(): Promise<{ bytes: Uint8Array; format: 'png' | 'jpeg' } | null>
-clearSignature(): Promise<void>                                          // user-invokable
+clearSignature(): Promise<boolean>                                           // user-invokable; true iff the entry is gone
 hasRememberedSignature(): Promise<boolean>
 ```
 

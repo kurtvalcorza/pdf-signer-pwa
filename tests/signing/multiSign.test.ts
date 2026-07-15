@@ -68,6 +68,8 @@ async function makeFakeSignedPdf(opts: {
   acroFormType: boolean;
   docMdpP?: number;
   fieldMdp?: boolean;
+  /** Store the page's /Annots as an indirect object (/Annots N 0 R) instead of inline. */
+  indirectAnnots?: boolean;
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([300, 400]);
@@ -117,7 +119,8 @@ async function makeFakeSignedPdf(opts: {
     P: page.ref,
   });
   const widgetRef = ctx.register(widget);
-  page.node.set(PDFName.of('Annots'), ctx.obj([widgetRef]));
+  const annots = ctx.obj([widgetRef]);
+  page.node.set(PDFName.of('Annots'), opts.indirectAnnots ? ctx.register(annots) : annots);
 
   const acro = ctx.obj({});
   if (opts.acroFormType) acro.set(PDFName.of('Type'), PDFName.of('AcroForm'));
@@ -222,6 +225,17 @@ describe('multi-signature (incremental)', () => {
     await expect(
       signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS }),
     ).rejects.toThrow(CertificationLockedError);
+  }, 40000);
+
+  it('rejects a signed PDF whose page annotations are stored indirectly', async () => {
+    // placeholder-plain splices the widget into an INLINE /Annots [...] with string
+    // surgery; an indirect /Annots N 0 R would yield a mangled page dict or an
+    // unattached widget while the app still reports success.
+    const bytes = await makeFakeSignedPdf({ acroFormType: true, indirectAnnots: true });
+    expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
+    await expect(
+      signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS }),
+    ).rejects.toThrow(/annotations indirectly/);
   }, 40000);
 
   it('rejects a counter-signature placed on any page but the first', async () => {

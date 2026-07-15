@@ -55,6 +55,17 @@ export async function signIncremental(
 
   const page = probe.getPages()[placement.pageIndex];
   if (!page) throw new Error(`Signature targets a missing page (index ${placement.pageIndex}).`);
+
+  // placeholder-plain splices the widget into the page's INLINE /Annots [...] with
+  // string surgery; an indirect array (/Annots 12 0 R) would be mangled into a
+  // malformed page dictionary or leave the widget unattached. Refuse up front.
+  if (page.node.get(PDFName.of('Annots')) instanceof PDFRef) {
+    throw new Error(
+      "This signed PDF stores its page annotations indirectly, which the incremental " +
+        'signer cannot update safely. The document was left unsigned.',
+    );
+  }
+
   const { width, height } = page.getSize();
   const rotation = (((page.getRotation().angle % 360) + 360) % 360) as Rotation;
   const box = clampBox({ nx: placement.nx, ny: placement.ny, nw: placement.nw, nh: placement.nh });
