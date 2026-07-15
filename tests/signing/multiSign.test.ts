@@ -280,7 +280,20 @@ describe('multi-signature (incremental)', () => {
     expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
     const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
     expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
-    expect(await activeFieldsRefs(out)).toHaveLength(2);
+
+    // Navigate the way a validator does: AcroForm → new field → its /P — and require
+    // that /P resolves to the gen-1 page object (not a phantom "3 0 R"). This is what
+    // associates the counter-signature with the intended page.
+    const reparsed = await PDFDocument.load(out);
+    const acro = reparsed.catalog.lookup(PDFName.of('AcroForm'), PDFDict);
+    const fields = acro.lookup(PDFName.of('Fields'), PDFArray);
+    expect(fields.size()).toBe(2);
+    const newField = fields.lookup(fields.size() - 1, PDFDict);
+    const parentRef = newField.get(PDFName.of('P'));
+    expect(parentRef).toBeInstanceOf(PDFRef);
+    expect(String(parentRef)).toBe('3 1 R');
+    // …and that ref actually resolves to the page (index 0) in the tree.
+    expect(reparsed.getPages()[0].ref).toBe(parentRef);
   }, 40000);
 
   it('rejects a certification-locked PDF (DocMDP "no changes", P=1)', async () => {

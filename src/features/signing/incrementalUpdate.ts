@@ -1,6 +1,6 @@
 import {
   PDFObject,
-  PDFKitReferenceMock,
+  PDFAbstractReference,
   ANNOTATION_FLAGS,
   SIG_FLAGS,
   DEFAULT_SIGNATURE_LENGTH,
@@ -8,6 +8,24 @@ import {
   SUBFILTER_ADOBE_PKCS7_DETACHED,
 } from '@signpdf/utils';
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRef } from 'pdf-lib';
+
+/**
+ * An indirect reference `N g R` for `PDFObject.convert`. `PDFKitReferenceMock`
+ * always serializes generation 0, which is wrong for objects (e.g. the target
+ * page) whose real generation is non-zero — a `/P N 0 R` would then point at a
+ * missing object. This carries the true generation.
+ */
+class Ref extends PDFAbstractReference {
+  constructor(
+    private readonly num: number,
+    private readonly gen = 0,
+  ) {
+    super();
+  }
+  toString(): string {
+    return `${this.num} ${this.gen} R`;
+  }
+}
 
 export interface IncrementalPlaceholderOptions {
   pageIndex: number;
@@ -106,10 +124,11 @@ export function addIncrementalPlaceholder(
       Subtype: 'Widget',
       FT: 'Sig',
       Rect: widgetRect,
-      V: new PDFKitReferenceMock(sigNum),
+      V: new Ref(sigNum),
       T: new String(uniqueFieldName(probe, existingFieldRefs.length)),
       F: ANNOTATION_FLAGS.PRINT,
-      P: new PDFKitReferenceMock(page.ref.objectNumber),
+      // /P must carry the page's REAL generation, or it points at a missing object.
+      P: new Ref(page.ref.objectNumber, page.ref.generationNumber),
     }),
   );
   const widgetRef = PDFRef.of(widgetNum);
@@ -151,7 +170,7 @@ export function addIncrementalPlaceholder(
       PDFObject.convert({
         Type: 'AcroForm',
         SigFlags: SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY,
-        Fields: [new PDFKitReferenceMock(widgetNum)],
+        Fields: [new Ref(widgetNum)],
       }),
     );
     probe.catalog.set(PDFName.of('AcroForm'), PDFRef.of(acroNum));
