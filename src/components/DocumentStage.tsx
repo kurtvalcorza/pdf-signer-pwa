@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { GITHUB_LINK_HEIGHT, GITHUB_LINK_TOP } from './GitHubLink';
 
 /**
  * The document is the center (spec FR-002/FR-026). This stage fills the viewport
@@ -6,14 +7,18 @@ import type { ReactNode } from 'react';
  */
 export function DocumentStage({ children, empty }: { children?: ReactNode; empty?: boolean }) {
   return (
-    // The scroll area starts at top-16, below the strip occupied by the fixed
-    // top-right GitHubLink, so the editable document (and its signature overlays)
+    // The scroll area starts below the strip occupied by the fixed top-right
+    // GitHubLink (derived from the same safe-area-aware offset the link uses,
+    // plus a 0.75rem gap), so the editable document (and its signature overlays)
     // can never sit under it — even when a tall page overflows or is scrolled.
     // m-auto (not items/justify-center) centers the child only when it fits;
     // an overflowing child stays flush with the scrollport instead of being
     // centered into negative free space above it.
     <main className="absolute inset-0 bg-stage">
-      <div className="absolute inset-x-0 bottom-0 top-16 flex overflow-auto px-4 pb-40">
+      <div
+        className="absolute inset-x-0 bottom-0 flex overflow-auto px-4 pb-40"
+        style={{ top: `calc(${GITHUB_LINK_TOP} + ${GITHUB_LINK_HEIGHT} + 0.75rem)` }}
+      >
         <div className="m-auto">
           {empty ? (
             <div className="text-center text-white/60">
