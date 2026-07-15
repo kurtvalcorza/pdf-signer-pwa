@@ -2,7 +2,7 @@ import { get, set, del } from 'idb-keyval';
 
 /**
  * Opt-in certificate persistence (contracts/persistence.md, Principle VI).
- * Stores ONLY the password-protected .p12 bytes — never the password or key.
+ * Stores ONLY the password-protected .p12 bytes — never the password or decrypted private-key material.
  */
 const KEY = 'pdf-signer:remembered-certificate';
 

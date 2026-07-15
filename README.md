@@ -22,8 +22,9 @@ on Android.
 
 - **Zero-server**: all PDF, image, and cryptographic processing happens in the browser. A strict CSP
   (`connect-src 'none'`) makes outbound data exfiltration structurally impossible.
-- **On-device data minimization**: content is in-memory by default; only an opt-in certificate may be
-  remembered — **never** the password or private key.
+- **On-device data minimization**: content is in-memory by default. Only an explicitly
+  opted-in signature image and/or password-protected `.p12` certificate may be remembered;
+  PDFs, certificate passwords, and decrypted private-key material are never persisted.
 - **Honest about limits**: self-signed certificates show as "validity unknown" until trusted;
   signatures are not timestamped (a consequence of offline operation). This is **not** a legally-
   binding / qualified e-signature service.
@@ -36,6 +37,7 @@ npm run dev        # dev server
 npm run build      # production build (PWA + service worker)
 npm run preview    # serve the built app
 npm test           # unit + signing tests (Vitest)
+npm run lint       # ESLint over app, tests, and scripts
 npm run e2e        # end-to-end (Playwright)
 npm run e2e:pwa    # offline/installability (production build)
 ```
@@ -48,6 +50,10 @@ The cryptographic signing path is verified with **pyHanko** (Python):
 pip install pyhanko
 npm run verify:signatures   # produces signed PDFs and validates them with pyHanko
 ```
+
+## User guide
+
+See [docs/user-guide.md](docs/user-guide.md) for step-by-step signing, counter-signing, certificate, persistence, and troubleshooting guidance. See [docs/audit.md](docs/audit.md) for the latest repository-audit notes.
 
 ## Tech
 

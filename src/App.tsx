@@ -380,14 +380,22 @@ export default function App() {
           type="file"
           accept=".pdf"
           hidden
-          onChange={(e) => e.target.files?.[0] && openPdf(e.target.files[0])}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.currentTarget.value = '';
+            if (file) void openPdf(file);
+          }}
         />
         <input
           ref={imgInput}
           type="file"
           accept="image/png,image/jpeg"
           hidden
-          onChange={(e) => e.target.files?.[0] && addSignature(e.target.files[0])}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.currentTarget.value = '';
+            if (file) void addSignature(file);
+          }}
         />
         <input
           ref={camInput}
@@ -395,7 +403,11 @@ export default function App() {
           accept="image/*"
           capture="environment"
           hidden
-          onChange={(e) => e.target.files?.[0] && addSignature(e.target.files[0])}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.currentTarget.value = '';
+            if (file) void addSignature(file);
+          }}
         />
 
         {error && (
