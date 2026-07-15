@@ -1,31 +1,29 @@
 import signpdf from '@signpdf/signpdf';
 import { P12Signer } from '@signpdf/signer-p12';
-import { plainAddPlaceholder } from '@signpdf/placeholder-plain';
 import type { PlacementInput, Pkcs12 } from './types';
 import { verifyCertPassword } from './cert';
 import { PDFDocument, PDFArray, PDFDict, PDFName, PDFNumber, PDFRef } from 'pdf-lib';
 import { clampBox, normalizedBoxToPdfRect, type Rotation } from '../../lib/coords';
+import { addIncrementalPlaceholder, acroFormFieldRefs } from './incrementalUpdate';
 
 /**
  * Tier B — a subsequent cryptographic signature added as a BYTE-LEVEL INCREMENTAL
  * update (research R4). The already-signed bytes are never re-serialized, so
- * earlier signatures stay valid (FR-013 / SC-009).
+ * earlier signatures stay valid (FR-013 / SC-009). Works on any page and on any
+ * parseable PDF structure (xref streams, object streams, indirect /Annots or
+ * /Fields) — the update is built from pdf-lib's parsed graph, not string surgery
+ * (see incrementalUpdate.ts).
  *
  * NOTE (known limitation): the incremental placeholder produces a visible widget
  * but not an image appearance.
  *
  * Guards that keep the FR-013 claim honest rather than best-effort:
- *  - the placement must target page 1: placeholder-plain always attaches the
- *    widget to the FIRST page (its getPageRef reads /Kids[0]), so any other
- *    page index would put the signed field on the wrong page;
  *  - a certification (DocMDP "no changes") or FieldMDP-locked signature rejects
  *    up front (CertificationLockedError) — appending a field would break it;
- *  - after the placeholder is built, the update's rewritten AcroForm must still
- *    reference every pre-existing field. placeholder-plain re-finds the form by
- *    scanning for "/Type /AcroForm"; on producers that omit /Type (pdf-lib did,
- *    before signFirst started forcing it) the rewrite silently drops the earlier
- *    signature fields, so validators stop enumerating those signatures even
- *    though their bytes survive. We refuse to emit such a file.
+ *  - the produced update is re-parsed and must still enumerate every
+ *    pre-existing field plus the new one, attached to the requested page —
+ *    anything less would hide earlier signatures from validators, so we refuse
+ *    to emit it.
  */
 export async function signIncremental(
   signedPdf: Uint8Array,
@@ -37,14 +35,8 @@ export async function signIncremental(
     throw new BadPasswordError();
   }
 
-  if (placement.pageIndex !== 0) {
-    throw new Error(
-      'A signature added to an already-signed PDF must be placed on page 1 — the ' +
-        'incremental signer can only attach the signature field to the first page.',
-    );
-  }
-
-  // Read page geometry WITHOUT mutating/saving the signed bytes (read-only load).
+  // Read structure WITHOUT mutating/saving the signed bytes (read-only load; the
+  // probe's parsed objects are also what the incremental update is built from).
   const probe = await PDFDocument.load(signedPdf);
 
   const lock = modificationLock(probe);
@@ -55,32 +47,18 @@ export async function signIncremental(
 
   const page = probe.getPages()[placement.pageIndex];
   if (!page) throw new Error(`Signature targets a missing page (index ${placement.pageIndex}).`);
-
-  // placeholder-plain splices the widget into the page's INLINE /Annots [...] with
-  // string surgery; an indirect array (/Annots 12 0 R) would be mangled into a
-  // malformed page dictionary or leave the widget unattached. Refuse up front.
-  if (page.node.get(PDFName.of('Annots')) instanceof PDFRef) {
-    throw new Error(
-      "This signed PDF stores its page annotations indirectly, which the incremental " +
-        'signer cannot update safely. The document was left unsigned.',
-    );
-  }
-
   const { width, height } = page.getSize();
   const rotation = (((page.getRotation().angle % 360) + 360) % 360) as Rotation;
   const box = clampBox({ nx: placement.nx, ny: placement.ny, nw: placement.nw, nh: placement.nh });
   const rect = normalizedBoxToPdfRect(box, { widthPt: width, heightPt: height, rotation });
 
-  const withPlaceholder = plainAddPlaceholder({
-    pdfBuffer: Buffer.from(signedPdf),
-    reason: 'Digitally signed',
-    contactInfo: '',
-    name: 'Signer',
-    location: '',
+  const priorFieldRefs = acroFormFieldRefs(probe).map(String);
+  const withPlaceholder = addIncrementalPlaceholder(signedPdf, probe, {
+    pageIndex: placement.pageIndex,
     widgetRect: [rect.x, rect.y, rect.x + rect.w, rect.y + rect.h],
   });
 
-  assertFieldsPreserved(probe, withPlaceholder);
+  await assertUpdateWellFormed(withPlaceholder, priorFieldRefs, placement.pageIndex);
 
   const signer = new P12Signer(cert.p12Bytes, { passphrase: cert.password });
   const signed = await signpdf.sign(withPlaceholder, signer);
@@ -156,40 +134,39 @@ function* allSignatureDicts(doc: PDFDocument): Generator<PDFDict> {
 }
 
 /**
- * The incremental update rewrites the active AcroForm. Every field the document
- * already had must still be referenced by that rewritten /Fields array — anything
- * less silently un-enumerates an existing signature. Throws if any field was lost.
+ * Re-parse the produced update and require: every pre-existing field still
+ * enumerated, exactly one new field added, and the new widget attached to the
+ * requested page. Throws instead of letting a malformed update be signed —
+ * a file that hides earlier signatures from validators must never leave here.
  */
-function assertFieldsPreserved(probe: PDFDocument, withPlaceholder: Buffer): void {
-  const acroRef = probe.catalog.get(PDFName.of('AcroForm'));
-  const acroDict = probe.catalog.lookupMaybe(PDFName.of('AcroForm'), PDFDict);
-  const fields = acroDict?.lookupMaybe(PDFName.of('Fields'), PDFArray);
-  if (!(acroRef instanceof PDFRef) || !fields || fields.size() === 0) return;
-
-  const existingRefs: string[] = [];
-  for (let i = 0; i < fields.size(); i++) {
-    const ref = fields.get(i);
-    if (ref instanceof PDFRef) existingRefs.push(`${ref.objectNumber} ${ref.generationNumber} R`);
+async function assertUpdateWellFormed(
+  withPlaceholder: Buffer,
+  priorFieldRefs: string[],
+  pageIndex: number,
+): Promise<void> {
+  let reparsed: PDFDocument;
+  try {
+    reparsed = await PDFDocument.load(new Uint8Array(withPlaceholder));
+  } catch {
+    throw updateMalformed();
   }
-
-  // The last definition of the AcroForm object in the file is the active one.
-  const text = withPlaceholder.toString('latin1');
-  const headerRe = new RegExp(`(?:^|\\n)${acroRef.objectNumber} ${acroRef.generationNumber} obj\\b`, 'g');
-  let last = -1;
-  for (let m = headerRe.exec(text); m; m = headerRe.exec(text)) last = m.index;
-  if (last === -1) throw fieldsLost();
-  const body = text.slice(last, text.indexOf('endobj', last));
-  const fieldsMatch = /\/Fields\s*\[([^\]]*)\]/.exec(body);
-  if (!fieldsMatch) throw fieldsLost();
-  const rewritten = fieldsMatch[1];
-  for (const ref of existingRefs) {
-    if (!new RegExp(`(?:^|[^0-9])${ref.replace(/ /g, '\\s+')}(?![0-9])`).test(rewritten)) {
-      throw fieldsLost();
-    }
+  const after = acroFormFieldRefs(reparsed).map(String);
+  const afterSet = new Set(after);
+  if (after.length !== priorFieldRefs.length + 1 || priorFieldRefs.some((r) => !afterSet.has(r))) {
+    throw updateMalformed();
   }
+  const newRefStr = after.find((r) => !priorFieldRefs.includes(r))!;
+  const page = reparsed.getPages()[pageIndex];
+  const annots = page?.node.lookupMaybe(PDFName.of('Annots'), PDFArray);
+  let onPage = false;
+  for (let i = 0; annots && i < annots.size(); i++) {
+    const ref = annots.get(i);
+    if (ref instanceof PDFRef && String(ref) === newRefStr) onPage = true;
+  }
+  if (!onPage) throw updateMalformed();
 }
 
-function fieldsLost(): Error {
+function updateMalformed(): Error {
   return new Error(
     'The incremental update could not preserve the existing signature field(s) of this ' +
       'PDF, which would hide the earlier signature(s) from validators. The document was ' +

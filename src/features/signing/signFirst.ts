@@ -134,11 +134,10 @@ export async function signFirst(
     widgetRect,
   });
 
-  // pdf-lib omits /Type on the AcroForm dict, but a later incremental counter-sign
-  // (signIncremental → placeholder-plain) re-finds the form by scanning for
-  // "/Type /AcroForm" as the dict's FIRST entry; without it the update rewrites
-  // /Fields with only the new widget and this signature vanishes from validators.
-  // Reorder the dict so /Type /AcroForm leads and /Fields follows.
+  // pdf-lib omits /Type on the AcroForm dict. Our own incremental counter-signer no
+  // longer depends on it, but external signpdf-based tools locate an existing form
+  // by scanning for a leading "/Type /AcroForm" — keep emitting it (spec-recommended)
+  // so THEIR counter-signatures merge our field instead of silently dropping it.
   const acro = doc.catalog.lookup(PDFName.of('AcroForm'), PDFDict);
   const acroEntries = acro.entries().filter(([k]) => k !== PDFName.of('Type'));
   for (const [k] of [...acro.entries()]) acro.delete(k);

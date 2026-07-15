@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
+  PDFArray,
+  PDFDict,
   PDFDocument,
   PDFHexString,
   PDFName,
+  PDFRef,
   PDFString,
   StandardFonts,
 } from 'pdf-lib';
@@ -45,18 +48,21 @@ async function makeBasePdf(): Promise<Uint8Array> {
   return doc.save();
 }
 
-/** Object refs listed by the ACTIVE (= last-written) AcroForm's /Fields array. */
-function activeFieldsRefs(pdf: Uint8Array): string[] {
-  const text = Buffer.from(pdf).toString('latin1');
-  const acroRef = /\/AcroForm\s+(\d+)\s+(\d+)\s+R/.exec(text);
-  if (!acroRef) return [];
-  const headerRe = new RegExp(`(?:^|\\n)${acroRef[1]} ${acroRef[2]} obj\\b`, 'g');
-  let last = -1;
-  for (let m = headerRe.exec(text); m; m = headerRe.exec(text)) last = m.index;
-  if (last === -1) return [];
-  const body = text.slice(last, text.indexOf('endobj', last));
-  const fields = /\/Fields\s*\[([^\]]*)\]/.exec(body);
-  return fields ? (fields[1].match(/\d+\s+\d+\s+R/g) ?? []) : [];
+/**
+ * Object refs listed by the ACTIVE AcroForm's /Fields array, resolved the way a
+ * validator resolves them — by re-parsing the file (pdf-lib follows the incremental
+ * xref chain, object streams included), not by scanning raw text.
+ */
+async function activeFieldsRefs(pdf: Uint8Array): Promise<string[]> {
+  const doc = await PDFDocument.load(pdf);
+  const acro = doc.catalog.lookupMaybe(PDFName.of('AcroForm'), PDFDict);
+  const fields = acro?.lookupMaybe(PDFName.of('Fields'), PDFArray);
+  const refs: string[] = [];
+  for (let i = 0; fields && i < fields.size(); i++) {
+    const r = fields.get(i);
+    if (r instanceof PDFRef) refs.push(String(r));
+  }
+  return refs;
 }
 
 /**
@@ -70,6 +76,8 @@ async function makeFakeSignedPdf(opts: {
   fieldMdp?: boolean;
   /** Store the page's /Annots as an indirect object (/Annots N 0 R) instead of inline. */
   indirectAnnots?: boolean;
+  /** Save with cross-reference + object streams (as many foreign producers do). */
+  objectStreams?: boolean;
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([300, 400]);
@@ -131,7 +139,7 @@ async function makeFakeSignedPdf(opts: {
   if (opts.docMdpP !== undefined) {
     doc.catalog.set(PDFName.of('Perms'), ctx.obj({ DocMDP: sigRef }));
   }
-  return doc.save({ useObjectStreams: false });
+  return doc.save({ useObjectStreams: opts.objectStreams ?? false });
 }
 
 describe('multi-signature (incremental)', () => {
@@ -157,7 +165,7 @@ describe('multi-signature (incremental)', () => {
     // BOTH signature fields must be referenced by the active (last-written) AcroForm —
     // otherwise validators stop enumerating the first signature even though its bytes
     // survive. The update rewrites the form, so parse the final /Fields array.
-    expect(activeFieldsRefs(second)).toHaveLength(2);
+    expect(await activeFieldsRefs(second)).toHaveLength(2);
 
     // Give the pyHanko gate (verify:signatures) this combo to validate: it must see
     // two intact+valid signatures, not one.
@@ -188,19 +196,17 @@ describe('multi-signature (incremental)', () => {
     expect(byteRanges).toBeGreaterThanOrEqual(2);
     expect(counterSigned.length).toBeGreaterThan(othersSigned.length);
     // …and both fields stay enumerable via the active AcroForm.
-    expect(activeFieldsRefs(counterSigned)).toHaveLength(2);
+    expect(await activeFieldsRefs(counterSigned)).toHaveLength(2);
   }, 40000);
 
-  // FR-013 honesty guards: refuse to emit a file whose earlier signatures would stop
-  // being enumerated, rather than claiming a non-invalidating counter-sign.
-  it('rejects a signed PDF whose AcroForm the incremental update cannot re-find', async () => {
-    // Simulate a legacy/foreign producer: signature field present, but the AcroForm
-    // dict lacks /Type /AcroForm (as pdf-lib emitted before signFirst forced it).
+  // The update is built from pdf-lib's parsed graph, so producer quirks that broke
+  // the old string-surgery path (placeholder-plain) now counter-sign correctly.
+  it('counter-signs a legacy PDF whose AcroForm lacks /Type (old signFirst output)', async () => {
     const bytes = await makeFakeSignedPdf({ acroFormType: false });
     expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
-    await expect(
-      signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS }),
-    ).rejects.toThrow(/could not preserve the existing signature field/);
+    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
+    expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
   }, 40000);
 
   it('rejects a certification-locked PDF (DocMDP "no changes", P=1)', async () => {
@@ -215,7 +221,7 @@ describe('multi-signature (incremental)', () => {
     const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
     // Pure append; the pre-existing field is still enumerated alongside the new one.
     expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
-    expect(activeFieldsRefs(out)).toHaveLength(2);
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
   }, 40000);
 
   it('rejects a FieldMDP-locked PDF (e.g. "lock all fields after signing")', async () => {
@@ -227,28 +233,52 @@ describe('multi-signature (incremental)', () => {
     ).rejects.toThrow(CertificationLockedError);
   }, 40000);
 
-  it('rejects a signed PDF whose page annotations are stored indirectly', async () => {
-    // placeholder-plain splices the widget into an INLINE /Annots [...] with string
-    // surgery; an indirect /Annots N 0 R would yield a mangled page dict or an
-    // unattached widget while the app still reports success.
+  it('counter-signs a PDF whose page /Annots array is stored indirectly', async () => {
     const bytes = await makeFakeSignedPdf({ acroFormType: true, indirectAnnots: true });
     expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
-    await expect(
-      signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS }),
-    ).rejects.toThrow(/annotations indirectly/);
+    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
+    expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
   }, 40000);
 
-  it('rejects a counter-signature placed on any page but the first', async () => {
-    // placeholder-plain always attaches the widget to /Kids[0]; a page-2 placement
-    // would silently land the signed field on page 1 with page-2 coordinates.
+  it('counter-signs a PDF saved with cross-reference/object streams', async () => {
+    // Foreign producers often save with xref streams; the old string-surgery path
+    // could not even parse these ("structure isn't supported").
+    const bytes = await makeFakeSignedPdf({ acroFormType: true, objectStreams: true });
+    expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
+    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
+    expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
+  }, 40000);
+
+  it('counter-signs on a page other than the first (widget lands on that page)', async () => {
     const doc = await PDFDocument.create();
     doc.addPage([300, 400]);
     doc.addPage([300, 400]);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    doc.getPages()[0].drawText('two-page document', { x: 20, y: 360, size: 12, font });
     const base = await doc.save();
-    const signed = await signFirst(base, at(0.62), { p12Bytes: p12, password: PASS });
-    await expect(
-      signIncremental(signed, { ...at(0.42), pageIndex: 1 }, { p12Bytes: p12, password: PASS }),
-    ).rejects.toThrow(/placed on page 1/);
+    const cert = { p12Bytes: p12, password: PASS };
+    const signed = await signFirst(base, at(0.62), cert);
+
+    const out = await signIncremental(signed, { ...at(0.42), pageIndex: 1 }, cert);
+
+    // Pure append; the first signature's bytes are untouched; both fields enumerable.
+    expect(Buffer.from(out.subarray(0, signed.length))).toEqual(Buffer.from(signed));
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
+
+    // The new widget is attached to PAGE 2's /Annots (the whole point of the fix).
+    const reparsed = await PDFDocument.load(out);
+    const fieldRefs = await activeFieldsRefs(out);
+    const p2Annots = reparsed.getPages()[1].node.lookupMaybe(PDFName.of('Annots'), PDFArray);
+    const p2Refs: string[] = [];
+    for (let i = 0; p2Annots && i < p2Annots.size(); i++) {
+      p2Refs.push(String(p2Annots.get(i)));
+    }
+    expect(fieldRefs.some((r) => p2Refs.includes(r))).toBe(true);
+
+    // Feed the gate this combo too: both signatures must validate.
+    writeFileSync(resolve(OUT, 'signed-counter-page2.pdf'), out);
   }, 40000);
 
   it('writes a tampered copy for the gate to reject (SC-007)', async () => {
