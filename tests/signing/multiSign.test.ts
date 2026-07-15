@@ -284,6 +284,12 @@ describe('multi-signature (incremental)', () => {
     expect(normal).toBeInstanceOf(PDFRef);
     const normalStream = doc.context.lookup(normal as PDFRef) as PDFRawStream;
     expect(normalStream.getContentsString()).toContain('/Img Do');
+
+    // Hand this appearance-bearing counter-sign to the pyHanko gate (verify:signatures):
+    // both signatures must remain intact + valid even though the new one carries an
+    // embedded image appearance (the appended resources are covered by its ByteRange,
+    // and the prior signed bytes are untouched).
+    writeFileSync(resolve(OUT, 'signed-counter-appearance.pdf'), out);
   });
 
   it('honors appearance options for appended counter-signatures', async () => {
