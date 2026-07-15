@@ -24,6 +24,6 @@ test('US4: clean a signature background in-browser, then it stays placed', async
   await page.getByRole('button', { name: /Use cleaned/ }).click();
 
   // Back on the main controls, the signature is still placed.
-  await expect(page.getByRole('button', { name: /Stamp image & Download/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Sign with a digital certificate/ })).toBeVisible();
   await expect(page.locator('img[alt="signature"]')).toBeVisible();
 });

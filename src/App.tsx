@@ -7,7 +7,7 @@ import { loadPdf } from './features/viewer/loadPdf';
 import { renderPage } from './features/viewer/renderPage';
 import { readImageFile } from './features/ingest/imageInput';
 import { createPlacement, type Placement } from './features/placement/placement';
-import { downloadPdf, exportVisualStamped } from './features/signing/export';
+import { downloadPdf } from './features/signing/export';
 import { stampVisual } from './features/signing/stampVisual';
 import { signFirst } from './features/signing/signFirst';
 import { signIncremental } from './features/signing/signIncremental';
@@ -117,10 +117,9 @@ export default function App() {
       const info = await loadPdf(bytes);
       if (info.hasExistingSignature) {
         setError(
-          'Heads up: this PDF is already signed. “Stamp image & Download” rewrites the ' +
-            'pages and would invalidate every existing signature (yours and other signers’). ' +
-            'To add your signature without breaking theirs, use “Sign with a digital ' +
-            'certificate” — it appends your signature without altering the signed pages.',
+          'Heads up: this PDF is already signed. Your signature will be appended without ' +
+            'altering the signed pages, so the existing signature(s) stay valid — the new ' +
+            'field has no image appearance, and extra visual stamps are skipped.',
         );
       }
       setDoc({ bytes, pageCount: info.pageCount, name: file.name, hasExistingSignature: info.hasExistingSignature });
@@ -218,29 +217,6 @@ export default function App() {
     setSelectedId(null);
   }, []);
 
-  const applyAndDownload = useCallback(async () => {
-    if (!doc || placements.length === 0) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const inputs: PlacementInput[] = placements.map((p) => ({
-        imageBytes: images[p.imageId].bytes,
-        format: images[p.imageId].format,
-        pageIndex: p.pageIndex,
-        nx: p.nx,
-        ny: p.ny,
-        nw: p.nw,
-        nh: p.nh,
-      }));
-      const out = await exportVisualStamped(doc.bytes, inputs);
-      downloadPdf(out, doc.name.replace(/\.pdf$/i, '') + '-signed.pdf');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [doc, placements, images]);
-
   const signWithCert = useCallback(
     async (req: SignRequest) => {
       if (!doc || placements.length === 0) return;
@@ -266,26 +242,17 @@ export default function App() {
           // The PDF already carries signatures. Append ours as a byte-level incremental
           // update so those earlier signatures stay valid — never re-serialize the signed
           // bytes (Principle III / FR-013). Trade-offs of this path: no image appearance on
-          // the widget, extra visual-only stamps can't be baked in (they would rewrite
-          // the signed pages) so they're skipped, and the signature field can only be
-          // attached to page 1 (the incremental signer always targets the first page).
-          if (crypto.pageIndex !== 0) {
-            throw new Error(
-              'On an already-signed PDF the new signature must be placed on page 1 — ' +
-                'move your signature there and try again.',
-            );
-          }
+          // the widget, and extra visual-only stamps can't be baked in (they would rewrite
+          // the signed pages), so they're skipped.
           try {
             signed = await signIncremental(doc.bytes, toInput(crypto), cert);
           } catch (e) {
             if (e instanceof BadPasswordError || e instanceof CertificationLockedError) throw e;
-            // The incremental signer can't parse every PDF structure (e.g. cross-reference
-            // streams). Fail honestly rather than silently falling back to a path that would
+            // Fail honestly rather than silently falling back to a path that would
             // invalidate the existing signatures.
             throw new Error(
-              "This signed PDF's structure isn't supported for adding a signature without " +
-                'invalidating the existing one(s). “Stamp image & Download” still works, but it ' +
-                'would invalidate them.',
+              'This signed PDF could not be counter-signed without invalidating its ' +
+                'existing signature(s), so it was left unsigned.',
             );
           }
           const skipped = placements.length - 1;
@@ -534,30 +501,18 @@ export default function App() {
             <button
               type="button"
               disabled={!doc || placements.length === 0 || busy}
-              onClick={applyAndDownload}
+              onClick={() => setMode('cert')}
               className="rounded-lg bg-blue-500 px-4 pb-1 pt-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
             >
-              {busy ? 'Preparing…' : `Stamp image & Download${placements.length ? ` (${placements.length})` : ''}`}
+              {busy ? 'Preparing…' : 'Sign with a digital certificate (.p12)…'}
               <span className="block text-xs font-normal text-white/70">
-                Visible image only — no digital certificate
-              </span>
-            </button>
-
-            <button
-              type="button"
-              disabled={!doc || placements.length === 0 || busy}
-              onClick={() => setMode('cert')}
-              className="rounded-lg border border-white/15 px-4 pb-1 pt-3 text-sm font-medium hover:bg-white/5 disabled:opacity-40"
-            >
-              Sign with a digital certificate (.p12)…
-              <span className="block text-xs font-normal text-white/50">
                 Adds a verifiable digital signature you can validate in a PDF reader
               </span>
             </button>
 
             <p className="px-1 text-xs text-white/40">
-              Private &amp; on-device — nothing leaves your phone. A visible stamp or an
-              optional digital signature, not a legally-binding e-signature service.
+              Private &amp; on-device — nothing leaves your phone. A certificate-backed
+              digital signature, not a legally-binding e-signature service.
             </p>
           </div>
         )}

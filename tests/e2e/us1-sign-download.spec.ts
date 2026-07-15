@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SAMPLE_PDF = resolve(HERE, 'fixtures/sample.pdf');
 const SIGNATURE_PNG = resolve(HERE, 'fixtures/signature.png');
+const CERT_P12 = resolve(HERE, 'fixtures/e2e-cert.p12');
+const CERT_PASSWORD = 'e2e-pass';
 
-test('US1: open a PDF, place a signature, download — on-device, no external network', async ({
+test('US1: open a PDF, place a signature, sign & download — on-device, no external network', async ({
   page,
 }) => {
   // SC-003: capture any request that leaves the local origin.
@@ -42,17 +44,21 @@ test('US1: open a PDF, place a signature, download — on-device, no external ne
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
-  // Stamp image & Download → a signed PDF is produced client-side.
+  // Sign with the certificate → a signed PDF is produced client-side.
+  await page.getByRole('button', { name: /Sign with a digital certificate/ }).click();
+  await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(CERT_P12);
+  await page.getByPlaceholder('Certificate password').fill(CERT_PASSWORD);
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('button', { name: /Stamp image & Download/ }).click(),
+    page.getByRole('button', { name: /Sign & Download/ }).click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/-signed\.pdf$/);
 
   const outPath = await download.path();
   const out = readFileSync(outPath!);
-  // Valid PDF, and larger than the source (the stamp was added).
+  // Valid, cryptographically signed PDF, larger than the source.
   expect(out.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  expect(out.toString('latin1')).toContain('/ByteRange');
   expect(out.length).toBeGreaterThan(statSync(SAMPLE_PDF).size);
 
   // SC-003: nothing left the device.
