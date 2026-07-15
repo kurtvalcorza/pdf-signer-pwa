@@ -60,7 +60,7 @@ const escPdf = (s: string): string =>
     return byte === 0x5c || byte === 0x28 || byte === 0x29 ? `\\${out}` : out;
   }).join('');
 
-function formatDate(d: Date): string {
+export function formatDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   // Local wall-clock time with an explicit UTC offset, so the appearance is
   // unambiguous across timezones (e.g. "2026.07.14 11:45 +08:00").
@@ -190,7 +190,7 @@ function lastWidget(doc: PDFDocument, page: ReturnType<PDFDocument['getPages']>[
  * share one font/size/colour, and the size is fitted to the widest line and the box
  * height so nothing clips. Each line is optional (user can turn label/date off).
  */
-async function buildAppearance(
+export async function buildAppearance(
   doc: PDFDocument,
   w: number,
   h: number,

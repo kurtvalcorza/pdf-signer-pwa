@@ -11,7 +11,11 @@ import { downloadPdf } from './features/signing/export';
 import { stampVisual } from './features/signing/stampVisual';
 import { signFirst } from './features/signing/signFirst';
 import { signIncremental } from './features/signing/signIncremental';
-import { BadPasswordError, CertificationLockedError, type PlacementInput } from './features/signing/types';
+import {
+  BadPasswordError,
+  CertificationLockedError,
+  type PlacementInput,
+} from './features/signing/types';
 import { CertSheet, type SignRequest } from './components/CertSheet';
 import { CleanupSheet } from './components/CleanupSheet';
 import { saveCertificate } from './features/persistence/certStore';
@@ -117,12 +121,17 @@ export default function App() {
       const info = await loadPdf(bytes);
       if (info.hasExistingSignature) {
         setError(
-          'Heads up: this PDF is already signed. Your signature will be appended without ' +
-            'altering the signed pages, so the existing signature(s) stay valid — the new ' +
-            'field has no image appearance, and extra visual stamps are skipped.',
+          'Heads up: this PDF is already signed. Your signature will be appended as a ' +
+            'visible signature field without altering the signed pages, so the existing ' +
+            'signature(s) stay valid — extra visual-only stamps are skipped.',
         );
       }
-      setDoc({ bytes, pageCount: info.pageCount, name: file.name, hasExistingSignature: info.hasExistingSignature });
+      setDoc({
+        bytes,
+        pageCount: info.pageCount,
+        name: file.name,
+        hasExistingSignature: info.hasExistingSignature,
+      });
       setPlacements([]);
       setSelectedId(null);
       setPageIndex(0);
@@ -173,32 +182,29 @@ export default function App() {
   }, [doc, pageIndex]);
 
   // Toggle remembering the currently-selected signature image (explicit opt-in).
-  const toggleRememberSignature = useCallback(
-    async (on: boolean, asset: ImageAsset | null) => {
-      setRememberSig(on); // reflect the toggle immediately (controlled input)
-      if (on && asset) {
-        const ok = await saveSignature(asset.bytes, asset.format);
-        if (ok) {
-          setHasSavedSig(true);
-        } else {
-          // The write didn't land. An OLDER record may still exist (a failed overwrite
-          // doesn't delete it), so reconcile both flags to what is actually persisted
-          // rather than to the attempted operation.
-          setRememberSig(false);
-          setHasSavedSig(await hasRememberedSignature());
-        }
-      } else if (await clearSignature()) {
-        setHasSavedSig(false);
+  const toggleRememberSignature = useCallback(async (on: boolean, asset: ImageAsset | null) => {
+    setRememberSig(on); // reflect the toggle immediately (controlled input)
+    if (on && asset) {
+      const ok = await saveSignature(asset.bytes, asset.format);
+      if (ok) {
+        setHasSavedSig(true);
       } else {
-        // The delete didn't land — the record persists, so reflect that truth instead
-        // of an unchecked box that would hide a signature still sitting in storage.
-        const stillSaved = await hasRememberedSignature();
-        setRememberSig(stillSaved);
-        setHasSavedSig(stillSaved);
+        // The write didn't land. An OLDER record may still exist (a failed overwrite
+        // doesn't delete it), so reconcile both flags to what is actually persisted
+        // rather than to the attempted operation.
+        setRememberSig(false);
+        setHasSavedSig(await hasRememberedSignature());
       }
-    },
-    [],
-  );
+    } else if (await clearSignature()) {
+      setHasSavedSig(false);
+    } else {
+      // The delete didn't land — the record persists, so reflect that truth instead
+      // of an unchecked box that would hide a signature still sitting in storage.
+      const stillSaved = await hasRememberedSignature();
+      setRememberSig(stillSaved);
+      setHasSavedSig(stillSaved);
+    }
+  }, []);
 
   const forgetSignature = useCallback(async () => {
     // Only drop the UI's saved state once the delete is confirmed (clearable promise).
@@ -233,7 +239,8 @@ export default function App() {
           nh: p.nh,
         });
         // The selected (or last) placement becomes the cryptographic signature.
-        const crypto = placements.find((p) => p.id === selectedId) ?? placements[placements.length - 1];
+        const crypto =
+          placements.find((p) => p.id === selectedId) ?? placements[placements.length - 1];
         const cert = { p12Bytes: req.p12Bytes, password: req.password };
 
         let signed: Uint8Array;
@@ -241,11 +248,13 @@ export default function App() {
         if (doc.hasExistingSignature) {
           // The PDF already carries signatures. Append ours as a byte-level incremental
           // update so those earlier signatures stay valid — never re-serialize the signed
-          // bytes (Principle III / FR-013). Trade-offs of this path: no image appearance on
-          // the widget, and extra visual-only stamps can't be baked in (they would rewrite
-          // the signed pages), so they're skipped.
+          // bytes (Principle III / FR-013). Extra visual-only stamps still can't be
+          // baked in (they would rewrite the signed pages), so they're skipped.
           try {
-            signed = await signIncremental(doc.bytes, toInput(crypto), cert);
+            signed = await signIncremental(doc.bytes, toInput(crypto), cert, {
+              label: req.showLabel,
+              date: req.showDate,
+            });
           } catch (e) {
             if (e instanceof BadPasswordError || e instanceof CertificationLockedError) throw e;
             // Fail honestly rather than silently falling back to a path that would
@@ -258,7 +267,7 @@ export default function App() {
           const skipped = placements.length - 1;
           note =
             'Signed without invalidating the existing signature(s). Note: this appended a ' +
-            'digital signature field without the image appearance' +
+            'visible digital signature field' +
             (skipped > 0
               ? `, and ${skipped} extra stamp${skipped > 1 ? 's were' : ' was'} skipped ` +
                 '(stamping an already-signed PDF would invalidate it).'
@@ -389,7 +398,9 @@ export default function App() {
           onChange={(e) => e.target.files?.[0] && addSignature(e.target.files[0])}
         />
 
-        {error && <p className="mb-2 rounded bg-amber-500/20 px-3 py-2 text-xs text-amber-200">{error}</p>}
+        {error && (
+          <p className="mb-2 rounded bg-amber-500/20 px-3 py-2 text-xs text-amber-200">{error}</p>
+        )}
 
         {mode === 'cert' ? (
           <CertSheet
@@ -511,8 +522,8 @@ export default function App() {
             </button>
 
             <p className="px-1 text-xs text-white/40">
-              Private &amp; on-device — nothing leaves your phone. A certificate-backed
-              digital signature, not a legally-binding e-signature service.
+              Private &amp; on-device — nothing leaves your phone. A certificate-backed digital
+              signature, not a legally-binding e-signature service.
             </p>
           </div>
         )}
