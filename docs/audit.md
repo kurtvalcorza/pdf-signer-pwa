@@ -15,7 +15,7 @@ Last updated for the current `work` branch.
 1. **ESLint did not cover Node scripts correctly.** The project lint command failed on `scripts/*.mjs` because Node globals such as `Buffer`, `console`, and `process` were not declared for JavaScript script files. The ESLint config now applies Node globals to scripts and config files.
 2. **Privacy wording was inaccurate for remembered certificates.** A remembered `.p12` contains an encrypted private key, so the accurate statement is that the app never stores the certificate password or decrypted private-key material.
 3. **File inputs could ignore repeated same-file selections.** Browser file inputs may not fire `change` when the same file is selected twice. The PDF, image, and camera inputs now clear their value after reading the selected file.
-4. **User-facing documentation was missing a full usage guide.** `docs/user-guide.md` now explains visual stamps, digital signatures, counter-signing already-signed PDFs, self-signed certificates, remembered data, and troubleshooting.
+4. **User-facing documentation was missing a full usage guide.** the README now explains visual stamps, digital signatures, counter-signing already-signed PDFs, self-signed certificates, remembered data, and troubleshooting.
 
 ## Known environment limitations in this container
 

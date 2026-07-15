@@ -16,6 +16,7 @@ Works offline once loaded, and installs like a normal app on Android.
 - [Create a Digital ID inside the app](#create-a-digital-id-inside-the-app)
 - [Sign a PDF that is already signed (counter-signing)](#sign-a-pdf-that-is-already-signed-counter-signing)
 - [Handy extras](#handy-extras)
+- [Troubleshooting](#troubleshooting)
 - [Is my signature legally valid?](#is-my-signature-legally-valid)
 - [Your privacy](#your-privacy)
 - [For developers](#for-developers)
@@ -109,6 +110,21 @@ would rewrite the already-signed pages and break the existing signatures — so 
   time. Only the image is saved (never your document or certificate password), and you can **Forget**
   it anytime. Cleaning a remembered signature's background asks you to opt in again, so a stale copy is
   never reused.
+
+---
+
+## Troubleshooting
+
+- **"Incorrect certificate password."** Re-enter the password for your `.p12` / `.pfx` file.
+- **"This signed PDF could not be counter-signed…"** The PDF has a certification or field-lock
+  policy that forbids adding another signature. That's the document author's choice — it can't be
+  overridden without breaking their signature.
+- **"This PDF is password-protected…"** Remove the PDF's open password first, then sign it.
+- **My signature shows as untrusted / "validity unknown".** Expected for a self-signed Digital ID —
+  it's cryptographically intact but not *trusted* until the recipient adds your public `.cer` to their
+  trust store. See [validity](#is-my-signature-legally-valid).
+- **My phone's PDF viewer doesn't show signature details.** Many mobile viewers render the image but
+  not the validation panel. Open the file in a desktop reader (e.g. Adobe Acrobat) to see validation.
 
 ---
 
