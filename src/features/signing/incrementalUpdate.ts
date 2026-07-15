@@ -1,7 +1,6 @@
 import {
   PDFObject,
   PDFKitReferenceMock,
-  removeTrailingNewLine,
   ANNOTATION_FLAGS,
   SIG_FLAGS,
   DEFAULT_SIGNATURE_LENGTH,
@@ -52,17 +51,25 @@ export function addIncrementalPlaceholder(
     throw new Error('This PDF has no document catalog reference; it cannot be counter-signed.');
   }
 
-  let out = removeTrailingNewLine(Buffer.from(signedPdf));
+  // NEVER mutate the original bytes: the prior signature's /ByteRange may cover them
+  // (trailing newlines included), so trimming would break that signature's digest even
+  // though the structural re-parse still passes. We only ever append; the "\n" that
+  // `append` writes before each object is the separator from the original content.
+  let out = Buffer.from(signedPdf);
   const prevXref = lastStartXref(out);
 
   let nextObj = ctx.largestObjectNumber + 1;
-  const added = new Map<number, number>(); // object number → byte offset of its header
+  // object number → { byte offset of its header, generation }.
+  const added = new Map<number, { offset: number; gen: number }>();
 
-  const append = (objNum: number, body: string): void => {
-    added.set(objNum, out.length + 1);
+  // Appending a NEW version of an existing object must reuse that object's number AND
+  // generation — a reader resolves "N g R" and would ignore an "N 0 obj" replacement when
+  // g != 0. New objects (sig/widget/new form) are allocated at generation 0.
+  const append = (objNum: number, gen: number, body: string): void => {
+    added.set(objNum, { offset: out.length + 1, gen });
     out = Buffer.concat([
       out,
-      Buffer.from(`\n${objNum} 0 obj\n`),
+      Buffer.from(`\n${objNum} ${gen} obj\n`),
       Buffer.from(body, 'latin1'),
       Buffer.from('\nendobj\n'),
     ]);
@@ -74,6 +81,7 @@ export function addIncrementalPlaceholder(
   const sigNum = nextObj++;
   append(
     sigNum,
+    0,
     PDFObject.convert({
       Type: 'Sig',
       Filter: 'Adobe.PPKLite',
@@ -92,6 +100,7 @@ export function addIncrementalPlaceholder(
   const widgetNum = nextObj++;
   append(
     widgetNum,
+    0,
     PDFObject.convert({
       Type: 'Annot',
       Subtype: 'Widget',
@@ -116,13 +125,13 @@ export function addIncrementalPlaceholder(
       // /Fields is its own indirect array — update just that object.
       const arr = acroDict.lookup(PDFName.of('Fields'), PDFArray);
       arr.push(widgetRef);
-      append(acroRaw.objectNumber, acroDict.toString());
-      append(fieldsRaw.objectNumber, arr.toString());
+      append(acroRaw.objectNumber, acroRaw.generationNumber, acroDict.toString());
+      append(fieldsRaw.objectNumber, fieldsRaw.generationNumber, arr.toString());
     } else {
       const arr = fieldsRaw instanceof PDFArray ? fieldsRaw : ctx.obj([]);
       arr.push(widgetRef);
       acroDict.set(PDFName.of('Fields'), arr);
-      append(acroRaw.objectNumber, acroDict.toString());
+      append(acroRaw.objectNumber, acroRaw.generationNumber, acroDict.toString());
     }
   } else if (acroRaw instanceof PDFDict) {
     // AcroForm inline in the catalog — the catalog object itself must be rewritten.
@@ -131,13 +140,14 @@ export function addIncrementalPlaceholder(
     fields.push(widgetRef);
     acroRaw.set(PDFName.of('Fields'), fields);
     acroRaw.set(PDFName.of('SigFlags'), ctx.obj(SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY));
-    append(rootRef.objectNumber, probe.catalog.toString());
+    append(rootRef.objectNumber, rootRef.generationNumber, probe.catalog.toString());
   } else {
     // No form yet (possible when signature detection fell back to a byte scan):
     // create one and point the rewritten catalog at it.
     const acroNum = nextObj++;
     append(
       acroNum,
+      0,
       PDFObject.convert({
         Type: 'AcroForm',
         SigFlags: SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY,
@@ -145,7 +155,7 @@ export function addIncrementalPlaceholder(
       }),
     );
     probe.catalog.set(PDFName.of('AcroForm'), PDFRef.of(acroNum));
-    append(rootRef.objectNumber, probe.catalog.toString());
+    append(rootRef.objectNumber, rootRef.generationNumber, probe.catalog.toString());
   }
 
   // --- 3. Attach the widget to the TARGET page's /Annots (inline or indirect). ---
@@ -153,20 +163,22 @@ export function addIncrementalPlaceholder(
   if (annotsRaw instanceof PDFRef) {
     const arr = page.node.lookup(PDFName.of('Annots'), PDFArray);
     arr.push(widgetRef);
-    append(annotsRaw.objectNumber, arr.toString());
+    append(annotsRaw.objectNumber, annotsRaw.generationNumber, arr.toString());
   } else {
     const arr = annotsRaw instanceof PDFArray ? annotsRaw : ctx.obj([]);
     arr.push(widgetRef);
     page.node.set(PDFName.of('Annots'), arr);
-    append(page.ref.objectNumber, page.node.toString());
+    append(page.ref.objectNumber, page.ref.generationNumber, page.node.toString());
   }
 
   // --- 4. Classic cross-reference table + trailer for the appended objects. ---
   const xrefOffset = out.length + 1;
   const entries = [...added.entries()].sort((a, b) => a[0] - b[0]);
   const sections = ['0 1\n0000000000 65535 f '];
-  for (const [objNum, offset] of entries) {
-    sections.push(`${objNum} 1\n${String(offset).padStart(10, '0')} 00000 n `);
+  for (const [objNum, { offset, gen }] of entries) {
+    sections.push(
+      `${objNum} 1\n${String(offset).padStart(10, '0')} ${String(gen).padStart(5, '0')} n `,
+    );
   }
   const infoRef = ctx.trailerInfo.Info;
   const trailer =

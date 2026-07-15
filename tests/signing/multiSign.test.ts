@@ -142,6 +142,53 @@ async function makeFakeSignedPdf(opts: {
   return doc.save({ useObjectStreams: opts.objectStreams ?? false });
 }
 
+/**
+ * A hand-assembled signed PDF whose PAGE object carries generation 1 (referenced as
+ * "3 1 R"). pdf-lib always writes generation 0, so this is built as raw bytes with a
+ * classic xref table; offsets are computed as objects are emitted.
+ */
+function makeGen1SignedPdf(): Uint8Array {
+  const objs: { num: number; gen: number; body: string }[] = [
+    { num: 1, gen: 0, body: '<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>' },
+    { num: 2, gen: 0, body: '<< /Type /Pages /Kids [3 1 R] /Count 1 >>' },
+    {
+      num: 3,
+      gen: 1,
+      body: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Annots [4 0 R] >>',
+    },
+    {
+      num: 4,
+      gen: 0,
+      body:
+        '<< /Type /Annot /Subtype /Widget /FT /Sig /Rect [20 20 120 60] ' +
+        '/V 5 0 R /T (OldSig) /F 4 /P 3 1 R >>',
+    },
+    {
+      num: 5,
+      gen: 0,
+      body:
+        '<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached ' +
+        `/ByteRange [0 100 200 50] /Contents <${'00'.repeat(16)}> >>`,
+    },
+    { num: 6, gen: 0, body: '<< /Type /AcroForm /Fields [4 0 R] /SigFlags 3 >>' },
+  ];
+
+  let pdf = '%PDF-1.7\n';
+  const offsets = new Map<number, number>();
+  for (const o of objs) {
+    offsets.set(o.num, Buffer.byteLength(pdf, 'latin1'));
+    pdf += `${o.num} ${o.gen} obj\n${o.body}\nendobj\n`;
+  }
+  const xrefAt = Buffer.byteLength(pdf, 'latin1');
+  pdf += 'xref\n0 7\n0000000000 65535 f \n';
+  for (let n = 1; n <= 6; n++) {
+    const gen = objs.find((o) => o.num === n)!.gen;
+    pdf += `${String(offsets.get(n)).padStart(10, '0')} ${String(gen).padStart(5, '0')} n \n`;
+  }
+  pdf += `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF`;
+  return new Uint8Array(Buffer.from(pdf, 'latin1'));
+}
+
 describe('multi-signature (incremental)', () => {
   let p12: Buffer;
   beforeAll(() => {
@@ -203,6 +250,33 @@ describe('multi-signature (incremental)', () => {
   // the old string-surgery path (placeholder-plain) now counter-sign correctly.
   it('counter-signs a legacy PDF whose AcroForm lacks /Type (old signFirst output)', async () => {
     const bytes = await makeFakeSignedPdf({ acroFormType: false });
+    expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
+    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
+    expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
+  }, 40000);
+
+  it('preserves original bytes exactly when the signed revision ends in a newline', async () => {
+    // Some producers end the signed revision with LF/CRLF after %%EOF, and the prior
+    // signature's /ByteRange can cover those bytes. Trimming them (as removeTrailingNewLine
+    // did) would break that signature's digest, so the update must append without touching
+    // a single original byte.
+    const cert = { p12Bytes: p12, password: PASS };
+    const signed = await signFirst(await makeBasePdf(), at(0.62), cert);
+    const withNewline = Buffer.concat([Buffer.from(signed), Buffer.from('\r\n')]);
+    expect((await loadPdf(withNewline)).hasExistingSignature).toBe(true);
+
+    const out = await signIncremental(withNewline, at(0.42), cert);
+    // Every original byte — the trailing CRLF included — is preserved verbatim.
+    expect(Buffer.from(out.subarray(0, withNewline.length))).toEqual(withNewline);
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
+  }, 40000);
+
+  it('counter-signs when an existing object has a non-zero generation', async () => {
+    // The target page is object "3 1 obj" (generation 1). If the update redefined it as
+    // "3 0 obj", readers would keep resolving "3 1 R" and drop the new widget — the
+    // re-parse guard would then reject. Success proves generations are carried through.
+    const bytes = makeGen1SignedPdf();
     expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
     const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
     expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
