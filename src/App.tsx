@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DocumentStage } from './components/DocumentStage';
+import { GitHubLink } from './components/GitHubLink';
 import { BottomSheet } from './components/BottomSheet';
 import { SignatureOverlay } from './components/SignatureOverlay';
 import { loadPdf } from './features/viewer/loadPdf';
@@ -243,6 +244,8 @@ export default function App() {
           </div>
         )}
       </DocumentStage>
+
+      <GitHubLink />
 
       <BottomSheet>
         <input
