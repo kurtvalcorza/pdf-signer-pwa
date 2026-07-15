@@ -154,12 +154,21 @@ export function addIncrementalPlaceholder(
     }
   } else if (acroRaw instanceof PDFDict) {
     // AcroForm inline in the catalog — the catalog object itself must be rewritten.
-    const arr = acroRaw.get(PDFName.of('Fields'));
-    const fields = arr instanceof PDFArray ? arr : ctx.obj([]);
-    fields.push(widgetRef);
-    acroRaw.set(PDFName.of('Fields'), fields);
+    const fieldsRaw = acroRaw.get(PDFName.of('Fields'));
     acroRaw.set(PDFName.of('SigFlags'), ctx.obj(SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY));
-    append(rootRef.objectNumber, rootRef.generationNumber, probe.catalog.toString());
+    if (fieldsRaw instanceof PDFRef) {
+      // /Fields is an indirect array even though the form is inline — update that
+      // object in place, don't discard it (it holds every existing field).
+      const arr = acroRaw.lookup(PDFName.of('Fields'), PDFArray);
+      arr.push(widgetRef);
+      append(rootRef.objectNumber, rootRef.generationNumber, probe.catalog.toString());
+      append(fieldsRaw.objectNumber, fieldsRaw.generationNumber, arr.toString());
+    } else {
+      const arr = fieldsRaw instanceof PDFArray ? fieldsRaw : ctx.obj([]);
+      arr.push(widgetRef);
+      acroRaw.set(PDFName.of('Fields'), arr);
+      append(rootRef.objectNumber, rootRef.generationNumber, probe.catalog.toString());
+    }
   } else {
     // No form yet (possible when signature detection fell back to a byte scan):
     // create one and point the rewritten catalog at it.

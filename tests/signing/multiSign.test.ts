@@ -78,6 +78,10 @@ async function makeFakeSignedPdf(opts: {
   indirectAnnots?: boolean;
   /** Save with cross-reference + object streams (as many foreign producers do). */
   objectStreams?: boolean;
+  /** Keep /AcroForm inline in the catalog (not an indirect object). */
+  inlineAcroForm?: boolean;
+  /** Store /Fields as its own indirect array object (/Fields N 0 R). */
+  indirectFields?: boolean;
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([300, 400]);
@@ -132,9 +136,10 @@ async function makeFakeSignedPdf(opts: {
 
   const acro = ctx.obj({});
   if (opts.acroFormType) acro.set(PDFName.of('Type'), PDFName.of('AcroForm'));
-  acro.set(PDFName.of('Fields'), ctx.obj([widgetRef]));
+  const fieldsArr = ctx.obj([widgetRef]);
+  acro.set(PDFName.of('Fields'), opts.indirectFields ? ctx.register(fieldsArr) : fieldsArr);
   acro.set(PDFName.of('SigFlags'), ctx.obj(3));
-  doc.catalog.set(PDFName.of('AcroForm'), ctx.register(acro));
+  doc.catalog.set(PDFName.of('AcroForm'), opts.inlineAcroForm ? acro : ctx.register(acro));
 
   if (opts.docMdpP !== undefined) {
     doc.catalog.set(PDFName.of('Perms'), ctx.obj({ DocMDP: sigRef }));
@@ -322,6 +327,20 @@ describe('multi-signature (incremental)', () => {
 
   it('counter-signs a PDF whose page /Annots array is stored indirectly', async () => {
     const bytes = await makeFakeSignedPdf({ acroFormType: true, indirectAnnots: true });
+    expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
+    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
+    expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
+  }, 40000);
+
+  it('counter-signs a PDF with an inline AcroForm whose /Fields is indirect', async () => {
+    // Inline /AcroForm in the catalog, but /Fields is its own indirect array — the
+    // existing fields must be preserved, not replaced with a fresh empty array.
+    const bytes = await makeFakeSignedPdf({
+      acroFormType: true,
+      inlineAcroForm: true,
+      indirectFields: true,
+    });
     expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
     const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
     expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
