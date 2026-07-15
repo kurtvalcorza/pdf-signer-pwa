@@ -148,36 +148,15 @@ async function makeFakeSignedPdf(opts: {
 }
 
 /**
- * A hand-assembled signed PDF whose PAGE object carries generation 1 (referenced as
- * "3 1 R"). pdf-lib always writes generation 0, so this is built as raw bytes with a
- * classic xref table; offsets are computed as objects are emitted.
+ * Assemble a signed PDF from raw object bodies (contiguously numbered from 1) with a
+ * classic xref table; offsets are computed as objects are emitted. Used for shapes
+ * pdf-lib can't produce (non-zero generations, a trailer /ID, shared arrays).
  */
-function makeGen1SignedPdf(): Uint8Array {
-  const objs: { num: number; gen: number; body: string }[] = [
-    { num: 1, gen: 0, body: '<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>' },
-    { num: 2, gen: 0, body: '<< /Type /Pages /Kids [3 1 R] /Count 1 >>' },
-    {
-      num: 3,
-      gen: 1,
-      body: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Annots [4 0 R] >>',
-    },
-    {
-      num: 4,
-      gen: 0,
-      body:
-        '<< /Type /Annot /Subtype /Widget /FT /Sig /Rect [20 20 120 60] ' +
-        '/V 5 0 R /T (OldSig) /F 4 /P 3 1 R >>',
-    },
-    {
-      num: 5,
-      gen: 0,
-      body:
-        '<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached ' +
-        `/ByteRange [0 100 200 50] /Contents <${'00'.repeat(16)}> >>`,
-    },
-    { num: 6, gen: 0, body: '<< /Type /AcroForm /Fields [4 0 R] /SigFlags 3 >>' },
-  ];
-
+function buildRawSignedPdf(
+  objs: { num: number; gen: number; body: string }[],
+  opts: { id?: string } = {},
+): Uint8Array {
+  const size = Math.max(...objs.map((o) => o.num)) + 1;
   let pdf = '%PDF-1.7\n';
   const offsets = new Map<number, number>();
   for (const o of objs) {
@@ -185,13 +164,71 @@ function makeGen1SignedPdf(): Uint8Array {
     pdf += `${o.num} ${o.gen} obj\n${o.body}\nendobj\n`;
   }
   const xrefAt = Buffer.byteLength(pdf, 'latin1');
-  pdf += 'xref\n0 7\n0000000000 65535 f \n';
-  for (let n = 1; n <= 6; n++) {
-    const gen = objs.find((o) => o.num === n)!.gen;
-    pdf += `${String(offsets.get(n)).padStart(10, '0')} ${String(gen).padStart(5, '0')} n \n`;
+  pdf += `xref\n0 ${size}\n0000000000 65535 f \n`;
+  for (let n = 1; n < size; n++) {
+    const o = objs.find((x) => x.num === n);
+    pdf += o
+      ? `${String(offsets.get(n)).padStart(10, '0')} ${String(o.gen).padStart(5, '0')} n \n`
+      : '0000000000 65535 f \n';
   }
-  pdf += `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF`;
+  pdf += `trailer\n<< /Size ${size} /Root 1 0 R${opts.id ? ` /ID ${opts.id}` : ''} >>\n`;
+  pdf += `startxref\n${xrefAt}\n%%EOF`;
   return new Uint8Array(Buffer.from(pdf, 'latin1'));
+}
+
+const SIG_BODY =
+  '<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached ' +
+  `/ByteRange [0 100 200 50] /Contents <${'00'.repeat(16)}> >>`;
+
+/** A signed PDF whose PAGE object carries generation 1 (referenced as "3 1 R"). */
+function makeGen1SignedPdf(id?: string): Uint8Array {
+  return buildRawSignedPdf(
+    [
+      { num: 1, gen: 0, body: '<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>' },
+      { num: 2, gen: 0, body: '<< /Type /Pages /Kids [3 1 R] /Count 1 >>' },
+      {
+        num: 3,
+        gen: 1,
+        body: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Annots [4 0 R] >>',
+      },
+      {
+        num: 4,
+        gen: 0,
+        body:
+          '<< /Type /Annot /Subtype /Widget /FT /Sig /Rect [20 20 120 60] ' +
+          '/V 5 0 R /T (OldSig) /F 4 /P 3 1 R >>',
+      },
+      { num: 5, gen: 0, body: SIG_BODY },
+      { num: 6, gen: 0, body: '<< /Type /AcroForm /Fields [4 0 R] /SigFlags 3 >>' },
+    ],
+    { id },
+  );
+}
+
+/**
+ * A signed PDF where object 7 is the SAME indirect array for both the AcroForm
+ * /Fields and the page /Annots (a terminal widget field is both field and annotation).
+ */
+function makeSharedFieldsAnnotsPdf(): Uint8Array {
+  return buildRawSignedPdf([
+    { num: 1, gen: 0, body: '<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>' },
+    { num: 2, gen: 0, body: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>' },
+    {
+      num: 3,
+      gen: 0,
+      body: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Annots 7 0 R >>',
+    },
+    {
+      num: 4,
+      gen: 0,
+      body:
+        '<< /Type /Annot /Subtype /Widget /FT /Sig /Rect [20 20 120 60] ' +
+        '/V 5 0 R /T (OldSig) /F 4 /P 3 0 R >>',
+    },
+    { num: 5, gen: 0, body: SIG_BODY },
+    { num: 6, gen: 0, body: '<< /Type /AcroForm /Fields 7 0 R /SigFlags 3 >>' },
+    { num: 7, gen: 0, body: '[4 0 R]' },
+  ]);
 }
 
 describe('multi-signature (incremental)', () => {
@@ -299,6 +336,27 @@ describe('multi-signature (incremental)', () => {
     expect(String(parentRef)).toBe('3 1 R');
     // …and that ref actually resolves to the page (index 0) in the tree.
     expect(reparsed.getPages()[0].ref).toBe(parentRef);
+  }, 40000);
+
+  it('counter-signs when /Fields and page /Annots share one indirect array', async () => {
+    // Object 7 is both the AcroForm /Fields and the page /Annots. The widget must be
+    // added to it exactly once, not twice (which would trip the well-formedness guard).
+    const bytes = makeSharedFieldsAnnotsPdf();
+    expect((await loadPdf(bytes)).hasExistingSignature).toBe(true);
+    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
+    expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
+    // Exactly one field was added (2 total), and the shared array is not double-counted.
+    expect(await activeFieldsRefs(out)).toHaveLength(2);
+  }, 40000);
+
+  it('preserves the trailer /ID of the signed PDF in the appended trailer', async () => {
+    const id = '[<0123456789ABCDEF0123456789ABCDEF> <FEDCBA9876543210FEDCBA9876543210>]';
+    const bytes = makeGen1SignedPdf(id);
+    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
+    // The appended (now-active) trailer must carry the same /ID forward.
+    const text = Buffer.from(out).toString('latin1');
+    const lastTrailer = text.slice(text.lastIndexOf('trailer'));
+    expect(lastTrailer).toContain(`/ID ${id}`);
   }, 40000);
 
   it('rejects a certification-locked PDF (DocMDP "no changes", P=1)', async () => {

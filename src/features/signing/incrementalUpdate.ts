@@ -189,9 +189,14 @@ export function addIncrementalPlaceholder(
   // --- 3. Attach the widget to the TARGET page's /Annots (inline or indirect). ---
   const annotsRaw = page.node.get(PDFName.of('Annots'));
   if (annotsRaw instanceof PDFRef) {
-    const arr = page.node.lookup(PDFName.of('Annots'), PDFArray);
-    arr.push(widgetRef);
-    append(annotsRaw.objectNumber, annotsRaw.generationNumber, arr.toString());
+    // A terminal widget field may share ONE indirect array as both the AcroForm
+    // /Fields and the page /Annots. If step 2 already appended that object, the
+    // widget is in it — pushing again here would duplicate it (and trip the guard).
+    if (!added.has(annotsRaw.objectNumber)) {
+      const arr = page.node.lookup(PDFName.of('Annots'), PDFArray);
+      arr.push(widgetRef);
+      append(annotsRaw.objectNumber, annotsRaw.generationNumber, arr.toString());
+    }
   } else {
     const arr = annotsRaw instanceof PDFArray ? annotsRaw : ctx.obj([]);
     arr.push(widgetRef);
@@ -208,14 +213,17 @@ export function addIncrementalPlaceholder(
       `${objNum} 1\n${String(offset).padStart(10, '0')} ${String(gen).padStart(5, '0')} n `,
     );
   }
-  const infoRef = ctx.trailerInfo.Info;
+  // Carry /Info and /ID forward from the file's PREVIOUS trailer, read from the bytes
+  // themselves — not from pdf-lib's trailerInfo, which fabricates an /Info object when
+  // the original had none (that would emit a dangling reference). Dropping /ID would
+  // also break PDF/A and other conformance validators on the counter-signed output.
+  const prev = previousTrailerEntries(out, prevXref);
   const trailer =
     '<<\n' +
     `/Size ${nextObj}\n` +
     `/Root ${rootRef.objectNumber} ${rootRef.generationNumber} R\n` +
-    (infoRef instanceof PDFRef
-      ? `/Info ${infoRef.objectNumber} ${infoRef.generationNumber} R\n`
-      : '') +
+    (prev.info ? `/Info ${prev.info}\n` : '') +
+    (prev.id ? `/ID ${prev.id}\n` : '') +
     `/Prev ${prevXref}\n` +
     '>>';
   out = Buffer.concat([
@@ -223,6 +231,44 @@ export function addIncrementalPlaceholder(
     Buffer.from(`\nxref\n${sections.join('\n')}\ntrailer\n${trailer}\nstartxref\n${xrefOffset}\n%%EOF`),
   ]);
   return out;
+}
+
+/**
+ * The `/Info` reference and `/ID` array of the file's previous trailer, read verbatim
+ * from the bytes at `prevXref`. Handles both a classic `trailer << … >>` and an
+ * xref-stream object (`N g obj << /Type /XRef … >>`). Missing entries come back
+ * undefined, so we never emit a `/Info`/`/ID` the original didn't have.
+ */
+function previousTrailerEntries(pdf: Buffer, prevXref: number): { info?: string; id?: string } {
+  const from = pdf.subarray(prevXref).toString('latin1');
+  // A classic section starts with the `xref` keyword; its trailer dict follows the
+  // `trailer` keyword. An xref stream is a plain object whose own dict we read.
+  const dictSource = from.trimStart().startsWith('xref')
+    ? from.slice(from.indexOf('trailer') + 'trailer'.length)
+    : from;
+  const dict = firstDictText(dictSource);
+  return {
+    info: /\/Info\s+(\d+\s+\d+\s+R)/.exec(dict)?.[1],
+    id: /\/ID\s*(\[[^\]]*\])/.exec(dict)?.[1],
+  };
+}
+
+/** The first balanced `<< … >>` dictionary in `s` (empty string if none). */
+function firstDictText(s: string): string {
+  const start = s.indexOf('<<');
+  if (start === -1) return '';
+  let depth = 0;
+  for (let i = start; i < s.length - 1; i++) {
+    if (s[i] === '<' && s[i + 1] === '<') {
+      depth++;
+      i++;
+    } else if (s[i] === '>' && s[i + 1] === '>') {
+      depth--;
+      i++;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return '';
 }
 
 /** Byte offset of the file's last cross-reference section (its `startxref` value). */
