@@ -20,6 +20,23 @@ for (let i = 1; i <= 2; i++) {
 }
 writeFileSync(resolve(DIR, 'sample.pdf'), await doc.save());
 
+// A large document for the performance benchmark (T050).
+const big = await PDFDocument.create();
+const bigFont = await big.embedFont(StandardFonts.Helvetica);
+for (let i = 1; i <= 60; i++) {
+  const page = big.addPage([595, 842]);
+  page.drawText(`Large sample agreement — page ${i} of 60`, { x: 60, y: 780, size: 16, font: bigFont });
+  for (let line = 0; line < 35; line++) {
+    page.drawText(
+      `Clause ${i}.${line + 1} — the parties agree to the terms set out in this paragraph.`,
+      { x: 60, y: 740 - line * 18, size: 10, font: bigFont },
+    );
+  }
+  page.drawText('Signature:', { x: 60, y: 90, size: 12, font: bigFont });
+  page.drawLine({ start: { x: 140, y: 88 }, end: { x: 400, y: 88 }, thickness: 1, color: rgb(0, 0, 0) });
+}
+writeFileSync(resolve(DIR, 'sample-large.pdf'), await big.save());
+
 // A small solid PNG (red 1x1); the app scales it to the placement box.
 const PNG_1x1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
