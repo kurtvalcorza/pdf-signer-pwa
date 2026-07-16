@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Constitution Principle V: the signing path is not "done" until an automatable
+  # validator confirms the signature. This job is that gate.
+  verify:
+    name: Build, tests & signature gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pyHanko (signature validator)
+        run: pip install pyhanko
+
+      - name: Typecheck & build
+        run: npm run build
+
+      - name: Unit & signing tests
+        run: npm test
+
+      # Produces real signed PDFs and validates them with pyHanko: every signature
+      # must be intact + valid, and the tampered fixture MUST fail (SC-007).
+      - name: Signature gate (pyHanko)
+        run: npm run verify:signatures
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E (signing flows)
+        run: npm run e2e
+
+      # Offline/installability runs against the production build (service worker
+      # + precache only exist there).
+      - name: E2E (PWA offline & installability)
+        run: npm run e2e:pwa
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

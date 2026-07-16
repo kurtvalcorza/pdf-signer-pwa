@@ -32,7 +32,7 @@ pyHanko validation gate. Signing/coordinate code is TDD; UI is covered by Playwr
 - [X] T005 [P] Configure ESLint + Prettier (2-space, single quotes, semicolons) — eslint.config.js (flat) + .prettierrc
 - [X] T006 [P] Set up Vitest (test config in vite.config.ts; tests/ directory)
 - [X] T007 [P] Set up Playwright (Chromium, Pixel 7 device) in playwright.config.ts with tests/e2e/ + fixtures
-- [ ] T008 Add npm scripts (dev, build, preview, test, e2e, verify:signatures) to package.json, document pyHanko prerequisite in README.md, and add a local **pre-push git hook** (Husky) that runs `npm run verify:signatures` so the Principle V gate is enforced locally until GitHub Actions is wired (closes analysis finding C1) — PARTIAL: npm scripts done; README + pre-push hook pending
+- [X] T008 npm scripts (dev, build, preview, test, e2e, e2e:pwa, verify:signatures) + pyHanko prerequisite documented in README. **Principle V enforcement now via GitHub Actions CI (T061), not a local pre-push hook** — the Husky hook was never implemented, so CI supersedes it and genuinely closes analysis finding C1
 - [X] T009 [P] Add strict CSP (target `connect-src 'none'`) via index.html meta + vite config, and object-src/base-uri/form-action lockdown per research R9
 - [X] T010 [P] PWA manifest.webmanifest + real 192/512/maskable icons in public/icons (dependency-free PNG encoder in scripts/make-icons.mjs; validated by the offline E2E)
 
@@ -232,8 +232,8 @@ each an independently testable, deployable increment.
 - [P] = different files, no incomplete-task dependency.
 - Signing-path and coordinate tasks are TDD (test before implementation) per Constitution V.
 - `npm run verify:signatures` (pyHanko) must pass for any signing-path task to be "done". CI
-  automation is deferred (git local); a **local pre-push git hook (T008)** enforces the gate on
-  every push until GitHub Actions is wired.
+  automation now runs in **GitHub Actions** (`.github/workflows/ci.yml`, task T061) on every push to
+  `main` and every PR — build + tests + the pyHanko signature gate + Playwright/PWA E2E.
 - Never re-serialize a signed PDF (incremental appends only) — the core invariant behind US2.
 - Commit after each task or logical group.
 
@@ -250,6 +250,8 @@ Amends the "BYO cert only" grill decision — see spec FR-018/FR-030.
 - [X] T058 Date line + user toggles — appearance renders optional "Digitally signed by {name}" and "Date: …" lines; CertSheet checkboxes toggle each on/off (both off → image only). Threaded SignRequest.showLabel/showDate → App → signFirst opts (FR-030/031; unit test asserts on/off)
 - [X] T059 Uniform, non-clipping appearance text — single font/size/colour, sized to the widest line's real width + box height so long names/dates never clip (FR-030). Verified with a long-name demo
 - [X] T060 Richer certificate subject — generateSelfSignedP12 takes CertSubject {commonName, organization?, organizationalUnit?, email?}; email in subject DN + subjectAltName; CertSheet gains optional Org/Division/Email inputs (FR-032; unit test parses cert + asserts O/OU/emailAddress + SAN)
+
+- [X] T061 **GitHub Actions CI** (`.github/workflows/ci.yml`) — on every push to `main` and every PR: `verify` job (npm ci → pip install pyhanko → build → tests → **`npm run verify:signatures`** pyHanko gate) and `e2e` job (Playwright signing flows + PWA offline/installability, report uploaded on failure). **Genuinely closes analysis finding C1 / the Principle V CI deferral** — the previously-claimed local pre-push hook was never implemented, so the gate was honor-system until now.
 
 **Note (format clarification):** `.p12`/`.pfx` (PKCS#12 = private key + cert) is the signing Digital ID Adobe uses. `.p7c`/`.cer` is the public-cert-only export used to establish trust (add signer to Trusted Identities) — not a signing format.
 
