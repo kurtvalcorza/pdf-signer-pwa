@@ -30,13 +30,18 @@ test('US: opt-in remember signature persists across a reload and can be reused, 
   await expect(remember).toBeVisible();
   await remember.check();
 
+  // Checking the box only starts an async IndexedDB write; reloading immediately can
+  // race it (this is what failed on CI). "Use saved signature" renders only after the
+  // save resolves, so wait for that signal — not a sleep — before reloading.
+  const useSaved = page.getByRole('button', { name: /Use saved signature/ });
+  await expect(useSaved).toBeVisible();
+
   // Persisted across a full reload (fresh session, no in-memory state).
   await page.reload();
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
   await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
 
   // The saved signature can be placed without re-uploading.
-  const useSaved = page.getByRole('button', { name: /Use saved signature/ });
   await expect(useSaved).toBeVisible();
   await useSaved.click();
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
