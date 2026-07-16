@@ -5,9 +5,11 @@ import {
   PDFDocument,
   PDFHexString,
   PDFName,
+  PDFRawStream,
   PDFRef,
   PDFString,
   StandardFonts,
+  degrees,
 } from 'pdf-lib';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -245,7 +247,11 @@ describe('multi-signature (incremental)', () => {
     const first = await signFirst(base, at(0.62), cert);
     const second = await signIncremental(first, at(0.42), cert);
 
-    const byteRanges = (Buffer.from(second).toString('latin1').match(/\/ByteRange/g) ?? []).length;
+    const byteRanges = (
+      Buffer.from(second)
+        .toString('latin1')
+        .match(/\/ByteRange/g) ?? []
+    ).length;
     expect(byteRanges).toBeGreaterThanOrEqual(2);
     // Incremental append only grows the file — the earlier signed bytes are preserved.
     expect(second.length).toBeGreaterThan(first.length);
@@ -263,6 +269,57 @@ describe('multi-signature (incremental)', () => {
 
   // The app routes certificate-signing of an already-signed PDF through signIncremental
   // (App.signWithCert), so a later signer never invalidates an earlier one (FR-013/SC-009).
+  it('adds an image appearance to the appended counter-signature field', async () => {
+    const cert = { p12Bytes: p12, password: PASS };
+    const first = await signFirst(await makeBasePdf(), at(0.18), cert);
+
+    const out = await signIncremental(first, at(0.42), cert);
+    const doc = await PDFDocument.load(out);
+    const acro = doc.catalog.lookup(PDFName.of('AcroForm'), PDFDict);
+    const fields = acro.lookup(PDFName.of('Fields'), PDFArray);
+    const appended = fields.lookup(fields.size() - 1, PDFDict);
+    const ap = appended.lookup(PDFName.of('AP'), PDFDict);
+    const normal = ap.get(PDFName.of('N'));
+
+    expect(normal).toBeInstanceOf(PDFRef);
+    const normalStream = doc.context.lookup(normal as PDFRef) as PDFRawStream;
+    expect(normalStream.getContentsString()).toContain('/Img Do');
+
+    // Hand this appearance-bearing counter-sign to the pyHanko gate (verify:signatures):
+    // both signatures must remain intact + valid even though the new one carries an
+    // embedded image appearance (the appended resources are covered by its ByteRange,
+    // and the prior signed bytes are untouched).
+    writeFileSync(resolve(OUT, 'signed-counter-appearance.pdf'), out);
+  });
+
+  it('honors appearance options for appended counter-signatures', async () => {
+    const cert = { p12Bytes: p12, password: PASS };
+    const first = await signFirst(await makeBasePdf(), at(0.18), cert, {
+      label: false,
+      date: false,
+    });
+
+    const out = await signIncremental(first, at(0.42), cert, { label: false, date: false });
+    const text = Buffer.from(out).toString('latin1');
+
+    expect(text).toContain('/Img Do');
+    expect(text).not.toContain('Digitally signed by');
+    expect(text).not.toContain('Date:');
+  });
+
+  it('keeps the appended appearance upright on rotated pages', async () => {
+    const cert = { p12Bytes: p12, password: PASS };
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 400]);
+    page.setRotation(degrees(90));
+    const first = await signFirst(await doc.save(), at(0.18), cert);
+
+    const out = await signIncremental(first, at(0.42), cert);
+    const text = Buffer.from(out).toString('latin1');
+
+    expect(text).toContain('/Matrix [ 0 1 -1 0');
+  });
+
   it('counter-signs a PDF someone else already signed without invalidating theirs', async () => {
     const base = await makeBasePdf();
     const cert = { p12Bytes: p12, password: PASS };
@@ -280,8 +337,11 @@ describe('multi-signature (incremental)', () => {
       Buffer.from(othersSigned),
     );
     // Both signatures are present; the file only grew (pure append).
-    const byteRanges = (Buffer.from(counterSigned).toString('latin1').match(/\/ByteRange/g) ?? [])
-      .length;
+    const byteRanges = (
+      Buffer.from(counterSigned)
+        .toString('latin1')
+        .match(/\/ByteRange/g) ?? []
+    ).length;
     expect(byteRanges).toBeGreaterThanOrEqual(2);
     expect(counterSigned.length).toBeGreaterThan(othersSigned.length);
     // …and both fields stay enumerable via the active AcroForm.

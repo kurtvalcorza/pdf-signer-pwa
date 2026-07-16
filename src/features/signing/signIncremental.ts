@@ -3,7 +3,14 @@ import { P12Signer } from '@signpdf/signer-p12';
 import type { PlacementInput, Pkcs12 } from './types';
 import { verifyCertPassword } from './cert';
 import { PDFDocument, PDFArray, PDFDict, PDFName, PDFNumber, PDFRef } from 'pdf-lib';
-import { clampBox, normalizedBoxToPdfRect, type Rotation } from '../../lib/coords';
+import { buildAppearance, formatDate, type SignFirstOptions } from './signFirst';
+import { getSignerCommonName } from './cert';
+import {
+  clampBox,
+  normalizedBoxToPdfRect,
+  appearanceLayout,
+  type Rotation,
+} from '../../lib/coords';
 import { addIncrementalPlaceholder, acroFormFieldRefs } from './incrementalUpdate';
 
 /**
@@ -13,9 +20,6 @@ import { addIncrementalPlaceholder, acroFormFieldRefs } from './incrementalUpdat
  * parseable PDF structure (xref streams, object streams, indirect /Annots or
  * /Fields) — the update is built from pdf-lib's parsed graph, not string surgery
  * (see incrementalUpdate.ts).
- *
- * NOTE (known limitation): the incremental placeholder produces a visible widget
- * but not an image appearance.
  *
  * Guards that keep the FR-013 claim honest rather than best-effort:
  *  - a certification (DocMDP "no changes") or FieldMDP-locked signature rejects
@@ -29,6 +33,7 @@ export async function signIncremental(
   signedPdf: Uint8Array,
   placement: PlacementInput,
   cert: Pkcs12,
+  opts: SignFirstOptions = {},
 ): Promise<Uint8Array> {
   if (!verifyCertPassword(cert.p12Bytes, cert.password)) {
     const { BadPasswordError } = await import('./types');
@@ -38,6 +43,7 @@ export async function signIncremental(
   // Read structure WITHOUT mutating/saving the signed bytes (read-only load; the
   // probe's parsed objects are also what the incremental update is built from).
   const probe = await PDFDocument.load(signedPdf);
+  const originalLargestObjectNumber = probe.context.largestObjectNumber;
 
   const lock = modificationLock(probe);
   if (lock) {
@@ -50,12 +56,45 @@ export async function signIncremental(
   const { width, height } = page.getSize();
   const rotation = (((page.getRotation().angle % 360) + 360) % 360) as Rotation;
   const box = clampBox({ nx: placement.nx, ny: placement.ny, nw: placement.nw, nh: placement.nh });
-  const rect = normalizedBoxToPdfRect(box, { widthPt: width, heightPt: height, rotation });
+  const geom = { widthPt: width, heightPt: height, rotation };
+  const rect = normalizedBoxToPdfRect(box, geom);
+  const appearance = appearanceLayout(box, geom);
 
   const priorFieldRefs = acroFormFieldRefs(probe).map(String);
+  const image =
+    placement.format === 'png'
+      ? await probe.embedPng(placement.imageBytes)
+      : await probe.embedJpg(placement.imageBytes);
+  const showLabel = opts.label !== false;
+  const showDate = opts.date !== false;
+  const signerName =
+    opts.displayName ?? getSignerCommonName(cert.p12Bytes, cert.password) ?? 'Signer';
+  const { content: apContent, resources } = await buildAppearance(
+    probe,
+    appearance.widthPt,
+    appearance.heightPt,
+    image,
+    {
+      name: showLabel ? signerName : null,
+      dateStr: showDate ? `Date: ${formatDate(new Date())}` : null,
+    },
+  );
+  const apStream = probe.context.stream(apContent, {
+    Type: 'XObject',
+    Subtype: 'Form',
+    FormType: 1,
+    BBox: [0, 0, appearance.widthPt, appearance.heightPt],
+    Matrix: appearance.matrix,
+    Resources: resources,
+  } as Parameters<typeof probe.context.stream>[1]);
+  const appearanceRef = probe.context.register(apStream);
+  await probe.flush();
+
   const withPlaceholder = addIncrementalPlaceholder(signedPdf, probe, {
     pageIndex: placement.pageIndex,
     widgetRect: [rect.x, rect.y, rect.x + rect.w, rect.y + rect.h],
+    appearanceRef,
+    originalLargestObjectNumber,
   });
 
   await assertUpdateWellFormed(withPlaceholder, priorFieldRefs, placement.pageIndex);

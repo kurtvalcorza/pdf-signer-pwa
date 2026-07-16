@@ -33,6 +33,8 @@ export interface IncrementalPlaceholderOptions {
   widgetRect: [number, number, number, number];
   reason?: string;
   signatureLength?: number;
+  appearanceRef?: PDFRef;
+  originalLargestObjectNumber?: number;
 }
 
 /**
@@ -76,6 +78,7 @@ export function addIncrementalPlaceholder(
   let out = Buffer.from(signedPdf);
   const prevXref = lastStartXref(out);
 
+  const originalLargest = opts.originalLargestObjectNumber ?? ctx.largestObjectNumber;
   let nextObj = ctx.largestObjectNumber + 1;
   // object number → { byte offset of its header, generation }.
   const added = new Map<number, { offset: number; gen: number }>();
@@ -92,6 +95,13 @@ export function addIncrementalPlaceholder(
       Buffer.from('\nendobj\n'),
     ]);
   };
+
+  // --- 0. Any newly embedded appearance resources (image/font) created on the probe.
+  for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
+    if (ref.objectNumber > originalLargest) {
+      append(ref.objectNumber, ref.generationNumber, obj.toString());
+    }
+  }
 
   // --- 1. Signature dictionary + widget (serialized with @signpdf's converter so
   // the /ByteRange and /Contents placeholders are exactly what sign() rewrites). ---
@@ -129,6 +139,13 @@ export function addIncrementalPlaceholder(
       F: ANNOTATION_FLAGS.PRINT,
       // /P must carry the page's REAL generation, or it points at a missing object.
       P: new Ref(page.ref.objectNumber, page.ref.generationNumber),
+      ...(opts.appearanceRef
+        ? {
+            AP: {
+              N: new Ref(opts.appearanceRef.objectNumber, opts.appearanceRef.generationNumber),
+            },
+          }
+        : {}),
     }),
   );
   const widgetRef = PDFRef.of(widgetNum);
@@ -139,7 +156,10 @@ export function addIncrementalPlaceholder(
   if (acroRaw instanceof PDFRef) {
     const acroDict = probe.catalog.lookup(PDFName.of('AcroForm'), PDFDict);
     const fieldsRaw = acroDict.get(PDFName.of('Fields'));
-    acroDict.set(PDFName.of('SigFlags'), ctx.obj(SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY));
+    acroDict.set(
+      PDFName.of('SigFlags'),
+      ctx.obj(SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY),
+    );
     if (fieldsRaw instanceof PDFRef) {
       // /Fields is its own indirect array — update just that object.
       const arr = acroDict.lookup(PDFName.of('Fields'), PDFArray);
@@ -155,7 +175,10 @@ export function addIncrementalPlaceholder(
   } else if (acroRaw instanceof PDFDict) {
     // AcroForm inline in the catalog — the catalog object itself must be rewritten.
     const fieldsRaw = acroRaw.get(PDFName.of('Fields'));
-    acroRaw.set(PDFName.of('SigFlags'), ctx.obj(SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY));
+    acroRaw.set(
+      PDFName.of('SigFlags'),
+      ctx.obj(SIG_FLAGS.SIGNATURES_EXIST | SIG_FLAGS.APPEND_ONLY),
+    );
     if (fieldsRaw instanceof PDFRef) {
       // /Fields is an indirect array even though the form is inline — update that
       // object in place, don't discard it (it holds every existing field).
@@ -228,7 +251,9 @@ export function addIncrementalPlaceholder(
     '>>';
   out = Buffer.concat([
     out,
-    Buffer.from(`\nxref\n${sections.join('\n')}\ntrailer\n${trailer}\nstartxref\n${xrefOffset}\n%%EOF`),
+    Buffer.from(
+      `\nxref\n${sections.join('\n')}\ntrailer\n${trailer}\nstartxref\n${xrefOffset}\n%%EOF`,
+    ),
   ]);
   return out;
 }
