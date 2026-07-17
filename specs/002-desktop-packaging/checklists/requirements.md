@@ -8,10 +8,14 @@
 
 - [x] No implementation details (languages, frameworks, APIs)
       — *Qualified pass.* Electron is named once, in **Assumptions**, not in any FR or SC. This is
-      deliberate: the engine choice is the load-bearing rationale for FR-009 (correctness evidence
-      transfers only on an equivalent engine), so hiding it would obscure *why* the requirement
-      exists. All FRs/SCs remain implementation-neutral. Artifact formats (single executable,
-      AppImage) are user-facing deliverables, not implementation detail.
+      deliberate: the engine choice is the load-bearing rationale for FR-009, so hiding it would
+      obscure *why* the requirement exists. All FRs/SCs remain implementation-neutral. Artifact
+      formats (single executable, AppImage) are user-facing deliverables, not implementation detail.
+      **The shared engine makes a passing gate *likely*; it does NOT transfer evidence** — FR-010 and
+      Constitution V require every artifact to earn its own validator run. *(Corrected 2026-07-17:
+      this item previously said "correctness evidence transfers only on an equivalent engine" — the
+      exact inheritance claim the amendment rejects, asserted in the file that declares the spec ready
+      and unambiguous, where it could be cited to weaken the per-artifact gate. Codex, PR #7.)*
 - [x] Focused on user value and business needs
 - [x] Written for non-technical stakeholders
 - [x] All mandatory sections completed

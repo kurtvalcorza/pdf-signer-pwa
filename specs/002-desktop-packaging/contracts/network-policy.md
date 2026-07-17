@@ -32,10 +32,42 @@ the network:
 - `electron/**` MUST NOT import `node:http`, `node:https`, `node:net`, `node:dgram`, `node:tls`, or
   any transitive HTTP client.
 - `electron/**` MUST NOT call global `fetch`.
-- Enforced by an `eslint` `no-restricted-imports` / `no-restricted-globals` rule scoped to
-  `electron/**`, so a violation fails lint rather than relying on review.
-- `net.fetch` from Electron's own module is permitted **only** inside `electron/protocol.ts` for
-  serving `app:` assets from disk (it never touches a remote host), and nowhere else.
+- **An import allow-list** governs `electron/**`: only explicitly-approved, non-network modules may be
+  imported. A deny-list is insufficient — `import got from 'got'` (or `axios`, `undici`) walks past a
+  builtins-only rule while using Node networking layer 2 cannot see.
+- **⚠ `net` from the `electron` module is BANNED outside `electron/protocol.ts`.** Allow-listing the
+  `electron` module as a whole is **not** enough: Electron's `net` is a full HTTP(S) client, so
+  `import { net } from 'electron'` satisfies a module-level allow-list while handing the main process
+  an outbound request primitive that bypasses every layer above. The lint rule MUST ban the `net`
+  import *and* property access everywhere except the protocol handler. *(Codex, PR #7 — a bypass in
+  the fix for the original bypass.)*
+- `net.fetch` is permitted **only** inside `electron/protocol.ts`, solely to read `app:` assets from
+  disk (it never touches a remote host).
+- A **packaged-build dependency audit** additionally fails the build if any module reachable from
+  `electron/**` in the shipped output pulls a network-capable dependency. Lint covers source; the
+  audit covers what ships.
+
+## Scheme registration — privileges and timing
+
+`protocol.registerSchemesAsPrivileged` MUST be called **synchronously at main-process startup, before
+the `ready` event**, and exactly once. Only `protocol.handle` waits for `app.whenReady()`.
+
+**Why this is a correctness rule, not a style note**: if the privileged registration is wired inside
+`app.whenReady()` — the natural place to put protocol setup — the `app:` scheme silently never
+receives `standard`/`secure`/`supportFetchAPI`. The app may still appear to load while relative
+assets, the Fetch API, and **IndexedDB** (i.e. all opt-in persistence) break **in the packaged
+artifact only**. *(Codex, PR #7.)*
+
+Privileges: `{ standard: true, secure: true, supportFetchAPI: true }`. **`bypassCSP` MUST be absent or
+false** (see below). `allowServiceWorkers` is not needed — desktop builds do not register a service
+worker.
+
+### The handler must not be blocked by our own filter
+
+The layer-2 allow-list cancels every scheme outside `app:`/`blob:`/`data:`. The `app:` handler itself
+reads from disk (`net.fetch` over a `file:` URL). The filter MUST NOT cancel the handler's own asset
+reads — **the app would fail to load at all**. Scope the filter to renderer/session-originated
+requests, and verify the packaged app actually opens (T005 spike). *(Codex, PR #7.)*
 
 ## Allow-list (layer 2)
 

@@ -22,8 +22,9 @@ to.
 
 The value is not new signing capability — it is **reach and provability**. A user who cannot or will
 not trust a URL (an air-gapped machine, a locked-down workstation, a reviewer who wants to inspect
-what they are running) can copy one file onto the machine, run it, sign a document, and delete it —
-leaving no application or user data behind.
+what they are running) can copy one file onto the machine, run it, sign a document, and then remove
+it **along with the one data folder it creates beside itself** — leaving no application or user data
+behind.
 
 > **Scope of the "no trace" claim** (Principle IV): it covers **data the application writes**, which
 > all lives in one folder beside the artifact (SC-005). It does **not** and cannot cover
@@ -389,8 +390,16 @@ test. Codex, PR #7.)*
   included in the web bundle at all — suppressing it at runtime via a `distribution` check is
   insufficient. It MUST be isolated behind a module the web build never imports, so the web app does
   not ship code for a distribution it is not.
-- **FR-020**: All existing functional requirements of the signing application (`001-pdf-signer`)
-  MUST hold in the desktop applications. This feature adds distribution, not capability.
+- **FR-020**: All **shared** functional requirements of the signing application (`001-pdf-signer`) —
+  signing, placement, certificate handling, appearance, privacy, and persistence — MUST hold in the
+  desktop applications. This feature adds distribution, not capability.
+  **Explicitly excluded: 001's web-distribution requirements**, which are meaningless or actively
+  wrong for a packaged app — e.g. FR-025 ("install the app to their device home screen"), the web app
+  manifest, and service-worker precache (see FR-019a and R5). *(Scoped 2026-07-17: FR-020 previously
+  imported **all** of 001's FRs, which read literally makes the desktop spec impossible to satisfy and
+  would push an implementer toward fabricating PWA/installability behaviour inside Electron. The
+  constitution (v1.1.0) already defines "installable" per distribution; FR-020 must not re-import the
+  web's definition. Codex, PR #7.)*
 
 ### Key Entities
 

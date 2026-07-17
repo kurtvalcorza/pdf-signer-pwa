@@ -48,18 +48,14 @@ CORS restrictions, the FileSystem/Fetch APIs error, and service workers cannot r
 docs are explicit that to replace `http` you must register the scheme as **standard**; registering
 as standard+secure is what unlocks Fetch API, ServiceWorker registration, and V8 code cache.
 
-**⚠ Load-bearing constraint — `bypassCSP` MUST remain `false`.** The privilege list includes
-`bypassCSP`, which "allows resources served through that scheme to bypass Content Security Policy
-restrictions". Principle I (v1.1.0) requires the desktop build to keep the CSP **and** add runtime
-denial — CSP is not replaced by runtime denial, it is joined by it. Setting `bypassCSP: true` (easy
-to copy from a tutorial) would silently disable `connect-src 'none'` and void half of Principle I's
-enforcement while every test still passed. This is the single highest-risk line in the feature.
-
-Privileges to set: `{ standard: true, secure: true, supportFetchAPI: true }`. `allowServiceWorkers`
-only if R5 concludes we keep the SW. `bypassCSP`, `corsEnabled`, `stream` — not needed; leave unset.
-
-**Handler must be path-safe**: resolve requested paths against the `dist` root and reject anything
-escaping it (`..`), so the scheme cannot serve arbitrary host files.
+**⚠ Why this is the highest-risk area in the feature** (rationale; the rules themselves live in
+**[contracts/network-policy.md](contracts/network-policy.md)** § Scheme registration and are not
+restated here): the privilege list includes `bypassCSP`, which exempts resources served over the
+scheme from the page CSP. Setting it — an easy tutorial copy-paste — would void half of Principle I's
+enforcement **while every test still passed**. Registration timing is a second silent trap: register
+after `ready` and the scheme quietly loses its privileges, breaking IndexedDB in the packaged artifact
+only. Both are failures that *look like nothing*, which is precisely why the contract specifies how to
+detect them rather than trusting review.
 
 **Alternatives considered**:
 
@@ -102,19 +98,13 @@ read-only mount (`/tmp/.mount_XXXX`). `APPIMAGE` is the documented way to get th
 Note `ARGV0` is *not* a substitute — it reports how the AppImage was invoked (and gives the symlink
 path when launched through one), whereas `APPIMAGE` is the absolute path of the actual file.
 
-**FR-011b (read-only media)**: if the adjacent directory is not writable, do **not** fall back to the
-OS user-data directory — that would leave residue on the host and break SC-005/SC-011. Instead leave
-`userData` on a throwaway temp path for the session and surface the memory-only state to the user.
-The existing `certStore` already swallows storage failures and degrades silently
-(`certStore.ts:16-24`), so the *code* already survives this; the work is making the degradation
-**visible** (FR-011b demands a clear explanation, and the current behaviour is deliberately silent).
+**Read-only media, ephemeral mode, and the cleanup caveats**: → **[contracts/portable-paths.md](contracts/portable-paths.md)** is the sole authority. Not restated here.
 
-**Residue caveat (honesty, SC-005)**: the Windows portable target's temp extraction means the app
-*does* write its own program files to temp while running; the launcher cleans them up on exit, but a
-hard crash can leave them. This is **application code, never user content** (user content stays in
-`userData`, which we relocate), so FR-012 is unaffected — but SC-005 must be assessed against *user
-data*, and the temp-extraction behaviour should be stated plainly rather than glossed. Do not claim
-"leaves absolutely nothing on the machine, ever".
+> *This paragraph previously restated the rules and got them **wrong**, twice — it claimed the
+> existing `certStore` failure path "already survives" read-only media (it doesn't: ephemeral mode
+> gives IndexedDB a writable temp dir, so the failure path never fires and a remembered `.p12` lands
+> on the host), and it was still saying so a round after the contract was corrected. That is a P1
+> caused purely by duplication. The rule now lives in one place. Codex, PR #7.*
 
 ---
 
@@ -140,23 +130,27 @@ data*, and the temp-extraction behaviour should be stated plainly rather than gl
    dependency audit. See [contracts/network-policy.md](contracts/network-policy.md) § Layer 3.
 4. **No auto-updater** — `electron-updater` is simply **not a dependency**. FR-007 is satisfied by
    absence, which is stronger than configuration: there is no flag to accidentally flip.
-4. **Crash reporter off** — Electron's `crashReporter` does not upload unless `start()` is called,
-   so the rule is "never call it". Additionally disable Chromium's own metrics/reporting via command
-   line switches, and set `app.setAppLogsPath` expectations so no diagnostics accumulate.
+5. **Crash reporter off** — Electron's `crashReporter` does not upload unless `start()` is called,
+   so the rule is "never call it" (a dump could contain in-memory key material).
+6. **External observation** — the release gate watches from outside the process.
 
-**Also**: block `will-navigate` and `setWindowOpenHandler` to `deny`, so no in-app link can navigate
-the window to a remote origin or spawn one.
+**The normative rules — allow-list, scheme privileges and registration timing, navigation locks, the
+`openExternal` carve-out, and how SC-004 is verified — live in
+[contracts/network-policy.md](contracts/network-policy.md) and are NOT restated here.**
 
-**Verification (SC-004)** must be observed from **outside** the app — the spec says "not merely
-asserted internally". The **primary release gate is a live-but-monitored network** (firewall/proxy/
-packet capture) across launch → sign → idle → quit, failing on **any** DNS/TCP/HTTP attempt.
+**Rationale worth keeping (the *why*, which is this document's job):**
 
-*(Corrected 2026-07-17: this originally preferred running with **no network interface** for the
-release gate. That proves the app *works* offline — it cannot prove the app never *tries*: a Node-side
-update check, telemetry ping, or DNS lookup fails instantly against a dead interface, records
-nothing, and the signing flow stays green. Since this file is the design input for that gate, the
-weaker method here would have propagated into the implementation. The offline run is retained as a
-**separate** check of a different property. Codex, PR #7 — P1.)*
+- **No single mechanism is trusted.** Layers are defence-in-depth against *our own* future mistakes as
+  much as against attack — the review of this PR found guards that couldn't fail and a filter that
+  couldn't see the main process, both of which a single-layer design would have shipped.
+- **Absence beats configuration.** Not depending on `electron-updater` is stronger than configuring it
+  off: there is no flag to flip back.
+- **A live-but-monitored network is the primary SC-004 gate, not an offline run.** Running with no
+  interface proves the app *works* offline; it cannot prove the app never *tries*. A telemetry ping or
+  DNS lookup against a dead interface fails instantly, records nothing, and leaves the signing flow
+  green. Only a monitored-but-live network distinguishes *made no request* from *made a request that
+  failed*. *(This document originally preferred the offline run — a P1, since research is the design
+  input the implementation follows. Codex, PR #7.)*
 
 ---
 
@@ -246,7 +240,11 @@ checksums **and** a Sigstore-backed build-provenance attestation.
   upload release assets).
 - Attestations bind the artifact's **digest** to a SLSA provenance predicate in in-toto format,
   signed with a short-lived Sigstore certificate.
-- Users verify with **`gh attestation verify <artifact> --repo kurtvalcorza/pdf-signer-pwa`**.
+- Users verify with `gh attestation verify` — **the exact pinned command (workflow + source digest)
+  lives in [contracts/release-artifacts.md](contracts/release-artifacts.md) and is not restated
+  here.** *(This line previously carried a `--repo`-only copy, which proves only that* some *workflow
+  in the repo built the artifact — a third copy of a command that had already been corrected
+  elsewhere. Codex, PR #7.)*
 
 **✅ Availability confirmed**: artifact attestations are available on **all current GitHub plans for
 public repositories**; private/internal repos require Enterprise Cloud. `pdf-signer-pwa` is public,
@@ -295,13 +293,23 @@ most likely way R4's filter goes wrong.
 
 ## Open risks carried into the plan
 
-| Risk | Why it matters | Mitigation |
+**Every risk here shares one property: it fails silently and looks like success.** That is why each
+has a *mechanism* that can actually fail, defined in the linked authority — not a note asking a
+reviewer to be careful. Mitigations are **referenced, never restated**: this table previously carried
+its own copy of the `bypassCSP` mitigation, it was the weaker/bypassable one, and it survived a round
+after the contract was fixed — a mitigation column is a duplication waiting to rot.
+
+| Risk | Why it fails silently | Authority |
 |---|---|---|
-| `bypassCSP: true` copied from a tutorial | Silently voids the page CSP for `app:`-served resources; every test still passes (NON-NEGOTIABLE Principle I) | **Assert the scheme registration directly** — the privileges object passed to `registerSchemesAsPrivileged` must contain no truthy `bypassCSP` — plus a CSP-disallowed `app:` resource. *(Corrected 2026-07-17: originally "assert the shipped CSP from inside the packaged app", which **cannot fail** for this bug — `bypassCSP` leaves the CSP meta tag untouched, and the privilege is scheme-scoped so a `connect-src` probe fires either way. Leaving the weaker mitigation here would steer the E2E straight back to the bypassable guard. Codex, PR #7.)* |
-| Data dir derived from `process.execPath` | Writes state to temp; user silently loses remembered cert; violates FR-011a | Use `PORTABLE_EXECUTABLE_DIR` / `APPIMAGE`; test by running the binary from two different folders |
-| R4 filter blocks `blob:` | Signed-PDF download silently breaks | Covered by the desktop E2E, which downloads a real signed file |
-| Staleness nudge quietly becomes an update check | Violates FR-006/007 and Principle I | No network client in main; SC-004 observed externally |
-| Desktop-only branch creeps into signing path | Voids the entire rationale for Electron over Tauri (R1) | FR-009; flagged in the requirements checklist |
+| `bypassCSP: true` copied from a tutorial | Voids the page CSP for `app:`-served resources; the CSP meta tag is untouched and a `connect-src` probe still fires, so naive guards go green (NON-NEGOTIABLE Principle I) | [network-policy.md](contracts/network-policy.md) § Scheme registration |
+| Scheme registered after `app.ready` | Privileges never apply; app may still load while IndexedDB and relative assets break **in the packaged artifact only** | [network-policy.md](contracts/network-policy.md) § Scheme registration |
+| Data dir from `process.execPath` | Writes to a temp extraction; state silently lost next launch (fresh GUID). A one-folder test passes | [portable-paths.md](contracts/portable-paths.md) |
+| Ephemeral mode relocates instead of disabling persistence | IndexedDB *succeeds* in temp, so the storage-failure path never fires and the `.p12` lands on the host | [portable-paths.md](contracts/portable-paths.md) |
+| Layer-2 filter blocks `blob:` — or the handler's own reads | Signed-PDF download dies silently; or the app fails to load at all | [network-policy.md](contracts/network-policy.md) |
+| `import { net } from 'electron'` in main | An HTTP client that satisfies a module allow-list and that `webRequest` cannot see | [network-policy.md](contracts/network-policy.md) § Layer 3 |
+| Staleness measured by build date | A rebuild from an unchanged lockfile silences the warning while shipping a year-old engine | [data-model.md](data-model.md) § BuildMetadata |
+| Staleness nudge becomes an update check | Violates FR-006/007 and Principle I | [network-policy.md](contracts/network-policy.md) |
+| Desktop-only branch in the signing path | Voids the whole rationale for Electron over Tauri (R1) and re-opens the Principle V gate | [spec.md](spec.md) FR-009; T039 |
 
 ## Sources
 

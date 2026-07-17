@@ -188,10 +188,17 @@ other distributions do not have. In particular:
 
 - A distribution that **bundles its own engine** ships that engine frozen: it receives no security
   updates for the life of the artifact. This MUST be disclosed, and the application MUST inform the
-  user when its own build has become stale. That staleness determination MUST be made locally (an
-  embedded build date compared against the device clock) and MUST NOT involve any network request —
-  Principle I is not negotiable to satisfy this one. A one-time notice that is easy to miss does not
-  satisfy this obligation.
+  user **when the engine it bundles has become stale**. That determination MUST be made locally and
+  MUST NOT involve any network request — Principle I is not negotiable to satisfy this one. A
+  one-time notice that is easy to miss does not satisfy this obligation.
+  *(Governance states the obligation and its constraints. It deliberately does **not** specify the
+  metric, threshold, or mechanism — those live in the feature spec and data model, which are the
+  single source of truth for scope. An earlier draft of this clause prescribed "an embedded **build
+  date** compared against the device clock"; that is the wrong measure — a rebuild from an unchanged
+  lockfile resets the build date while shipping the same year-old engine, silencing the warning
+  exactly when it matters. The data model corrected this to the engine's own release date, and this
+  clause had kept the superseded mechanism. Duplicating a mechanism into governance is how it rots.
+  Codex, PR #7 — P1.)*
 - A distribution whose artifacts are **not signed by a recognised code-signing authority** MUST
   disclose that plainly, explain the resulting warnings, and offer a verification path in its place.
 

@@ -91,6 +91,38 @@ Re-evaluated against `data-model.md`, `contracts/`, and `quickstart.md`.
 
 **Result**: ✅ **PASS.** No new violations introduced by the design. Proceed to `/speckit-tasks`.
 
+## Authority map — where each rule lives (READ THIS FIRST)
+
+**One claim, one home.** Every normative rule below has exactly **one** authoritative document. Every
+other document **references** it and MUST NOT restate it.
+
+| Domain | **Sole authority** | Everything else does |
+|---|---|---|
+| Network layers, allow-list, scheme privileges & timing, `openExternal` carve-out, SC-004 verification | **[contracts/network-policy.md](contracts/network-policy.md)** | link to it |
+| Data-directory resolution, `ephemeral` mode, cleanup promise & its caveats | **[contracts/portable-paths.md](contracts/portable-paths.md)** | link to it |
+| Release gates, provenance, checksums, disclosure content | **[contracts/release-artifacts.md](contracts/release-artifacts.md)** | link to it |
+| Entities & their fields (incl. staleness inputs) | **[data-model.md](data-model.md)** | link to it |
+| WHAT & WHY — user stories, FR/SC | **[spec.md](spec.md)** | link to it |
+| Decisions & rationale — *why* an option was chosen, alternatives, sources | **[research.md](research.md)** | link to it |
+| Actionable work items | **[tasks.md](tasks.md)** | link to it |
+
+**Why this exists.** Codex review of this PR produced **61 findings across 5 rounds at a flat ~13/round**,
+and the large majority were *the same corrected claim still standing in a sibling document* — a P1 in
+`research.md` for a rule already fixed in `data-model.md`, `CLAUDE.md` still teaching a guard proven
+useless two rounds earlier, the constitution still measuring staleness by build date after the data
+model moved to engine date.
+
+That is **exactly** the failure this feature's own constitution amendment diagnosed: *"a constitution
+that duplicates the spec will drift from it every time scope moves"*. I removed the constitution's
+duplication and then reproduced it across ten documents — so every fix needed applying nine times, and
+each round found the copies I missed. Correcting copies faster does not converge; **deleting the
+copies does.**
+
+**Rule for anyone editing these docs — including future agents:** if you are about to *restate* a rule
+that already has an authority above, link instead. If a rule needs changing, change it in its
+authority and nowhere else. `research.md` explains **why**; the contracts define **what**; `tasks.md`
+says **do it**. When those blur, they drift.
+
 ## Project Structure
 
 ### Documentation (this feature)

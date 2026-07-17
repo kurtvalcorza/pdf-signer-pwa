@@ -206,7 +206,11 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
       > `bypassCSP` leaves the tag untouched.)*
 - [ ] T016 [P] [US1] `tests/e2e-desktop/desktop-portable.spec.ts` — run the same binary from **two
       different directories**; assert each keeps its own state beside itself and **nothing** is
-      written to `%APPDATA%`.
+      written to the OS per-user data location — **platform-specific**: `%APPDATA%` on Windows,
+      `~/.config` (Electron's Linux default) when this suite is reused for the AppImage in T022.
+      *(Asserting only `%APPDATA%` would let the Linux run pass while a bad fallback wrote to
+      `~/.config` — exactly the residue FR-011a/SC-011 forbid, in the run that reuses this test.
+      Codex, PR #7.)*
       **Why two directories**: a single-location test passes even when the path was wrongly derived
       from `process.execPath` (R3). Two locations is the only thing that proves the resolution. This
       test is the difference between catching the bug and shipping it.
@@ -235,7 +239,15 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
       produced by T014 through `scripts/validate_pdf.py`. **This is the FR-010 gate**: evidence must
       come from the shipped artifact's own output, never inherited from the web run.
 
-**Checkpoint**: US1 fully functional and independently shippable. **MVP.**
+**Checkpoint**: US1 fully functional and independently **validated** — a working Windows portable
+signer, proven offline against pyHanko. **MVP for local/private use only.**
+
+> **Do NOT publish here.** "Independently shippable" means independently *buildable and testable*.
+> The first **public** release requires US1+US2+US3+US4 (see Required scope): stopping at this
+> checkpoint and publishing the `.exe` would ship without the Linux gate, the honesty disclosures, and
+> the verification path FR-014 promises — all of which the release contract makes blocking.
+> *(Codex, PR #7: this checkpoint said "independently shippable", contradicting the same file's
+> release scope two sections later.)*
 
 ---
 
@@ -347,7 +359,12 @@ phase MUST ship with or before any public release — not as a follow-up.
       2. pyHanko on each artifact's **own** output: T021, T025
       3. **The monitored-network gate (T031a)** — the *primary* SC-004 check
       4. **The FUSE-less AppImage check (T023a)** — FR-002a
-      5. Layer-3 lint + dependency audit (T008a)
+      5. Layer-3 **source lint (T008a) AND the packaged-output dependency audit (T008b)** — T008a
+         alone misses network-capable deps that actually ship
+      6. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
+         on pushes to `main`, PRs, and manual dispatch, so a tag-triggered release workflow would
+         **not** re-run them: this job must either run them or declare an explicit dependency on a
+         successful CI run for the same SHA. *(Codex, PR #7 — verified against `ci.yml`'s triggers.)*
 
       **If any platform's gate is red, nothing publishes** — no partial releases (SC-002,
       contracts/release-artifacts.md).
@@ -366,8 +383,13 @@ phase MUST ship with or before any public release — not as a follow-up.
       `actions/attest`, which GitHub now steers new implementations toward — either satisfies
       FR-018a). Permissions: `id-token: write`, `attestations: write`, `contents: write`.
       Free for public repos on all current plans — confirmed, no blocker (R8).
-- [ ] T034 [US4] Document verification in `docs/desktop.md` + release template:
-      `gh attestation verify <artifact> --repo kurtvalcorza/pdf-signer-pwa` and checksum comparison.
+- [ ] T034 [US4] Document verification in `docs/desktop.md` + release template using the **pinned**
+      command from [contracts/release-artifacts.md](contracts/release-artifacts.md) —
+      `gh attestation verify <artifact> --repo … --signer-workflow …/release-desktop.yml
+      --source-digest <sha>` — plus checksum comparison.
+      **`--repo` alone is not the FR-018a proof**: an artifact attested by *any* workflow, ref, or
+      commit in this repository satisfies it. Do not restate the command here if it drifts from the
+      contract — link it. *(Codex, PR #7.)*
 
 **Checkpoint**: Unsigned binaries have a real, user-executable mitigation.
 
