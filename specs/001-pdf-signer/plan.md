@@ -7,8 +7,10 @@
 ## Summary
 
 A privacy-first, offline-first, client-only Progressive Web App that lets a user open a PDF,
-place one or more signature images (uploaded or camera-captured), and optionally apply one or
-more standards-compliant PKCS#12 digital signatures — entirely on-device. The technical crux is
+place one or more signature images (uploaded or camera-captured), and apply one or more
+standards-compliant PKCS#12 digital signatures — entirely on-device. *(Amended 2026-07-17: was
+"**optionally** apply". Certificate signing is no longer optional — it is the only path to an
+output; see [spec.md](spec.md) § Amendment: certificate-only signing.)* The technical crux is
 Tier B: producing an Acrobat-verifiable signature where the placed image is the **appearance of
 the signature field itself**, and supporting **multiple signatures via incremental updates** so
 a later signature never invalidates an earlier one. The UI keeps the document dominant with a

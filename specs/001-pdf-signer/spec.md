@@ -4,25 +4,51 @@
 
 **Created**: 2026-07-13
 
-**Status**: Draft
+**Status**: Shipped & live (https://pdf-signer-pwa.vercel.app) — **amended 2026-07-17**, see § Amendment: certificate-only signing
 
 **Input**: User description: "Privacy-first, zero-server, offline-first PWA to sign PDFs entirely on-device. Open a PDF, add a signature image (upload or phone camera), visually place/scale it, and optionally apply a PKCS#12 (.p12) cryptographic digital signature that Adobe Acrobat validates (the image IS the clickable signature field). Both the visual image stamp and the p12 digital signature are core v1. Minimalist UI where the document is the center. Mobile-first (Android/Chrome), installable PWA, deployed static on Vercel."
 
-**Terminology**: "Tier A" = the **visual image stamp** (non-cryptographic signature drawn onto the page). "Tier B" = the **cryptographic PKCS#12 signature** (the placed image becomes the appearance of a real, verifiable signature field). These labels are used interchangeably with the plain-language terms across the plan, tasks, and design notes.
+**Terminology**: "Tier A" = the **visual image stamp** (the signature image drawn onto the page). "Tier B" = the **cryptographic PKCS#12 signature** (the placed image becomes the appearance of a real, verifiable signature field). These labels are used interchangeably with the plain-language terms across the plan, tasks, and design notes. **Post-amendment, Tier A exists only *inside* Tier B** — as the signature field's appearance — never as a standalone output.
+
+> **Note on the Input line above**: it is preserved verbatim as the historical record of the original request ("*optionally* apply a PKCS#12… Both the visual image stamp and the p12 digital signature are core v1"). It describes what was asked for on 2026-07-13, not what shipped. The amendment below is the authority on current scope.
+
+## Amendment: certificate-only signing (2026-07-17)
+
+**What changed in the code**: PR #4 (`a1a83ab`) removed the image-only "Stamp image & Download" flow. Certificate signing became the **only** path to an output. This shipped and is live.
+
+**Why** (Principle IV — honest security posture): a visible mark with no cryptography behind it produces a document that *looks* signed and carries no verifiable claim whatsoever. A recipient cannot distinguish it from a real signature by looking, which is precisely the confusion the product exists to resolve. PR #2 first attempted to manage this with "unmistakable stamp-vs-certificate labeling"; the trajectory to removal in #4 reflects that labeling cannot fix an artifact whose whole failure mode is that it looks like something it isn't. The app now refuses to produce a signed-looking file that isn't signed.
+
+**Cost, stated honestly**: this removed the original zero-friction MVP. A user with no certificate can no longer produce anything — they must now generate one in-app (FR-018). That is a real usability loss, accepted deliberately in exchange for never emitting a document that overstates its own trustworthiness.
+
+**Documents amended in this change** (docs had drifted from shipped code for ~4 days):
+
+| Artifact | Was | Now |
+|---|---|---|
+| Constitution **Principle III** scope note | "Both tiers ship in v1 — Tier A AND Tier B" | Enumeration **removed** — governance no longer duplicates product scope (v1.1.0) |
+| **FR-005** | ".p12 optional, when signing desired" | Certificate required for any output |
+| **FR-010** | "MUST produce downloadable PDF when no certificate is used" | Superseded — MUST NOT produce signed-looking output without a certificate |
+| **US1** | "Place a visible signature **and download the PDF**"; standalone MVP | "Place a visible signature **on the page**"; foundation, not independently shippable |
+| **US2** rationale | "US1 delivers value without it" | US2 is the only path to an output |
+
+**Audited and found already compliant — no change required**: `signatureStore.ts` / `certStore.ts` (Principle VI — opt-in, disclosed, clearable, minimal record; password and key material never persisted); README (Principle IV — already rewritten to match cert-only reality); `GitHubLink.tsx` (Principle I — inline SVG and plain navigation; carries no user content).
+
+**Process lesson**: PRs #1–#6 were authored outside the Spec Kit lifecycle and merged straight to `main`. The code was reviewed; the spec and constitution were not consulted, so they silently went stale while continuing to be cited as authority. The constitution's `v1.1.0` amendment adds a structural fix — governance no longer enumerates scope, so this particular class of drift cannot recur — but the general lesson stands: **a change that alters what the product does owes its spec an update in the same PR.**
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Place a visible signature and download the PDF (Priority: P1)
+### User Story 1 - Place a visible signature on the page (Priority: P1)
 
-A person opens a PDF on their phone, adds an image of their signature (choosing an existing image or snapping a photo of a signature on paper), drags it onto the signature line, resizes it to fit, and downloads the resulting PDF with the signature visible on the page. Nothing leaves their device.
+> **Amended 2026-07-17** (see § Amendment: certificate-only signing). US1 was originally *"Place a visible signature **and download the PDF**"* — a standalone stamp-and-download MVP. Placement remains P1 and remains the foundation everything builds on, but it is no longer independently *shippable*: the only way to obtain a file is US2's certificate signature, whose visible face this placement becomes.
 
-**Why this priority**: This is the minimum viable product. A user who only ever does this already has a complete, useful, private signing tool. Everything else builds on the open → place → export loop.
+A person opens a PDF on their phone, adds an image of their signature (choosing an existing image or snapping a photo of a signature on paper), drags it onto the signature line, and resizes it to fit — establishing exactly where and how large their signature will appear. Nothing leaves their device.
 
-**Independent Test**: Load a sample PDF, add a signature image, position and scale it over a signature line, export, and open the exported file in any PDF viewer — the signature appears at the chosen location and size. No network request carrying document or image data occurs.
+**Why this priority**: This is the foundation of the product — the open → place loop that every output depends on. It is P1 because nothing else can happen without it, not because it delivers a file on its own. *(Originally justified as "a user who only ever does this already has a complete, useful, private signing tool"; that ceased to be true when stamp-only output was removed.)*
+
+**Independent Test**: Load a sample PDF, add a signature image, position and scale it over a signature line — the placement is honoured at the chosen page, position, and size, and is carried through to the signed output in US2. No network request carrying document or image data occurs.
 
 **Acceptance Scenarios**:
 
-1. **Given** a PDF is open and a signature image has been added, **When** the user drags the image over the page and taps "Apply & Download", **Then** the downloaded PDF shows the signature burned in at the exact position and size chosen.
+1. **Given** a PDF is open and a signature image has been added, **When** the user drags the image over the page, **Then** the signature is positioned at the exact location and size chosen, and that placement is what appears in the signed output.
 2. **Given** a multi-page PDF, **When** the user navigates to page 3 and places the signature there, **Then** the signature appears only on page 3 in the output.
 3. **Given** the user is offline, **When** they perform the full open → place → download flow, **Then** it completes successfully with no network access.
 4. **Given** a signature image with a transparent or white background, **When** it is placed, **Then** it renders cleanly over the document content without an opaque box (subject to background handling in US4).
@@ -33,7 +59,7 @@ A person opens a PDF on their phone, adds an image of their signature (choosing 
 
 A person cryptographically signs the document with a PKCS#12 (`.p12`/`.pfx`) certificate — one they already have, OR one they create in the app (a self-signed Digital ID, since most casual users have none). They supply/create the certificate and its password; each placed signature image becomes the visible face of a real digital signature field, shown Adobe-style as the image plus "Digitally signed by {name}" and a date (both optional). When the signed PDF is opened in Adobe Acrobat, each signature is clickable and shows the certificate and validity status. Multiple signatures can be applied, and adding a later signature does not invalidate an earlier one.
 
-**Why this priority**: Core to v1 and the product's differentiator, but it depends on the placement loop from US1 and serves users who have a certificate. US1 delivers value without it; US2 makes the signature verifiable and tamper-evident.
+**Why this priority**: Core to v1 and the product's differentiator. It depends on the placement loop from US1 and makes the signature verifiable and tamper-evident. *(Amended 2026-07-17: originally reasoned "US1 delivers value without it" — since stamp-only output was removed, US2 is the **only** path to an output, and US1 delivers no file without it. The P1/P2 ordering is retained as a build-order dependency, not a value ranking.)*
 
 **Independent Test**: With a document that has one or more placed signatures, supply a valid `.p12` + password, sign, and validate the output with a standards-compliant validator (and open in Acrobat): each signature verifies, the visible image is the appearance of a clickable signature field, and a second signature added afterward leaves the first still valid.
 
@@ -100,14 +126,14 @@ A person without a digital signature image photographs their handwritten signatu
 - **FR-002**: The system MUST render a visual preview of the PDF pages, with the document as the dominant element of the screen.
 - **FR-003**: Users MUST be able to navigate between pages of a multi-page document.
 - **FR-004**: Users MUST be able to add a signature image by selecting an existing image file (PNG/JPEG) or, on a mobile device, capturing one with the camera.
-- **FR-005**: Users MUST be able to optionally supply a `.p12`/`.pfx` certificate and its password when cryptographic signing is desired.
+- **FR-005**: Users MUST supply a `.p12`/`.pfx` certificate and its password (bringing their own, or generating one in-app per FR-018) in order to produce any output. *(Amended 2026-07-17: was "optionally supply … when cryptographic signing is desired". Signing is no longer optional — see § Amendment: certificate-only signing.)*
 
 **Placement (Tier A)**
 - **FR-006**: Users MUST be able to drag a signature image to any position over the visible page.
 - **FR-007**: Users MUST be able to resize a signature image (e.g., pinch or handles) to fit a signature line.
 - **FR-008**: The system MUST place each signature on the specific page the user targeted, at the position and size chosen, and MUST prevent placement outside page bounds.
 - **FR-009**: Users MUST be able to place multiple signatures/initials on a document, including across multiple pages.
-- **FR-010**: The system MUST produce a downloadable PDF with all placed signatures visible at their chosen locations when no certificate is used (visual stamps).
+- **FR-010**: ~~The system MUST produce a downloadable PDF with all placed signatures visible at their chosen locations when no certificate is used (visual stamps).~~ **SUPERSEDED 2026-07-17 — see § Amendment: certificate-only signing.** The system MUST NOT produce a signed-looking output without a certificate. Placement (Tier A) is retained as the *visible appearance* of a real signature field, never as a standalone deliverable.
 
 **Cryptographic signing (Tier B)**
 - **FR-011**: When a certificate is supplied, the system MUST produce standards-compliant PDF digital signature(s) that a compliant reader validates as covering the document and intact when unmodified.
