@@ -12,9 +12,30 @@ packaged distribution that means CSP **and** runtime denial — the CSP is not r
 | # | Layer | Mechanism | What it catches that the others don't |
 |---|---|---|---|
 | 1 | **Content Security Policy** | Existing `connect-src 'none'` meta tag in `index.html`, shipped unmodified | Renderer-originated requests, declaratively, identically to web |
-| 2 | **Runtime request denial** | `session.defaultSession.webRequest.onBeforeRequest` → cancel unless scheme is allow-listed | Anything CSP doesn't govern; main-process and non-renderer requests |
-| 3 | **No updater** | `electron-updater` is **not a dependency** | Removes the mechanism entirely — there is no flag to misconfigure |
-| 4 | **No crash/metrics reporting** | Never call `crashReporter.start()`; disable Chromium metrics via switches | Framework phone-home that ships enabled-by-default elsewhere |
+| 2 | **Chromium session denial** | `session.defaultSession.webRequest.onBeforeRequest` → cancel unless scheme is allow-listed | Chromium-session requests CSP doesn't govern (e.g. non-renderer session traffic) |
+| 3 | **Node-side prohibition** | No Node network API may be imported or called in `electron/**`; enforced by lint (below) | **Main-process traffic — which layer 2 CANNOT see** |
+| 4 | **No updater** | `electron-updater` is **not a dependency** | Removes the mechanism entirely — there is no flag to misconfigure |
+| 5 | **No crash/metrics reporting** | Never call `crashReporter.start()`; disable Chromium metrics via switches | Framework phone-home that ships enabled-by-default elsewhere |
+| 6 | **External observation** | Release gate watches from outside the process (see Verification) | Attempts that fail silently and leave no in-app trace |
+
+### ⚠ Layer 2 does NOT cover the main process
+
+`session.webRequest` only intercepts **Chromium session** requests. Node's `fetch`, `http`, `https`,
+`net`, `dgram`, and `tls` in the main process **bypass it entirely**. An earlier draft of this
+contract claimed layer 2 "catches main-process requests" — that was **false**, and it mattered: an
+implementation could have added a Node-side update check or exfiltration path and passed every gate
+specified here. *(Codex, PR #7.)*
+
+Layer 3 is therefore not decoration — it is the **only** thing standing between the main process and
+the network:
+
+- `electron/**` MUST NOT import `node:http`, `node:https`, `node:net`, `node:dgram`, `node:tls`, or
+  any transitive HTTP client.
+- `electron/**` MUST NOT call global `fetch`.
+- Enforced by an `eslint` `no-restricted-imports` / `no-restricted-globals` rule scoped to
+  `electron/**`, so a violation fails lint rather than relying on review.
+- `net.fetch` from Electron's own module is permitted **only** inside `electron/protocol.ts` for
+  serving `app:` assets from disk (it never touches a remote host), and nowhere else.
 
 ## Allow-list (layer 2)
 
@@ -77,9 +98,18 @@ network.
 
 | Check | Method | Gate |
 |---|---|---|
-| Zero requests across the lifecycle | Run the packaged binary with **no network interface**; complete a full signing flow | Must succeed identically to a networked run (FR-006) |
-| CSP intact in the shipped artifact | Read the effective CSP from inside the packaged app; assert `connect-src 'none'` present | Desktop E2E (`desktop-privacy.spec.ts`) |
-| Allow-list correct | A real signed-PDF download completes (proves `blob:` allowed); a synthetic `https:` request is cancelled (proves remote denied) | Desktop E2E |
+| **Zero outbound ATTEMPTS** (SC-004) | Run the packaged binary with networking **available but monitored** — a firewall/proxy/packet capture that logs and blocks — through the full lifecycle: launch, sign, idle, quit. **Fail on any DNS query or TCP/HTTP attempt**, successful or not | **Primary gate** (FR-006) |
+| Works with no network at all | Run with **no network interface**; complete a full signing flow | Must succeed identically to a networked run |
+| CSP (layer 1) alive in the shipped artifact | Assert a `securitypolicyviolation` event fires for a `connect-src` violation; assert `bypassCSP` absent from the registered privileges | Desktop E2E (`desktop-privacy.spec.ts`) |
+| Layer 2 + allow-list | A synthetic `https:` request is cancelled; a real signed-PDF download completes (proves `blob:` allowed) | Desktop E2E |
+| Layer 3 (Node-side) | Lint rule passes; assert no HTTP client in the packaged `electron/**` | Build-time check |
+
+> **Why "runs offline" is not the primary gate**: with no interface present, a stray telemetry or
+> update call fails instantly, records nothing, and the app still signs — so the run passes while the
+> attempt happened. The spec demands SC-004 be "observed from outside the app, not merely asserted
+> internally", and only a monitored-but-live network can distinguish *made no request* from *made a
+> request that failed*. The offline run is retained as a **separate** check, because it proves a
+> different thing (the app doesn't degrade). *(Codex, PR #7.)*
 | No updater present | Assert `electron-updater` absent from the dependency tree and the packaged app | Build-time check |
 | Repo link works, and only it | Clicking "View source on GitHub" invokes `shell.openExternal` (not an in-app window); assert **no other** URL can reach `openExternal` | Desktop E2E |
 

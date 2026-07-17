@@ -55,7 +55,11 @@ most likely to produce.
 2. Confirm `pdf-signer-data/` exists **beside the artifact in folder A**.
 3. Confirm **nothing** was written to `%APPDATA%` / `~/.config`.
 4. **Copy the same artifact to folder B and run it** — it must **not** see folder A's certificate.
-5. Delete folder A → all its state is gone.
+5. Delete **folder A and its `pdf-signer-data/`** → all its state is gone.
+
+> **Deleting the binary alone is NOT sufficient**, and the docs must not claim otherwise: a bundled
+> engine writes cache/GPU/profile files into `pdf-signer-data/` on every launch, opt-in or not. The
+> promise is **"one place"**, not "one file" (SC-005).
 
 **Why step 4 matters**: a single-location test passes even when the path was derived from
 `process.execPath` (which points into a temp extraction, R3). Two locations is what proves the
@@ -65,24 +69,46 @@ resolution is right. Skipping it is how this bug ships.
 
 1. Run the artifact from read-only media (or a directory with writes denied).
 
-**Expected**: signing fully works; the user is **told** persistence is unavailable this session;
-**nothing** is written to the OS user-data directory as a fallback.
+**Expected**: signing fully works; the user is **told** persistence is unavailable this session; the
+opt-in "remember" affordances are **not offered at all**; **nothing** is written to the OS user-data
+directory as a fallback; the temp `userData` is removed on quit.
 
-### 4. The CSP survived packaging (Principle I) — ⚠ the highest-consequence check
+> **Check that no `.p12` reached the disk.** Ephemeral mode still gives Electron a writable temp
+> `userData` for its own cache — which means IndexedDB *works*. If persistence is merely relocated
+> rather than **disabled**, the remembered certificate silently lands in temp on a machine where the
+> user deliberately chose read-only media. Memory-only must be enforced by not writing, not by hoping
+> a write fails.
 
-1. From inside the **packaged** app, read the effective CSP.
-2. Assert `connect-src 'none'` is present.
-3. Assert a synthetic `https:` request is cancelled, **and** that a real signed-PDF download still
-   completes (proving `blob:` remains allowed — R10/network-policy).
+### 4. Each network layer holds *independently* (Principle I) — ⚠ the highest-consequence check
 
-**Why**: `bypassCSP: true` on the custom scheme silently voids the CSP while every other test still
-passes (R2). This assertion is the only thing standing between a copy-pasted tutorial line and a
-NON-NEGOTIABLE principle violation shipping green.
+1. **Layer 1 (CSP) alone** — trigger a `connect-src` violation in the renderer and assert a
+   **`securitypolicyviolation` event** fires. Also assert the `app:` scheme's privileges contain no
+   truthy `bypassCSP`.
+2. **Layer 2** — a synthetic `https:` request is cancelled.
+3. **`blob:` still allowed** — a real signed-PDF download completes (R10).
+4. **Layer 3** — no Node HTTP client exists in the packaged `electron/**`.
+
+> **Do not test layer 1 by reading the CSP meta tag.** `bypassCSP: true` leaves the tag untouched —
+> the string still reads `connect-src 'none'` and the check passes with the bug live. And the `https:`
+> request in step 2 is killed by layer 2 whether or not layer 1 works, so it can never prove the CSP.
+> Only the `securitypolicyviolation` event distinguishes them: CSP emits it, `webRequest` does not.
+> This is the one assertion standing between a copy-pasted tutorial line and a NON-NEGOTIABLE
+> principle violation shipping green — so it must actually be capable of failing.
 
 ### 5. Zero network across the lifecycle (SC-004)
 
-Observed from **outside** the app — the spec says "not merely asserted internally". Run with no
-network interface and complete scenario 1; the app must behave identically.
+Observed from **outside** the app — the spec says "not merely asserted internally".
+
+1. **Primary gate**: run with networking **available but monitored** (firewall/proxy/packet capture
+   that logs and blocks) across launch → sign → idle → quit. **Fail on any DNS or TCP/HTTP attempt**,
+   successful or not.
+2. **Separate check**: run with no network interface and complete scenario 1 — the app must behave
+   identically.
+
+> Step 2 alone is **not** sufficient and must not be reported as if it were: with no interface, a
+> stray telemetry or update call fails instantly, records nothing, and the app still signs — so the
+> run goes green while the attempt happened. "Works offline" and "makes no requests" are different
+> claims, and only step 1 proves the second.
 
 ### 6. Staleness nudge (SC-010, FR-015a)
 
@@ -123,9 +149,12 @@ gh attestation verify PDF-Signer-<version>-portable.exe --repo kurtvalcorza/pdf-
 ## Definition of done for a release
 
 - [ ] Both artifacts build from **one commit** on CI runners (not a laptop)
-- [ ] Scenarios 1–7 pass **on both platforms**
+- [ ] Scenarios 1–8 pass **on both platforms**
 - [ ] pyHanko passes against **each artifact's own output** (FR-010) — not inherited
-- [ ] Checksums + provenance attestation published (FR-017, FR-018a)
+- [ ] Checksums + provenance attestation published (FR-017, FR-018a) — **US4 is part of the first
+      public release, not a follow-up**: FR-014's disclosure promises a verification path, so
+      publishing without one ships an overclaim
 - [ ] Unsigned-binary + no-self-update disclosures on the release page (FR-014, FR-015)
+- [ ] AppImage verified on a **FUSE-less** host via the documented fallback (FR-002a)
 - [ ] Existing web gates green and untouched (SC-008)
 - [ ] **If any platform's gate is red, nothing publishes** (SC-002)

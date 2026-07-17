@@ -55,7 +55,15 @@ Non-negotiable rules:
   platform, not Electron-from-`node_modules` against source. Constitution v1.1.0: *"Sharing an
   implementation makes a passing result likely; it does not make it demonstrated."*
 - **No partial releases.** If either platform's gate is red, neither publishes (SC-002). Shipping one
-  while the other is broken would imply an equivalence never demonstrated.
+  while the other is broken would imply an equivalence never demonstrated. The user stories'
+  "independently shippable" framing means independently **buildable and testable** — never
+  independently **publishable**.
+- **No release without its verification path.** Checksums *and* attestation (FR-017/FR-018a) ship
+  with the **first** public release, not after it. FR-014's disclosure tells users to verify instead
+  of trusting an unsigned binary; publishing before that path exists would make the honesty feature
+  itself the overclaim.
+- **The Linux artifact must be verified on a FUSE-less host** (FR-002a) before publishing, or the
+  "no root, no package manager" promise is false for a large share of real Linux systems.
 - The existing web gates must also be green (SC-008) — desktop packaging must not regress the web
   distribution (FR-019).
 

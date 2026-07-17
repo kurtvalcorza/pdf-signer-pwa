@@ -111,8 +111,10 @@ Delivers complete standalone value even if the Linux build never ships.
    signs with a valid `.p12` and password, **Then** the resulting file is structurally equivalent to
    one produced by the web app for the same inputs, and passes the automated signature validator.
 3. **Given** the user has signed a document and closed the app, **When** the user deletes the binary
-   and inspects the machine, **Then** no application data remains anywhere on the system except
-   files the user explicitly saved and any store they explicitly opted into (see FR-011).
+   **and its adjacent data folder** and inspects the machine, **Then** no application data remains
+   anywhere on the system — in particular nothing in `%APPDATA%` — except files the user explicitly
+   saved. *(Amended 2026-07-17: deleting the binary alone is not sufficient, and the app must say so
+   — a bundled engine writes cache files beside itself on every launch. See SC-005.)*
 4. **Given** the application is running, **When** any attempt is made to reach the network, **Then**
    it fails — the app functions identically whether or not a connection exists.
 
@@ -125,7 +127,15 @@ no dependency resolution. The full signing flow works offline exactly as on Wind
 
 **Why this priority**: Equal in value to US1 and shares essentially all of its machinery — the same
 codebase and packaging pipeline emit both. It is P1 because it was requested as a co-equal target,
-not as a follow-on. It remains independently shippable: US1 can ship without it.
+not as a follow-on.
+
+> **"Independent" here means independently *buildable and testable*, NOT independently *publishable*.**
+> A **public release** is all-or-nothing: if either platform's signature gate is red, neither
+> publishes ([contracts/release-artifacts.md](contracts/release-artifacts.md), SC-002). US1 can reach
+> a working, validated Windows artifact without US2 existing — that is the independence claimed — but
+> shipping Windows-only to users while Linux is broken would imply an equivalence never demonstrated.
+> *(Clarified 2026-07-17: the original wording said "US1 can ship without it", which read as a licence
+> to publish a partial release and directly contradicted the release contract. Codex, PR #7.)*
 
 **Independent Test**: Build the AppImage, run it on a Linux machine (or container) with networking
 disabled, complete a sign, validate with pyHanko.
@@ -134,10 +144,15 @@ disabled, complete a sign, validate with pyHanko.
 
 1. **Given** a Linux machine with no package manager access and no root, **When** the user makes the
    AppImage executable and runs it, **Then** the application opens and is fully usable.
+1a. **Given** a Linux machine **without FUSE/libfuse2**, **When** the user runs the AppImage, **Then**
+   either it launches anyway, or it fails with a message naming the documented no-root
+   extract-and-run fallback — never with a raw `libfuse.so.2` loader error and never with advice to
+   install a package (FR-002a).
 2. **Given** the AppImage is running offline, **When** the user completes the signing flow, **Then**
    the output passes the automated signature validator.
-3. **Given** the user deletes the AppImage, **When** the machine is inspected, **Then** no
-   application data remains except explicitly saved files and explicitly opted-into stores.
+3. **Given** the user deletes the AppImage **and its adjacent data folder**, **When** the machine is
+   inspected, **Then** no application data remains except files the user explicitly saved (see
+   SC-005).
 
 ---
 
@@ -216,8 +231,14 @@ its checksum matches the published value.
   executable file** that runs without an installer, without administrator rights, and without
   writing to the Windows registry.
 - **FR-002**: The system MUST produce a Linux desktop application delivered as a **single executable
-  file** that runs without root, without a package manager, and without installing shared
-  dependencies onto the host.
+  file** that runs without root and without installing shared dependencies onto the host.
+- **FR-002a**: The Linux artifact MUST remain usable on hosts **without FUSE/libfuse configured**,
+  via a documented, tested no-root fallback (extract-and-run). *(Added 2026-07-17: an AppImage
+  self-mounts via FUSE, and many current distributions — and most minimal containers and locked-down
+  systems — do not ship `libfuse2` by default. On those hosts a plain double-click fails before
+  launch, and the standard advice is "install libfuse2" — i.e. a package manager and root, which is
+  exactly the audience this feature exists to serve. The fallback keeps the promise honest without
+  changing the artifact. Codex, PR #7.)*
 - **FR-003**: Both desktop applications MUST run from any location the user can execute from,
   including removable media, without configuration.
 - **FR-004**: The system MUST NOT produce or publish a macOS artifact under this feature. *(Out of
@@ -326,8 +347,15 @@ its checksum matches the published value.
   are **structurally equivalent** and both validate.
 - **SC-004**: The application makes **zero** network requests across its entire lifecycle, observed
   from outside the app (not merely asserted internally).
-- **SC-005**: After running the app and deleting the binary, a user who did not opt into persistence
-  finds **zero** residual application data on the host.
+- **SC-005**: Everything the application writes lives in **one** directory adjacent to the artifact.
+  After running the app and deleting **the artifact and that adjacent folder**, a user finds **zero**
+  residual application data anywhere on the host — in particular, nothing in the operating system's
+  per-user application-data location. *(Amended 2026-07-17 — the original promised zero residue after
+  deleting **the binary alone**. That was false: a bundled browser engine writes cache/GPU/profile
+  files into its data directory on every launch, with or without opt-in, so a user following
+  single-file deletion instructions would leave data behind. The honest promise is not "one file" but
+  **"one place"** — a two-item cleanup the user can actually complete, disclosed as such. Codex,
+  PR #7.)*
 - **SC-006**: A user encountering a first-run security warning can find an accurate explanation of
   why it appears in **under 1 minute**, without contacting the author.
 - **SC-007**: A user can independently verify a downloaded binary's build provenance — confirming

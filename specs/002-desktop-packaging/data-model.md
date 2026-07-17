@@ -55,12 +55,18 @@ persisted — recomputed every launch.
 
 **Resolution rules** (R3):
 
-| Condition | `mode` | `path` |
-|---|---|---|
-| `PORTABLE_EXECUTABLE_DIR` set (Windows portable) | `adjacent` | `<PORTABLE_EXECUTABLE_DIR>/pdf-signer-data` |
-| `APPIMAGE` set (Linux AppImage) | `adjacent` | `<dirname(APPIMAGE)>/pdf-signer-data` |
-| Adjacent dir exists but is not writable | `ephemeral` | throwaway temp dir, discarded on exit |
-| Unpackaged (dev) | `default` | Electron's default `userData` |
+| Condition | `mode` | `path` | Opt-in persistence |
+|---|---|---|---|
+| `PORTABLE_EXECUTABLE_DIR` set (Windows portable) | `adjacent` | `<PORTABLE_EXECUTABLE_DIR>/pdf-signer-data` | available |
+| `APPIMAGE` set (Linux AppImage) | `adjacent` | `<dirname(APPIMAGE)>/pdf-signer-data` | available |
+| Adjacent dir exists but is not writable | `ephemeral` | throwaway temp dir, **deleted on quit** | **DISABLED** — never offered, never written |
+| Unpackaged (dev) | `default` | Electron's default `userData` | available |
+
+**`ephemeral` MUST disable opt-in persistence, not merely relocate it.** The temp `userData` exists
+solely because Electron needs a writable cache directory — but it also makes IndexedDB *work*, so a
+relocate-only implementation would write the user's remembered certificate to temp on a machine where
+they chose read-only media. Memory-only is enforced by **not writing**, never by expecting a write to
+fail. See [contracts/portable-paths.md](contracts/portable-paths.md). *(Codex, PR #7.)*
 
 **Prohibited by construction** — these are the ways this entity goes wrong:
 

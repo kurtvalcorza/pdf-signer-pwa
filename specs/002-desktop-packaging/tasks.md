@@ -42,8 +42,19 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       `dependencies` — a runtime dep would leak the shell into the web bundle, FR-019/R9). Add
       scripts: `build:desktop`, `e2e:desktop`. **Do NOT add `electron-updater`** — FR-007 is
       satisfied by its absence, which is stronger than any configuration flag (R4).
-- [ ] T002 [P] Create `tsconfig.electron.json` compiling `electron/**` for Node/CommonJS, excluded
-      from the web `tsconfig.json`, so the two graphs cannot silently merge.
+- [ ] T002 [P] Create `tsconfig.electron.json` compiling `electron/**` for the Electron main
+      process, excluded from the web `tsconfig.json` so the two graphs cannot silently merge.
+      **⚠ The root `package.json` declares `"type": "module"` (line 5).** A plain CommonJS emit
+      therefore produces `.js` files full of `require`/`exports` that Node resolves as **ESM** under
+      that root type — the shell dies before the window ever opens, and the failure looks nothing
+      like a module-format problem. Resolve it **explicitly**, one of:
+      (a) add `electron/package.json` containing `{"type": "commonjs"}` — scopes the format to the
+          shell without touching the web build (**recommended**; smallest blast radius, and
+          `electron-builder` packs it into `asar` normally); or
+      (b) emit `.cjs` via `.cts` sources; or
+      (c) target ESM and verify Electron's ESM main-process support end-to-end in T005.
+      Whichever is chosen, **T005 must prove it boots** — this is a "works on my machine until it's
+      packaged" class of bug. *(Codex, PR #7.)*
 - [ ] T003 [P] Extend `eslint.config.js` with a Node-environment block scoped to `electron/**`, and
       a rule forbidding imports from `electron` inside `src/**`.
 - [ ] T004 Create `electron-builder.yml`: `appId`, `asar: true`, `files` limited to `dist/` +
@@ -93,6 +104,15 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       request whose scheme is not `app:`/`blob:`/`data:`; `will-navigate` prevented outside `app:`;
       `setWindowOpenHandler` denying always, with the **single exact-string carve-out** handing the
       repo URL to `shell.openExternal` (contracts/network-policy.md § Carve-out).
+      **⚠ `webRequest` does NOT see the main process.** It intercepts Chromium-session requests only;
+      Node's `fetch`/`http`/`https`/`net` in main bypass it completely. Layer 3 (T008a) is what
+      covers that — this file is not sufficient on its own, and an earlier draft of the contract
+      wrongly claimed it was. *(Codex, PR #7.)*
+- [ ] T008a [P] Add the **layer-3 Node-network prohibition**: an `eslint` `no-restricted-imports` /
+      `no-restricted-globals` rule scoped to `electron/**` banning `node:http`, `node:https`,
+      `node:net`, `node:dgram`, `node:tls` and global `fetch`, so a main-process network call fails
+      **lint** rather than review. Permit Electron's `net.fetch` **only** in `electron/protocol.ts`
+      for serving `app:` assets from disk.
       **`blob:` MUST be allowed** or the signed-PDF download silently breaks (R10) — the most likely
       way this file goes wrong. The carve-out is matched by **exact string**, never by pattern: a
       runtime-assembled URL reaching `openExternal` would be a general-purpose exfiltration
@@ -134,10 +154,22 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
 - [ ] T014 [P] [US1] `tests/e2e-desktop/desktop-sign.spec.ts` — launch the **packaged** artifact,
       open `sample.pdf`, place `signature.png`, sign with `e2e-cert.p12` / `e2e-pass`, capture the
       saved file. Asserts the full US1 flow end-to-end.
-- [ ] T015 [P] [US1] `tests/e2e-desktop/desktop-privacy.spec.ts` — read the effective CSP **from
-      inside the packaged app** and assert `connect-src 'none'` is present (catches T006's
-      `bypassCSP` trap); assert a synthetic `https:` request is cancelled **and** that a real
-      signed-PDF download still completes (proves `blob:` survived T008).
+- [ ] T015 [P] [US1] `tests/e2e-desktop/desktop-privacy.spec.ts` — assert each network layer
+      **independently**, so no layer can mask another's failure:
+      1. **Layer 1 (CSP) in isolation** — from the renderer, attempt a `connect-src`-violating
+         request and assert a **`securitypolicyviolation` event fires** with
+         `effectiveDirective: 'connect-src'`. A CSP block emits that event; a `webRequest` cancel
+         does **not**. This is the only signal that distinguishes the two.
+      2. **Scheme privileges** — assert the registered `app:` privileges contain no truthy
+         `bypassCSP`.
+      3. **Layer 2** — assert a synthetic `https:` request is cancelled.
+      4. **`blob:` allowed** — a real signed-PDF download completes (proves T008 didn't over-block).
+
+      > **Do NOT implement 1 by reading the CSP meta-tag string.** `bypassCSP: true` does not remove
+      > or alter the tag — the string still reads `connect-src 'none'` and the assertion passes with
+      > the bug present. And a `https:` request is cancelled by layer 2 regardless, so step 3 alone
+      > proves layer 2, never layer 1. *(Codex, PR #7 — a correct catch on the exact line this
+      > feature calls its highest risk: the original guard could not fail for the reason it existed.)*
 - [ ] T016 [P] [US1] `tests/e2e-desktop/desktop-portable.spec.ts` — run the same binary from **two
       different directories**; assert each keeps its own state beside itself and **nothing** is
       written to `%APPDATA%`.
@@ -154,10 +186,17 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
       installer, no registry — FR-001).
 - [ ] T019 [US1] Make T014–T017 pass. **No changes to `src/features/signing/**`** — if a failure
       seems to demand one, the shell is wrong (FR-009).
-- [ ] T020 [US1] Surface the read-only/ephemeral state visibly in the UI (FR-011b).
+- [ ] T020 [US1] Surface the read-only/ephemeral state visibly in the UI **and disable opt-in
+      persistence entirely in `ephemeral` mode** — the "remember" affordances are not offered, and
+      `saveCertificate`/`saveSignature` are never reached (FR-011b,
+      [contracts/portable-paths.md](contracts/portable-paths.md)).
+      **Not a relocate**: the temp `userData` still makes IndexedDB work, so relocating alone would
+      write the user's `.p12` to temp on read-only media — the exact residue FR-011b forbids.
       Note `src/features/persistence/certStore.ts:16–24` already degrades to memory-only **silently**
-      — correct for web, insufficient here. This adds visibility; it does not change the persistence
-      layer.
+      — correct for web, insufficient here. Memory-only must be enforced by not writing, not by
+      hoping a write throws.
+- [ ] T020a [US1] Delete the ephemeral temp `userData` on quit and assert no leftovers in
+      `tests/e2e-desktop/desktop-readonly.spec.ts`.
 - [ ] T021 [US1] Extend `scripts/verify-signatures.mjs` (or add a desktop mode) to validate the PDF
       produced by T014 through `scripts/validate_pdf.py`. **This is the FR-010 gate**: evidence must
       come from the shipped artifact's own output, never inherited from the web run.
@@ -184,6 +223,12 @@ complete a sign, validate with pyHanko.
 
 - [ ] T023 [US2] Add the `AppImage` Linux target to `electron-builder.yml` (single file, no root —
       FR-002). Deliberately **no `.deb`**: it is an installer, not a portable artifact.
+- [ ] T023a [US2] Handle the **FUSE-less host** case (FR-002a): verify the artifact under
+      `--appimage-extract-and-run`, document the fallback in `docs/desktop.md`, and add a
+      `tests/e2e-desktop/` run in a **container without `libfuse2`** asserting the app either
+      launches or fails with a message naming the fallback — never a raw `libfuse.so.2` loader
+      error, and never "install libfuse2" (root + package manager is precisely what FR-002 promises
+      the user won't need).
 - [ ] T024 [US2] Verify `electron/paths.ts` resolves via `APPIMAGE` on a real AppImage (the mount
       path differs from the file path — R3), and make T022 pass.
 - [ ] T025 [US2] Run the pyHanko gate (`scripts/validate_pdf.py` via `npm run verify:signatures`)
@@ -205,7 +250,9 @@ present, accurate, and stated without euphemism.
 
 - [ ] T026 [P] [US3] `tests/unit/staleness.test.ts` — `isStale` is false below the 180-day threshold
       and true above it; assert the computation is pure arithmetic over `BuildMetadata.buildDate`
-      with **no network client reachable** from the code path (FR-015a).
+      with **no network client reachable** from the code path (FR-015a); and assert the notice is
+      **never shown when `distribution === 'web'`**, however old the build (guards T027's regression
+      — this is the assertion that keeps the web app from lying).
 
 ### Implementation for User Story 3
 
@@ -214,6 +261,12 @@ present, accurate, and stated without euphemism.
       passive, **non-blocking** notice once `ageInDays > STALENESS_THRESHOLD_DAYS` (**180**, a named
       constant — R6). Local clock comparison only; it MUST NOT regress into an update check
       (FR-006/007).
+      **⚠ MUST be gated on `distribution !== 'web'`.** The notice is rendered from shared `App.tsx`,
+      but only a distribution that **bundles its own engine** ships a frozen one — the web PWA runs
+      the user's own browser, which updates itself. Without the guard the web app would, 180 days
+      after any deploy, tell users "the bundled browser engine no longer receives security updates":
+      **false**, a user-facing regression (FR-019), and an overclaim by the very feature meant to
+      enforce honesty (Principle IV). *(Codex, PR #7.)*
       Wording (FR-015b) must say the bundled engine no longer receives security updates, **without**
       implying a specific known vulnerability. **No "don't show again"** — that would create a new
       on-device store whose only purpose is suppressing a constitutionally required disclosure
@@ -348,18 +401,28 @@ Task: "desktop-readonly.spec.ts — visible memory-only degradation"
 ### Incremental Delivery
 
 1. Setup + Foundational → shell proven
-2. + US1 → **MVP** (Windows portable)
-3. + US2 → Linux AppImage
-4. + US3 → honest disclosures — **required before any public release** (constitution honesty gate)
-5. + US4 → CI-built, attested releases
+2. + US1 → **MVP** (Windows portable) — local/private use only
+3. + US2 → Linux AppImage — local/private use only
+4. + US3 → honest disclosures (constitution honesty gate)
+5. + US4 → CI-built, attested releases — **the first three are not publishable without this**; see
+   Required scope below
 6. Polish → docs describe two distributions
 
-### Recommended release scope
+### Required scope for the first PUBLIC release: US1 + US2 + US3 + US4
 
-**US1 + US2 + US3 together.** US3 is P2 but is *not* optional for a public release: shipping an
-unsigned, never-updating binary with no disclosure would violate Principle IV, which v1.1.0 made
-explicit. US4 can follow — but until it lands, "unsigned" has no mitigation at all, so the gap
-between them should be short.
+All four. Not a recommendation — a gate:
+
+- **US3** (P2) — shipping an unsigned, never-updating binary with **no disclosure** violates
+  Principle IV, which v1.1.0 made explicit rather than implied.
+- **US4** (P3) — FR-014's disclosure *promises a verification path in place of a code-signing
+  certificate*. US4 **is** that path. Publishing US1–US3 first would ship a disclosure telling users
+  to verify a checksum and attestation that **do not exist** — an overclaim produced by the honesty
+  feature itself, which is worse than saying nothing. *(Codex, PR #7 — my original "US4 can follow"
+  wording contradicted FR-014.)*
+- **US1 + US2 together** — public releases are all-or-nothing (SC-002); no Windows-only release.
+
+**US1–US3 without US4 are valid only for local or private builds** that are never handed to another
+person. The story priorities remain the *build* order; they are not a release ladder.
 
 ---
 

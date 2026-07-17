@@ -47,9 +47,31 @@ keeps its own state beside itself. A single-location test passes even when the r
 ```text
 adjacent dir writable?
   ├─ yes ──> mode: adjacent   — opt-in persistence available
-  └─ no  ──> mode: ephemeral  — throwaway temp userData, discarded on exit
+  └─ no  ──> mode: ephemeral  — throwaway temp userData for Electron's OWN cache only
+                                opt-in persistence DISABLED (never offered, never written)
+                                temp dir deleted on quit
                                 signing FULLY functional; user is TOLD (visibly)
 ```
+
+### ⚠ Ephemeral mode MUST disable opt-in persistence — not merely relocate it
+
+Electron requires *some* writable `userData` for its own cache/GPU/profile files, so ephemeral mode
+still points it at a temp directory. **That makes IndexedDB work.** If the app merely relocates
+`userData` and changes nothing else, `idb-keyval` writes succeed — and the user's remembered
+**certificate** lands on the host disk, in temp, on a machine where they deliberately chose read-only
+media. A crash or missed cleanup then leaves exactly the residue FR-011b exists to prevent.
+
+So in `ephemeral` mode the shell MUST:
+
+1. **Disable opt-in persistence outright** — the "remember" affordances are not offered, and
+   `saveCertificate`/`saveSignature` are never reached. Memory-only is enforced by *not writing*, not
+   by hoping the write fails.
+2. **Delete the temp `userData` on quit**, and treat leftovers as a bug.
+3. **Tell the user** persistence is unavailable this session (FR-011b's visibility requirement).
+
+*(Codex, PR #7 — a correct catch: "degrade to memory-only" was written into FR-011b but the design's
+ephemeral fallback quietly re-enabled disk writes. The requirement said one thing; the mechanism did
+another.)*
 
 **MUST NOT** fall back to the OS per-user application-data directory. Not as a convenience, not as a
 last resort. That fallback is exactly the residue this feature exists to avoid (SC-005, SC-011), and
