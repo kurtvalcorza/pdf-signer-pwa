@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { makeSelfSignedP12 } from './fixtures/makeCert';
 import { signFirst } from '../../src/features/signing/signFirst';
 import { signIncremental } from '../../src/features/signing/signIncremental';
+import { reserveExistingObjectNumbers } from '../../src/features/signing/incrementalUpdate';
 import { loadPdf } from '../../src/features/viewer/loadPdf';
 import { CertificationLockedError, type PlacementInput } from '../../src/features/signing/types';
 
@@ -536,4 +537,39 @@ describe('multi-signature (incremental)', () => {
     writeFileSync(resolve(TAMPERED, 'tampered.pdf'), tampered);
     expect(tampered.length).toBe(first.length);
   }, 30000);
+});
+
+describe('reserveExistingObjectNumbers (untrusted-bytes hardening)', () => {
+  // The floor scan runs on attacker-controllable PDF bytes; these guard the two ways it
+  // could go wrong — a real container header it must NOT miss, and a bogus one it must
+  // NOT trust (Codex, PR #9).
+  const base = async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([10, 10]);
+    return doc;
+  };
+  const bytesOf = (s: string, minLen = 0) =>
+    new TextEncoder().encode(s.padEnd(minLen, ' '));
+
+  it('counts a header whose tokens are separated by a % comment (PDF whitespace)', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    const target = start + 5;
+    // `N 0 %comment\nobj` is a header pdf-lib parses; a whitespace-only scan would miss it.
+    reserveExistingObjectNumbers(bytesOf(`%PDF-1.7\n${target} 0 %inline comment\nobj\n<< >>\nendobj\n`, 300), probe);
+    expect(probe.context.largestObjectNumber).toBe(target);
+  });
+
+  it('rejects an implausible object number that would exhaust safe integers', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    const real = start + 7;
+    // A crafted MAX_SAFE_INTEGER header passes Number.isSafeInteger but must be dropped:
+    // taking it as the floor would saturate nextRef()'s `+= 1` and duplicate object numbers.
+    const doc = bytesOf(`%PDF-1.7\n9007199254740991 0 obj\n<< >>\nendobj\n${real} 0 obj\n<< >>\nendobj\n`, 300);
+    reserveExistingObjectNumbers(doc, probe);
+    // The huge number (> file length) is ignored; the plausible one sets the floor.
+    expect(probe.context.largestObjectNumber).toBe(real);
+    expect(probe.context.largestObjectNumber).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  });
 });

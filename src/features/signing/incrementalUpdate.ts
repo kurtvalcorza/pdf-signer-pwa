@@ -296,10 +296,22 @@ export function reserveExistingObjectNumbers(signedPdf: Uint8Array, probe: PDFDo
   const ctx = probe.context;
   let floor = ctx.largestObjectNumber;
   const text = Buffer.from(signedPdf).toString('latin1');
-  // `\bobj\b` avoids matching `/Type /ObjStm` etc.; over-broad matches are safe (max only).
-  for (const m of text.matchAll(/(\d+)\s+\d+\s+obj\b/g)) {
+  // An indirect-object header is `objNum genNum obj`. PDF whitespace between the tokens
+  // INCLUDES `%` comments, and pdf-lib parses a header written `9 0 %c\nobj` — so the
+  // separator must swallow comments too, or the highest ObjStm/XRef container could be
+  // missed and then clobbered. `\bobj\b` avoids matching `/Type /ObjStm`; over-broad
+  // matches are harmless — they can only raise the floor, never lower it.
+  const WS = '(?:\\s|%[^\\r\\n]*)'; // one unit of PDF whitespace: a space char OR a comment
+  const header = new RegExp(`(\\d+)${WS}+\\d+${WS}+obj\\b`, 'g');
+  // A real object's number cannot exceed the file's byte length — every in-use object
+  // needs at least its own cross-reference entry — so a larger match is incidental
+  // stream/comment bytes and is rejected. This cap also keeps `floor` far below
+  // MAX_SAFE_INTEGER, where `nextRef()`'s `+= 1` stops advancing and would hand two new
+  // objects the same number.
+  const maxPlausible = signedPdf.length;
+  for (const m of text.matchAll(header)) {
     const n = Number(m[1]);
-    if (Number.isSafeInteger(n) && n > floor) floor = n;
+    if (Number.isSafeInteger(n) && n <= maxPlausible && n > floor) floor = n;
   }
   ctx.largestObjectNumber = floor;
 }
