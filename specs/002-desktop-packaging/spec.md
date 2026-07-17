@@ -22,7 +22,14 @@ to.
 
 The value is not new signing capability — it is **reach and provability**. A user who cannot or will
 not trust a URL (an air-gapped machine, a locked-down workstation, a reviewer who wants to inspect
-what they are running) can copy one file onto the machine, run it, sign a document, and delete it.
+what they are running) can copy one file onto the machine, run it, sign a document, and delete it —
+leaving no application or user data behind.
+
+> **Scope of the "no trace" claim** (Principle IV): it covers **data the application writes**, which
+> all lives in one folder beside the artifact (SC-005). It does **not** and cannot cover
+> OS-controlled traces of having run an executable at all — prefetch, execution history, antivirus
+> records, shell MRU. This is a privacy tool, **not an anti-forensics tool**, and no surface may
+> imply otherwise.
 
 This feature deliberately adds **no new user-facing signing behaviour**. Every existing capability
 (visual stamp, PKCS#12 signing, in-app certificate generation, counter-signing) behaves identically.
@@ -44,10 +51,15 @@ This feature deliberately adds **no new user-facing signing behaviour**. Every e
   should that store live?**
   **A: Beside the executable.** State lives in a directory adjacent to the binary, not in the OS
   user-data location. Deleting the app's folder therefore removes everything (SC-005 stays literally
-  true), portable media carries the user's opt-in store with it, and read-only media degrades to
-  memory-only using the same graceful-degradation path the web app already has. This preserves FR-020
-  (existing capability holds on desktop) without contradicting the portability promise. → FR-011,
-  FR-011a, FR-013.
+  true), portable media carries the user's opt-in store with it, and on read-only media the shell
+  **disables the opt-in "remember" affordances outright** so nothing is written. This preserves
+  FR-020 (existing capability holds on desktop) without contradicting the portability promise.
+  → FR-011, FR-011a, FR-011b, FR-013.
+  *(Corrected 2026-07-17: this originally said read-only media "degrades to memory-only using the
+  same graceful-degradation path the web app already has". It doesn't — the web path only triggers
+  when a storage **write fails**, and ephemeral mode gives Electron a writable temp `userData`, so
+  IndexedDB succeeds and a remembered `.p12` would land in temp. Memory-only must be enforced by not
+  writing. Codex, PR #7.)*
 
 - **Q: The binaries are unsigned, so nothing vouches for them. What should the release/provenance
   process be?**
@@ -97,10 +109,15 @@ A user copies a single `.exe` onto a Windows machine — one with no internet co
 they lack rights to install software. They double-click it, the signing app opens in its own window,
 and they complete the full existing flow: open a PDF, place a signature image, sign with a `.p12`,
 and save the signed file. Everything the app wrote lives in **one folder beside the `.exe`**; they
-delete the `.exe` and that folder, and the machine retains no evidence the app ever ran. *(Amended
-2026-07-17: this previously said deleting the `.exe` alone left "no evidence" — false, since a
-bundled engine writes cache files into its data folder on every launch. Two items, one place, stated
-honestly. See SC-005. Codex, PR #7.)*
+delete the `.exe` and that folder, and **no application or user data remains on the machine**.
+
+> *(Amended 2026-07-17, twice, both by Codex review on PR #7. It first said deleting the `.exe` alone
+> left "no evidence" — false, since a bundled engine writes cache files into its data folder every
+> launch. The corrected version still claimed the machine "retains no evidence the app ever ran" —
+> also false, and not ours to promise: running any executable can leave OS-controlled traces
+> (execution history, prefetch, Defender records, shell recent-file entries) that no application can
+> reach or erase. The guarantee is scoped to what the app writes: **no application or user data
+> residue**. It is not an anti-forensics tool and must never imply it is.)*
 
 **Why this priority**: This is the feature. Windows is the platform where "I can't install things"
 and "this machine is offline" most commonly co-occur, and it is the author's own platform, so it is
@@ -152,10 +169,16 @@ disabled, complete a sign, validate with pyHanko.
 
 1. **Given** a Linux machine with no package manager access and no root, **When** the user makes the
    AppImage executable and runs it, **Then** the application opens and is fully usable.
-1a. **Given** a Linux machine **without FUSE/libfuse2**, **When** the user runs the AppImage, **Then**
-   either it launches anyway, or it fails with a message naming the documented no-root
-   extract-and-run fallback — never with a raw `libfuse.so.2` loader error and never with advice to
-   install a package (FR-002a).
+1a. **Given** a Linux machine **without FUSE/libfuse2**, **When** the user runs the AppImage with the
+   documented no-root fallback (`--appimage-extract-and-run`), **Then** the application opens and is
+   fully usable, and the full signing flow passes its gate on that host (FR-002a).
+   *(Amended 2026-07-17: this previously required that a plain double-click "never" show a raw
+   `libfuse.so.2` error or package-install advice. **We cannot promise that** — the AppImage runtime
+   resolves FUSE and fails **before any application code exists to catch it**, so that message is the
+   runtime's, not ours. Promising to suppress output we never emit is precisely the
+   mechanism-can't-deliver-the-guarantee pattern this review kept finding — and I introduced it while
+   fixing the FUSE finding itself. What we can actually deliver: a documented, **tested** fallback
+   that needs no root. Codex, PR #7.)*
 2. **Given** the AppImage is running offline, **When** the user completes the signing flow, **Then**
    the output passes the automated signature validator.
 3. **Given** the user deletes the AppImage **and its adjacent data folder**, **When** the machine is
@@ -246,12 +269,14 @@ test. Codex, PR #7.)*
 - **FR-002**: The system MUST produce a Linux desktop application delivered as a **single executable
   file** that runs without root and without installing shared dependencies onto the host.
 - **FR-002a**: The Linux artifact MUST remain usable on hosts **without FUSE/libfuse configured**,
-  via a documented, tested no-root fallback (extract-and-run). *(Added 2026-07-17: an AppImage
-  self-mounts via FUSE, and many current distributions — and most minimal containers and locked-down
-  systems — do not ship `libfuse2` by default. On those hosts a plain double-click fails before
-  launch, and the standard advice is "install libfuse2" — i.e. a package manager and root, which is
-  exactly the audience this feature exists to serve. The fallback keeps the promise honest without
-  changing the artifact. Codex, PR #7.)*
+  via a **documented and tested no-root fallback** (`--appimage-extract-and-run`). The release
+  documentation MUST state plainly that a plain double-click fails on such hosts and give the
+  fallback command. *(Added 2026-07-17: an AppImage self-mounts via FUSE, and many current
+  distributions — plus most minimal containers and locked-down systems — do not ship `libfuse2` by
+  default. On those hosts the standard advice is "install libfuse2" — a package manager and root,
+  exactly what this feature promises users won't need. **The app cannot intercept that failure**: it
+  happens in the AppImage runtime before any application code runs, so the requirement is to
+  document and test the fallback, not to control the error. Codex, PR #7.)*
 - **FR-003**: Both desktop applications MUST run from any location the user can execute from,
   including removable media, without configuration.
 - **FR-004**: The system MUST NOT produce or publish a macOS artifact under this feature. *(Out of
@@ -294,9 +319,19 @@ test. Codex, PR #7.)*
   restricted share), the desktop applications MUST remain fully functional for signing and MUST
   degrade to memory-only operation with a clear, non-blocking explanation — never a crash and never
   a silent fallback to another location on the host.
-- **FR-012**: The desktop applications MUST NEVER persist a certificate password or decrypted
-  private-key material to any location, including temporary files, crash dumps, logs, or
-  swap-backed application state. *(Absolute carve-out; no opt-in.)*
+- **FR-012**: The desktop applications MUST NEVER write a certificate password or decrypted
+  private-key material to **any store the application creates or controls** — including its data
+  directory, temporary files, logs, and crash dumps. *(Absolute carve-out; no opt-in. This is why the
+  shell never calls `crashReporter.start()` and adds no disk logging.)*
+- **FR-012a**: The applications MUST NOT claim that secrets cannot reach disk **at all**. During
+  signing, the password and decrypted key necessarily exist in process memory, and an OS with a
+  pagefile/swap enabled may page that memory out — outside any application's control, and not
+  preventable by the mechanisms in this feature. Where this is surfaced, it MUST be described as
+  best-effort, consistent with the constitution's existing position that in-memory secret handling is
+  "best-effort reference-dropping, never … guaranteed erasure". *(Added 2026-07-17: FR-012 originally
+  said "MUST NEVER persist … swap-backed application state" — an absolute nothing in this design
+  enforces, i.e. a false security claim of exactly the kind Principle IV forbids. The constitution was
+  already honest here; this requirement had overclaimed past it. Codex, PR #7.)*
 - **FR-013**: The user MUST be able to remove all data the desktop application has stored, and MUST
   be told where that data lives — including that deleting the application folder removes it
   (FR-011a).

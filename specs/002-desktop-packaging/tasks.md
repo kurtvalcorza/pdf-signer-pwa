@@ -244,12 +244,15 @@ complete a sign, validate with pyHanko.
 
 - [ ] T023 [US2] Add the `AppImage` Linux target to `electron-builder.yml` (single file, no root —
       FR-002). Deliberately **no `.deb`**: it is an installer, not a portable artifact.
-- [ ] T023a [US2] Handle the **FUSE-less host** case (FR-002a): verify the artifact under
-      `--appimage-extract-and-run`, document the fallback in `docs/desktop.md`, and add a
-      `tests/e2e-desktop/` run in a **container without `libfuse2`** asserting the app either
-      launches or fails with a message naming the fallback — never a raw `libfuse.so.2` loader
-      error, and never "install libfuse2" (root + package manager is precisely what FR-002 promises
-      the user won't need).
+- [ ] T023a [US2] Handle the **FUSE-less host** case (FR-002a): add a `tests/e2e-desktop/` run in a
+      **container without `libfuse2`** asserting the app launches and signs successfully under
+      `--appimage-extract-and-run`, and document that fallback prominently in `docs/desktop.md`
+      (stating plainly that a plain double-click fails on such hosts, and giving the command).
+      **Do not assert on the plain-launch failure message.** The AppImage runtime resolves FUSE and
+      fails **before any application code exists**, so that output is the runtime's and we cannot
+      suppress or reword it. The deliverable is a tested no-root path, not control of an error we
+      never emit. *(Codex, PR #7 — the original wording promised "never a raw `libfuse.so.2` error",
+      an overclaim I introduced while fixing the FUSE finding itself.)*
 - [ ] T024 [US2] Verify `electron/paths.ts` resolves via `APPIMAGE` on a real AppImage (the mount
       path differs from the file path — R3), and make T022 pass.
 - [ ] T025 [US2] Run the pyHanko gate (`scripts/validate_pdf.py` via `npm run verify:signatures`)

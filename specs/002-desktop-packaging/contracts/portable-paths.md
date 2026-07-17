@@ -6,9 +6,16 @@ store, including a desktop application data directory)
 
 ## The promise this contract keeps
 
-> *"Delete the binary and nothing remains."*
+> *"Everything the app writes lives in **one place**, right next to the artifact — delete the
+> artifact and that folder, and no application or user data remains."*
 
-That sentence is only true if every write the application makes lands next to the artifact. This
+**One place, not one file.** A bundled engine writes cache/GPU/profile files into its data directory
+on every launch, opt-in or not, so "delete the binary and nothing remains" was never achievable and
+is not claimed (SC-005). And the promise is scoped to **application and user data** — running an
+executable can leave OS-controlled traces (prefetch, execution history, antivirus records) that no
+app can reach. This is a privacy tool, not an anti-forensics tool. *(Both corrections: Codex, PR #7.)*
+
+The promise is only true if every write the application makes lands next to the artifact. This
 contract exists because Electron's **defaults break that promise silently** — the default `userData`
 is `%APPDATA%` / `~/.config`, which survives deletion of the artifact and would leave a remembered
 certificate on a machine the user believed they had cleaned.

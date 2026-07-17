@@ -42,12 +42,24 @@ Enterprise Cloud.)
 
 ```text
 build (per platform)
-   └─> launch the PACKAGED artifact via Playwright (_electron.launch)
-         └─> complete a real signing flow → signed PDF
-               └─> scripts/validate_pdf.py  (pyHanko)
-                     ├─ pass ──> eligible to publish
-                     └─ fail ──> NOTHING publishes (neither platform)
+   ├─> launch the PACKAGED artifact via Playwright (_electron.launch)
+   │     └─> complete a real signing flow → signed PDF
+   │           └─> scripts/validate_pdf.py  (pyHanko)                    [FR-010]
+   ├─> layer E2E: CSP alive + bypassCSP absent + layer 2 + blob:         [Principle I]
+   ├─> MONITORED-NETWORK run: live-but-intercepted network, launch→sign→
+   │     idle→quit; FAIL on any DNS/TCP/HTTP attempt                     [SC-004, primary]
+   ├─> layer-3 lint + packaged dependency audit                          [no Node HTTP client]
+   ├─> portable-state check (two folders) + read-only degradation        [FR-011a/b]
+   └─> [Linux] FUSE-less host via extract-and-run fallback               [FR-002a]
+         │
+         ├─ ALL pass on BOTH platforms ──> eligible to publish
+         └─ ANY fail ──────────────────> NOTHING publishes (neither platform)
 ```
+
+*(Corrected 2026-07-17: this diagram previously made an artifact "eligible to publish" the moment
+pyHanko passed. A build with a Node-side update check, telemetry, or DNS attempts could therefore
+validate its signatures and ship — the monitored-network and layer-3 gates existed only in the task
+list, and **a gate that isn't in the release contract is a suggestion**. Codex, PR #7 — P1.)*
 
 Non-negotiable rules:
 

@@ -121,10 +121,20 @@ data*, and the temp-extraction behaviour should be stated plainly rather than gl
 1. **CSP unchanged** — the existing `connect-src 'none'` meta tag in `index.html` ships as-is
    (`bypassCSP` false per R2).
 2. **Runtime request denial** — `session.defaultSession.webRequest.onBeforeRequest` cancels every
-   request whose scheme is not `app:`/`blob:`/`data:`. This is the "runtime-level outbound denial"
-   Principle I (v1.1.0) now mandates for packaged distributions, and it catches anything CSP would
-   not (e.g. main-process fetches).
-3. **No auto-updater** — `electron-updater` is simply **not a dependency**. FR-007 is satisfied by
+   request whose scheme is not `app:`/`blob:`/`data:`. This is part of the "runtime-level outbound
+   denial" Principle I (v1.1.0) mandates for packaged distributions, and it catches Chromium-session
+   requests CSP does not govern.
+   **⚠ It does NOT cover the main process.** `session.webRequest` sees Chromium-session traffic only;
+   Node's `fetch`/`http`/`https`/`net` in main bypass it entirely. *(Corrected 2026-07-17 — this note
+   originally claimed it catches "main-process fetches", which is **false** and, left in the design
+   input, could be cited to implement T008 as sufficient and re-open the very Layer 3 bypass the
+   contract now closes. Codex, PR #7 — P1.)* Main-process traffic is covered **only** by layer 3
+   below.
+3. **Node-side prohibition (the ONLY main-process guard)** — no Node network API may be imported or
+   called in `electron/**`, enforced by an eslint **import allow-list** (not merely a deny-list of
+   `node:http` etc., which `import got from 'got'` walks straight past) plus a packaged-build
+   dependency audit. See [contracts/network-policy.md](contracts/network-policy.md) § Layer 3.
+4. **No auto-updater** — `electron-updater` is simply **not a dependency**. FR-007 is satisfied by
    absence, which is stronger than configuration: there is no flag to accidentally flip.
 4. **Crash reporter off** — Electron's `crashReporter` does not upload unless `start()` is called,
    so the rule is "never call it". Additionally disable Chromium's own metrics/reporting via command
@@ -273,7 +283,7 @@ most likely way R4's filter goes wrong.
 
 | Risk | Why it matters | Mitigation |
 |---|---|---|
-| `bypassCSP: true` copied from a tutorial | Silently voids `connect-src 'none'`; every test still passes (NON-NEGOTIABLE Principle I) | Assert the shipped CSP from inside the packaged app in the E2E gate — do not rely on review |
+| `bypassCSP: true` copied from a tutorial | Silently voids the page CSP for `app:`-served resources; every test still passes (NON-NEGOTIABLE Principle I) | **Assert the scheme registration directly** — the privileges object passed to `registerSchemesAsPrivileged` must contain no truthy `bypassCSP` — plus a CSP-disallowed `app:` resource. *(Corrected 2026-07-17: originally "assert the shipped CSP from inside the packaged app", which **cannot fail** for this bug — `bypassCSP` leaves the CSP meta tag untouched, and the privilege is scheme-scoped so a `connect-src` probe fires either way. Leaving the weaker mitigation here would steer the E2E straight back to the bypassable guard. Codex, PR #7.)* |
 | Data dir derived from `process.execPath` | Writes state to temp; user silently loses remembered cert; violates FR-011a | Use `PORTABLE_EXECUTABLE_DIR` / `APPIMAGE`; test by running the binary from two different folders |
 | R4 filter blocks `blob:` | Signed-PDF download silently breaks | Covered by the desktop E2E, which downloads a real signed file |
 | Staleness nudge quietly becomes an update check | Violates FR-006/007 and Principle I | No network client in main; SC-004 observed externally |
