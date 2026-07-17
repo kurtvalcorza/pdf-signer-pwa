@@ -27,8 +27,10 @@ staleness nudge (FR-015/015a).
 
 **Derived — not stored**:
 
-- `ageInDays` = `now - max(buildDate, engineDate)`… **no** — see below.
-- `isStale` = `(now - engineDate) > STALENESS_THRESHOLD_DAYS` (**180**, R6).
+- `engineAgeInDays` = `now - engineDate`. Recomputed per read; never cached to disk.
+- `isStale` = `engineAgeInDays > STALENESS_THRESHOLD_DAYS` (**180**, R6).
+- `buildAgeInDays` = `now - buildDate` — **displayed only** (FR-015 traceability). MUST NOT feed
+  `isStale`.
 
 **⚠ Staleness is measured from `engineDate`, NOT `buildDate`.** The disclosure's subject is the
 **frozen browser engine** — so the honest input is the engine's age, not the artifact's. A rebuild

@@ -143,10 +143,13 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       `BuildMetadata` (T011) and the resolved data location/mode. Expose no filesystem, no shell, no
       network primitive to the renderer.
 - [ ] T011 Inject `BuildMetadata` via a Vite `define` in `vite.config.ts` — `version`, `buildDate`
-      (build/commit timestamp), `commit`, `distribution`. Per [data-model.md](data-model.md), the
-      build **MUST fail** if `buildDate` or `commit` is a placeholder, and `buildDate` **MUST NOT**
-      be a runtime `Date.now()` (that yields age 0 forever, silently disabling T027). Inert for the
-      web build (FR-019).
+      (build/commit timestamp), **`engineVersion` + `engineDate`** (the resolved Electron/Chromium
+      version and *its release date*), `commit`, `distribution`. Per
+      [data-model.md](data-model.md) § BuildMetadata, the build **MUST fail** if any is absent or a
+      placeholder, and none may be a runtime `Date.now()` (that yields age 0 forever, silently
+      disabling T027). Inert for the web build (FR-019).
+      **`engineDate` is the staleness input, not `buildDate`** (FR-015a) — a rebuild from an
+      unchanged lockfile resets `buildDate` while shipping the same old engine.
 - [ ] T012 Gate service-worker registration behind a build-time flag, **off by default**, at the
       registration call site only (`src/main.tsx`). Desktop sets it; the web build's **behaviour** is
       unchanged (FR-019). Registration/bootstrap only — never the signing path (R5, FR-009).
@@ -206,11 +209,13 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
       > `bypassCSP` leaves the tag untouched.)*
 - [ ] T016 [P] [US1] `tests/e2e-desktop/desktop-portable.spec.ts` — run the same binary from **two
       different directories**; assert each keeps its own state beside itself and **nothing** is
-      written to the OS per-user data location — **platform-specific**: `%APPDATA%` on Windows,
-      `~/.config` (Electron's Linux default) when this suite is reused for the AppImage in T022.
+      written to the OS per-user data location. **Assert against the RESOLVED path, not a hardcoded
+      spelling** — `%APPDATA%` on Windows; on Linux, `$XDG_CONFIG_HOME/<app>` when set, else
+      `~/.config/<app>` (this suite is reused for the AppImage in T022).
       *(Asserting only `%APPDATA%` would let the Linux run pass while a bad fallback wrote to
-      `~/.config` — exactly the residue FR-011a/SC-011 forbid, in the run that reuses this test.
-      Codex, PR #7.)*
+      `~/.config`; asserting only `~/.config` misses Electron's actual location when
+      `XDG_CONFIG_HOME` is set — either way the run goes green while leaving exactly the residue
+      FR-011a/SC-011 forbid. Codex, PR #7.)*
       **Why two directories**: a single-location test passes even when the path was wrongly derived
       from `process.execPath` (R3). Two locations is the only thing that proves the resolution. This
       test is the difference between catching the bug and shipping it.
@@ -298,8 +303,10 @@ present, accurate, and stated without euphemism.
 ### Tests for User Story 3 ⚠️
 
 - [ ] T026 [P] [US3] `tests/unit/staleness.test.ts` — `isStale` is false below the 180-day threshold
-      and true above it; assert the computation is pure arithmetic over `BuildMetadata.buildDate`
-      with **no network client reachable** from the code path (FR-015a); and assert the notice is
+      and true above it; assert the computation is pure arithmetic over **`BuildMetadata.engineDate`**
+      — and explicitly assert that **`buildDate` does NOT affect `isStale`** (a rebuild must not
+      silence the warning; that regression is invisible without a test for it) — with **no network
+      client reachable** from the code path (FR-015a); and assert the notice is
       **never shown when `distribution === 'web'`**, however old the build (guards T027's regression
       — this is the assertion that keeps the web app from lying).
 
@@ -328,9 +335,14 @@ present, accurate, and stated without euphemism.
       **The clock is untrusted and that is accepted** (R6): a wrong clock yields a spurious or
       missing notice, and the only fix is a network time source, which Principle I forbids. Do not
       add skew detection.
-- [ ] T028 [US3] Add an info/about surface showing version, build date, source commit, distribution,
-      "this build does not update itself" (data-driven from `selfUpdates: false`), and the resolved
-      data location + mode (FR-013, FR-015).
+- [ ] T028 [US3] Add an info/about surface showing version, build date, **engine version + engine
+      date**, source commit, distribution, "this build does not update itself" (data-driven from
+      `selfUpdates: false`), and the resolved data location + mode (FR-013, FR-015).
+      **Must be desktop-only and excluded from the web bundle (FR-019a), same as T027** — asserted by
+      T038's bundle check. Its content is desktop-specific by definition ("this build does not update
+      itself", a local data path); shipped as shared `src` UI, the web PWA could render claims that
+      are simply false of it. *(Codex, PR #7: T027 got the isolation requirement and T028 didn't,
+      though both surface desktop-only claims.)*
 - [ ] T029 [P] [US3] Write `docs/desktop.md` — the unsigned-binary disclosure: what SmartScreen shows
       (*"Windows protected your PC"* → **More info → Run anyway**), `chmod +x` on Linux, and how to
       verify instead. Must state plainly that **an attestation is not a code-signing certificate and
@@ -428,7 +440,8 @@ phase MUST ship with or before any public release — not as a follow-up.
 - **Setup (Phase 1)**: no dependencies.
 - **Foundational (Phase 2)**: depends on Setup. **BLOCKS every user story.** T005 (spike) gates the
   rest of the phase — if it fails, re-plan rather than push on.
-- **US1 (Phase 3)**: depends on Foundational. Independently shippable → **MVP**.
+- **US1 (Phase 3)**: depends on Foundational. Independently **buildable and validated** → **MVP for
+  local/private use**. *Not* independently publishable — see Required scope.
 - **US2 (Phase 4)**: depends on Foundational. Independent of US1 (shares the suite, runs its own).
 - **US3 (Phase 5)**: depends on Foundational; needs a binary to describe, so in practice follows US1.
 - **US4 (Phase 6)**: depends on US1/US2 producing artifacts worth attesting.
@@ -481,7 +494,9 @@ Task: "desktop-readonly.spec.ts — visible memory-only degradation"
 2. Phase 2: Foundational — **T005 spike must go green before anything else is built**
 3. Phase 3: US1
 4. **STOP and VALIDATE**: run the binary offline from a USB stick; pyHanko must pass on its output
-5. A shippable Windows portable signer exists
+5. A working, validated Windows portable signer exists — **for local/private use**. Publishing it
+   requires US2+US3+US4 (Required scope): without them there is no Linux gate, no unsigned-binary
+   disclosure, and none of the verification FR-014 promises.
 
 ### Incremental Delivery
 

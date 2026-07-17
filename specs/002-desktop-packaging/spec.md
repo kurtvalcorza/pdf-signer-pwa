@@ -17,8 +17,17 @@
 
 The signing application currently reaches users as an installable web app. This feature adds a
 second, parallel distribution: a **single-file, run-anywhere desktop application** for Windows and
-Linux that never contacts a network and leaves no trace on the host machine unless the user asks it
-to.
+Linux that never contacts a network and keeps everything it writes in **one folder beside itself** —
+delete the artifact and that folder, and no application or user data remains.
+
+> **This is the product's top-level claim, so it is scoped precisely** (Principle IV): it covers
+> **application and user data**. It does **not** claim zero footprint. A bundled engine writes
+> cache/profile data into that folder on every launch whether or not the user opts into anything; the
+> Windows portable target extracts its own program files to temp while running (a crash can leave
+> them); and the OS records that an executable ran in places no application can reach. **A privacy
+> tool, not an anti-forensics tool.** See SC-005. *(Amended 2026-07-17: previously "leaves no trace on
+> the host machine unless the user asks it to" — a top-level promise the design cannot keep, and the
+> sentence most likely to become release copy. Codex, PR #7.)*
 
 The value is not new signing capability — it is **reach and provability**. A user who cannot or will
 not trust a URL (an air-gapped machine, a locked-down workstation, a reviewer who wants to inspect
@@ -249,8 +258,13 @@ test. Codex, PR #7.)*
 ### Edge Cases
 
 - **No write access to the working directory** (read-only USB or network share): the app must still
-  open and sign; only opt-in persistence may degrade, and it must degrade with a clear message
-  rather than crash. This mirrors the web app's existing storage-failure handling.
+  open and sign; the opt-in "remember" affordances are **not offered**, and the user is told why.
+  **This does NOT mirror the web app's storage-failure handling** — that path only fires when a write
+  *fails*, and Electron is given a writable temp `userData`, so writes would *succeed* and a
+  remembered `.p12` would land on the host. Memory-only is enforced by **not writing**. Rules:
+  [contracts/portable-paths.md](contracts/portable-paths.md). *(Amended 2026-07-17: this edge case
+  still deferred to the web behaviour after the mechanism was corrected everywhere else — and sitting
+  in the authoritative spec, it could justify a relocate-only implementation. Codex, PR #7.)*
 - **A second copy launched while one is running**: two instances of a portable app must not corrupt
   each other's opt-in store or deadlock over it.
 - **The user saves a signed file to a path that no longer exists** (unplugged USB): must fail with a
@@ -353,11 +367,18 @@ test. Codex, PR #7.)*
   the user can do instead to verify authenticity.
 - **FR-015**: The desktop applications MUST expose their build version and build date, and MUST
   state that they do not self-update.
-- **FR-015a**: Once a build's age exceeds a defined staleness threshold, the desktop applications
-  MUST passively inform the user that the build is aging and that a newer one should be obtained.
-  This determination MUST be made **entirely locally** by comparing the embedded build date against
+- **FR-015a**: Once the **bundled engine's** age exceeds a defined staleness threshold, the desktop
+  applications MUST passively inform the user that the engine is ageing and that a newer build should
+  be obtained. This determination MUST be made **entirely locally** by comparing the embedded
+  **engine release date** (`engineDate`, see [data-model.md](data-model.md) § BuildMetadata) against
   the device clock — it MUST NOT involve any network request (FR-006). The notice MUST NOT block
   signing.
+  **⚠ MUST NOT be driven by the artifact's build date.** A rebuild from an unchanged lockfile resets
+  `buildDate` while shipping the identical year-old engine — so a routine CI rerun would silence the
+  warning exactly when it matters most. *(Amended 2026-07-17: this requirement still said "the
+  embedded build date" after the data model had corrected the metric to `engineDate` — and since this
+  FR is the authority an implementer follows, T011/T026/quickstart all mirrored the wrong measure.
+  Codex, PR #7 — P1.)*
 - **FR-015b**: The staleness notice MUST be accurate about *why* it matters — that the application
   bundles a browser engine which does not receive security updates — without overclaiming a specific
   known vulnerability. *(Principle IV.)*

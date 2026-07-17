@@ -112,11 +112,17 @@ Observed from **outside** the app — the spec says "not merely asserted interna
 
 ### 6. Staleness nudge (SC-010, FR-015a)
 
-1. Build with a `buildDate` older than the 180-day threshold (or override the constant in a test).
+1. Build with an **`engineDate`** older than the 180-day threshold (or override the constant in a
+   test).
 2. Launch.
+3. **Then rebuild with a fresh `buildDate` but the same `engineDate`** and launch again.
 
-**Expected**: passive, non-blocking notice about the ageing bundled engine; **zero** network
-requests; signing unaffected.
+**Expected**: (1–2) a passive, non-blocking notice about the ageing bundled engine, **zero** network
+requests, signing unaffected. (3) **the notice still appears** — a rebuild must not silence it.
+
+> Step 3 is the point of the scenario. Staleness derives from `engineDate`, never `buildDate`: a
+> rebuild from an unchanged lockfile ships the identical old engine, so measuring the artifact's age
+> would mute the warning exactly when it matters — and a routine CI rerun would be enough to do it.
 
 ### 7. Web build unaffected (SC-008, FR-019)
 
