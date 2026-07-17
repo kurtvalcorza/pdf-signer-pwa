@@ -4,6 +4,13 @@ description: "Task list for PDF Signer PWA (001-pdf-signer)"
 
 # Tasks: PDF Signer PWA
 
+> **Historical record — not current scope.** These tasks record what was built and when, and are
+> preserved as written (including T028's "Apply & Download" visual-only export and the US1 MVP
+> checkpoint, both accurate at the time they were completed). **Scope has since changed**: PR #4
+> (`a1a83ab`) removed the stamp-only output, so certificate signing is now the only path to a file.
+> See [spec.md](spec.md) § Amendment: certificate-only signing. Read the spec, not this file, for
+> what the product does today.
+
 **Input**: Design documents from `specs/001-pdf-signer/`
 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/

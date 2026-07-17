@@ -135,10 +135,20 @@ idle
   └─ open document ─────────────▶ viewing
 viewing
   ├─ add + place image ─────────▶ placing (repeatable; visual or crypto placements)
-  ├─ commit visual stamps ──────▶ stamped         (Tier A page content written)
-  └─ (no cert) export ──────────▶ done (visual-only PDF)              [US1]
+  └─ commit visual stamps ──────▶ stamped         (Tier A page content written)
 stamped / viewing
   └─ supply cert + password ────▶ readyToSign      (password verified, FR-015)
+
+> **Amended 2026-07-17** — the transition `(no cert) export ──▶ done (visual-only PDF) [US1]` was
+> **removed**: PR #4 (`a1a83ab`) deleted the stamp-only output, so there is no path from `viewing`
+> or `stamped` to `done` without a certificate. `stampVisual` (Tier A) survives **only** as the
+> internal step that bakes additional placements into page content *before* the cryptographic
+> signature (the ordering rule) — never as a standalone deliverable. See
+> [spec.md](spec.md) § Amendment: certificate-only signing.
+> *(This stale transition was live for four days after the code changed, and the constitution's
+> v1.1.0 amendment declares `specs/` the single source of truth for scope — so leaving it here would
+> have relocated the drift rather than removed it, and handed an implementer a citable instruction to
+> reintroduce stamp-only export. Codex, PR #7.)*
 readyToSign
   └─ sign crypto placement(s) ──▶ signed           (first sig: pdf-lib field; R3/R4)
 signed

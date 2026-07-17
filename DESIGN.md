@@ -1,5 +1,13 @@
 # Functional & Technical Specifications: Hybrid PDF Signer PWA (Image-Signature Edition)
 
+> **⚠ Historical design note — superseded in places; not the authority on current scope.**
+> This is the original technical design doc that seeded the project (2026-07-13). It is preserved as
+> the record of the initial thinking. Two things it describes are **no longer true**: the `.p12` is
+> not *"optional"* and there is no *"Apply & Download"* without one — certificate signing is the only
+> path to an output (PR #4 `a1a83ab`). The authorities are
+> [`specs/001-pdf-signer/spec.md`](specs/001-pdf-signer/spec.md) for scope and
+> [`.specify/memory/constitution.md`](.specify/memory/constitution.md) for principles.
+
 ## 1. Executive Summary
 The objective is to build a privacy-first, zero-server-storage Progressive Web App (PWA) optimized for mobile and desktop browsers. The app allows users to open a PDF, upload an image of their signature (PNG/JPEG) or snap a picture of it, visually position it on the document, and optionally wrap the entire file in a secure PKCS#12 (`.p12`/`.pfx`) cryptographic digital signature.
 

@@ -23,12 +23,22 @@ npm run preview        # serve the built PWA locally
 
 ## Validation scenarios
 
-### V1 — Visual stamp, offline (US1, SC-001/003/004)
+### V1 — Placement & offline operation (US1, SC-001/003/004)
+
+> **Amended 2026-07-17** — this scenario used to end "tap Apply & Download". That control no longer
+> exists: certificate signing is the only path to an output (spec § Amendment: certificate-only
+> signing). Following the old steps would fail at step 2 and look like a bug. V1 now validates
+> placement and offline operation; the output is validated in V2.
+
 1. `npm run preview`, open the app, load the sample PDF.
-2. Add a signature image, drag/scale it onto page 1, tap Apply & Download.
-3. Open the output in any viewer → signature visible at the chosen spot.
+2. Add a signature image, drag/scale it onto page 1 → the placement is honoured at the chosen
+   position and size.
+3. Confirm there is **no** way to obtain a file without a certificate — the only action offered is
+   "Sign with a digital certificate (.p12)…". *(This is the assertion, not a limitation: the app
+   must never emit a signed-looking document with no signature in it — Principle IV.)*
 4. Repeat with DevTools offline (or airplane mode after first load) → still works.
-5. In DevTools Network, confirm **no request** carries PDF/image data (SC-003).
+5. In DevTools Network, confirm **no request** carries PDF/image data (SC-003). Note `blob:` URLs
+   are the in-memory preview/download and are expected.
 
 ### V2 — Cryptographic signature is valid & clickable (US2, SC-002/007)
 1. With a placed signature, supply the test `.p12` + password, sign, download.
