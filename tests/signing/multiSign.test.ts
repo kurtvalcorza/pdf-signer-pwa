@@ -473,6 +473,27 @@ describe('multi-signature (incremental)', () => {
     const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
     expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
     expect(await activeFieldsRefs(out)).toHaveLength(2);
+
+    // Guard the container-clobber bug directly. In a compressed file the only real
+    // `N g obj` headers are the object-stream (/Type /ObjStm) and cross-reference-stream
+    // (/Type /XRef) containers; the catalog, page, AcroForm and the earlier signature all
+    // live INSIDE the ObjStm. If the counter-sign reuses one of those container numbers
+    // for a brand-new object (image/appearance/sig/widget), the ObjStm is overwritten and
+    // every object it held stops resolving via the xref — Acrobat then reports "Expected a
+    // dict object" against the EARLIER signature. pdf-lib resolves by byte-scanning headers
+    // rather than following the xref, so `activeFieldsRefs` above cannot see this: only a
+    // header-number collision between the base file and the appended revision can. See
+    // reserveExistingObjectNumbers in incrementalUpdate.ts.
+    const headerNums = (buf: Uint8Array): Set<number> => {
+      const s = Buffer.from(buf).toString('latin1');
+      const nums = new Set<number>();
+      for (const m of s.matchAll(/(?:^|\n)(\d+) \d+ obj/g)) nums.add(Number(m[1]));
+      return nums;
+    };
+    const baseHeaders = headerNums(bytes);
+    const appendedHeaders = headerNums(out.subarray(bytes.length));
+    const clobbered = [...appendedHeaders].filter((n) => baseHeaders.has(n));
+    expect(clobbered).toEqual([]);
   }, 40000);
 
   it('counter-signs on a page other than the first (widget lands on that page)', async () => {

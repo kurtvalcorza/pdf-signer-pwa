@@ -259,6 +259,52 @@ export function addIncrementalPlaceholder(
 }
 
 /**
+ * Raise pdf-lib's object counter above every object number the FILE already uses, so
+ * the update allocates only genuinely free numbers. MUST be called before anything is
+ * registered on the probe (image embedding, appearance streams).
+ *
+ * `PDFContext.largestObjectNumber` counts only the objects pdf-lib *registered*. In a
+ * compressed file the container objects — every `/Type /ObjStm` object stream and every
+ * `/Type /XRef` cross-reference stream — are consumed as structure and never registered,
+ * so their numbers are invisible to it and get handed straight back out as "free". The
+ * new object then clobbers a live ObjStm, and every object stored inside it (typically
+ * the catalog, the page, the AcroForm, and the earlier signature's own dictionary) stops
+ * resolving: Acrobat follows the xref to "object N is in object stream 8", finds our
+ * image there instead, and reports "Expected a dict object" against the EARLIER
+ * signature. pdf-lib never notices, because it resolves by scanning the bytes for
+ * `N g obj` headers rather than by following the xref — a re-parse still looks perfect,
+ * which is why `assertUpdateWellFormed` cannot catch this on its own.
+ *
+ * The safe floor is the max of two independently-observable bounds, so no single one can
+ * make it fail open:
+ *   - `probe.context.largestObjectNumber` — every object pdf-lib registered, which
+ *     includes the *compressed* objects that live inside the ObjStms; and
+ *   - the highest `N g obj` header in the raw bytes — which is exactly where the
+ *     unregistered ObjStm/XRef *container* objects appear (they are top-level indirect
+ *     objects, so they always carry a header).
+ * Together these cover every object number in the file. `/Size` is deliberately NOT
+ * trusted: an attacker-controlled trailer could understate it (fail open, bug returns)
+ * or overstate it wildly (a huge counter advance). Over-counting from an incidental
+ * `N g obj`-looking byte sequence inside a stream is harmless here — it can only raise
+ * the floor, never lower it, so a new object still cannot collide.
+ *
+ * The counter is set directly rather than advanced in a loop: `nextRef()` is just
+ * `largestObjectNumber += 1`, so assigning the field is the same result in O(1) and
+ * cannot be turned into a denial-of-service by a pathological object number.
+ */
+export function reserveExistingObjectNumbers(signedPdf: Uint8Array, probe: PDFDocument): void {
+  const ctx = probe.context;
+  let floor = ctx.largestObjectNumber;
+  const text = Buffer.from(signedPdf).toString('latin1');
+  // `\bobj\b` avoids matching `/Type /ObjStm` etc.; over-broad matches are safe (max only).
+  for (const m of text.matchAll(/(\d+)\s+\d+\s+obj\b/g)) {
+    const n = Number(m[1]);
+    if (Number.isSafeInteger(n) && n > floor) floor = n;
+  }
+  ctx.largestObjectNumber = floor;
+}
+
+/**
  * The `/Info` reference and `/ID` array of the file's previous trailer, read verbatim
  * from the bytes at `prevXref`. Handles both a classic `trailer << … >>` and an
  * xref-stream object (`N g obj << /Type /XRef … >>`). Missing entries come back
