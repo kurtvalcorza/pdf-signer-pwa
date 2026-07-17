@@ -180,9 +180,18 @@ desktop-only code, FR-019a.)*
 
 ## R6 — Local staleness nudge (FR-015a/b)
 
-**Decision**: Inject the build date at **build time** (a Vite `define` constant, sourced from the CI
-build timestamp / commit date), compare against `Date.now()` at runtime, and render a passive,
-non-blocking notice once past the threshold.
+**Decision**: Inject the **bundled engine's release date** (`engineDate`) at **build time** as a Vite
+`define` constant, compare it against `Date.now()` at runtime, and render a passive, non-blocking
+notice once past the threshold. `buildDate` is injected too but is **displayed only** — it MUST NOT
+drive the notice. Fields: [data-model.md](data-model.md) § BuildMetadata; requirement: FR-015a.
+
+> **⚠ Measure the engine, not the artifact.** This decision originally said "inject the **build
+> date**". A CI rebuild from an unchanged lockfile refreshes `buildDate` while shipping the identical
+> stale Chromium — so the ageing notice would vanish exactly when it matters, and a routine rerun
+> would be enough to do it. Since the disclosure's whole subject is the *frozen engine*, the engine's
+> age is the only honest input. *(Codex, PR #7 — P1. This is the **third** document this correction
+> needed; R6 is the design input T027 follows, so the stale version here would have re-introduced the
+> bug the new unit test and quickstart step exist to prevent.)*
 
 **Threshold**: **180 days (6 months)**. Rationale: Chromium ships stable releases roughly every 4
 weeks; six months is ~6 releases behind — late enough to avoid nagging about a fresh build, early

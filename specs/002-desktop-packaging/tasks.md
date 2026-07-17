@@ -196,6 +196,14 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
          first, so the assertion goes green even if the `webRequest` filter is missing or broken —
          layer 1 masking layer 2, the mirror image of the meta-tag mistake. *(Codex, PR #7 — P1.)*
       4. **`blob:` allowed** — a real signed-PDF download completes (proves T008 didn't over-block).
+      5. **Path traversal refused** — request `app://../../<a file outside dist>` (and an absolute-path
+         variant) and assert it is **rejected**, not served. Without this the handler can serve
+         arbitrary host files to the renderer — a file-disclosure primitive in an app whose premise is
+         that documents never leave the user's control.
+         *(Added after Codex round 7: `contracts/network-policy.md` called this rule "gated, not
+         advisory" while **no task asserted it** — T015 didn't list it and T031 gates T014–T017, so an
+         implementation could serve files outside `dist/` and pass the release gate. A claim
+         outrunning its mechanism, written into the fix for that exact pattern.)*
 
       > **Steps 1 and 2 prove DIFFERENT things — neither substitutes for the other.**
       > `bypassCSP` is **scheme- and resource-scoped**: it exempts resources *served over `app:`* from

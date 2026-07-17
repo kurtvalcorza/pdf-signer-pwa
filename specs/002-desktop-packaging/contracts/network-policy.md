@@ -94,7 +94,10 @@ Every requested path MUST be resolved against the `dist` root and **rejected if 
 to the renderer** — turning the scheme into a file-disclosure primitive in an application whose entire
 premise is that the user's documents never leave their control.
 
-**This rule is gated, not advisory**: the desktop E2E MUST assert that a traversal request is refused.
+**This rule is gated, not advisory**: asserted by **T015 step 5** (`desktop-privacy.spec.ts`), which
+T031 makes blocking for release. *(Named explicitly because this line previously claimed "gated" while
+no task asserted it — a claim outrunning its mechanism, in the fix for that very pattern. If the probe
+is ever removed, this sentence becomes false and the rule becomes advisory again.)*
 
 > *(Restored 2026-07-17. This rule existed in `research.md` and was **deleted during consolidation** —
 > it survived only as a task note while this contract became sole authority, so an implementer
@@ -170,7 +173,7 @@ network.
 
 | Check | Method | Gate |
 |---|---|---|
-| **Zero outbound ATTEMPTS** (SC-004) | Run the packaged binary with networking **available but monitored** — a firewall/proxy/packet capture that logs and blocks — through the full lifecycle: launch, sign, idle, quit. **Fail on any DNS query or TCP/HTTP attempt**, successful or not | **Primary gate** (FR-006) |
+| **Zero outbound ATTEMPTS** (SC-004) | Run the packaged binary with networking **available but monitored** — packet capture / firewall over the **whole app process tree** (main, renderers, GPU, utility, any child process) — through the full lifecycle: launch, sign, idle, quit. **Fail on ANY outbound packet or socket, on any protocol, to any destination**: TCP, **UDP**, ICMP, raw sockets, DNS, QUIC — resolved by name or by numeric IP. Not a protocol allow-list | **Primary gate** (FR-006) |
 | Works with no network at all | Run with **no network interface**; complete a full signing flow | Must succeed identically to a networked run |
 | CSP (layer 1) alive in the shipped artifact | Assert a `securitypolicyviolation` event fires for a `connect-src` violation; assert `bypassCSP` absent from the registered privileges | Desktop E2E (`desktop-privacy.spec.ts`) |
 | Layer 2 + allow-list | A synthetic `https:` request is cancelled; a real signed-PDF download completes (proves `blob:` allowed) | Desktop E2E |
@@ -182,6 +185,18 @@ network.
 > internally", and only a monitored-but-live network can distinguish *made no request* from *made a
 > request that failed*. The offline run is retained as a **separate** check, because it proves a
 > different thing (the app doesn't degrade). *(Codex, PR #7.)*
+
+> **⚠ Why this gate must be protocol-agnostic — the hole that made it necessary.** An earlier draft
+> scoped it to "any DNS or TCP/HTTP attempt". That is a **protocol allow-list wearing a deny-list's
+> clothes**: a main-process path sending **UDP to a numeric IP** (`node:dgram`, a native module, a
+> child process) touches neither DNS nor TCP/HTTP and exfiltrates anyway. And because layer 3 is
+> explicitly *not* the proof, nothing else would have caught it.
+>
+> This is the same mistake as layer 3's four bypasses, one level up: **the moment a guard enumerates
+> what it blocks, it is racing an attacker's imagination.** The gate is only sound if it fails on
+> *any* egress and enumerates nothing. If a future change scopes it to specific protocols, ports, or
+> destinations, that is a **release blocker**, not a refinement. *(Codex, PR #7 — P1, in direct answer
+> to my own question of whether layer 6 was sufficient. It wasn't.)*
 | No updater present | Assert `electron-updater` absent from the dependency tree and the packaged app | Build-time check |
 | Repo link works, and only it | Clicking "View source on GitHub" invokes `shell.openExternal` (not an in-app window); assert **no other** URL can reach `openExternal` | Desktop E2E |
 
