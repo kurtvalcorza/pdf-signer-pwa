@@ -84,8 +84,13 @@ Non-negotiable rules:
 | Question the user has | What answers it | Command |
 |---|---|---|
 | "Is this the published file?" | `SHA256SUMS` (FR-017) | standard checksum tools |
-| "Where did it actually come from?" | Provenance attestation (FR-018a) | `gh attestation verify <file> --repo kurtvalcorza/pdf-signer-pwa` |
-| "Which source built it?" | Attestation predicate + release notes (FR-018) | as above |
+| "Where did it actually come from?" | Provenance attestation (FR-018a) | `gh attestation verify <file> --repo … --signer-workflow …/release-desktop.yml --source-digest <sha>` |
+| "Which source built it?" | Attestation predicate + release notes (FR-018) | as above — **`--source-digest` pins the commit** |
+
+> **The verification command MUST pin the workflow and commit, not just the repo.** `--repo` alone
+> proves only that *some* attesting workflow in this repository produced the artifact — any other
+> workflow, ref, or commit satisfies it. FR-018a exists to prove *what* built it and *from which
+> commit*; a check that can't distinguish those is a checkbox. *(Codex, PR #7.)*
 
 ## Disclosure (FR-014 — ships **with** the release, not after)
 

@@ -131,11 +131,21 @@ FR-019 is broken — fix the packaging, not the test.
 
 ```bash
 sha256sum -c SHA256SUMS
-gh attestation verify PDF-Signer-<version>-portable.exe --repo kurtvalcorza/pdf-signer-pwa
+gh attestation verify PDF-Signer-<version>-portable.exe \
+  --repo kurtvalcorza/pdf-signer-pwa \
+  --signer-workflow kurtvalcorza/pdf-signer-pwa/.github/workflows/release-desktop.yml \
+  --source-digest <expected-commit-sha>
 ```
 
-**Expected**: checksum matches; attestation verifies against the source commit and workflow.
-**Note**: this does **not** remove the SmartScreen warning — only a code-signing certificate would
+**Expected**: checksum matches; the attestation verifies against the **expected workflow and source
+commit**.
+
+> **`--repo` alone is not enough**, though it looks like it is: it proves *some* attesting workflow in
+> this repository produced the artifact. Any other workflow in the repo — or a build from an
+> unexpected ref or commit — satisfies it. Since FR-018a exists to prove *what* built the binary and
+> *from which commit*, the verification the docs hand users must pin **both**. *(Codex, PR #7.)*
+
+**Note**: none of this removes the SmartScreen warning — only a code-signing certificate would
 (`release-artifacts.md`).
 
 ## First-run expectations (so they aren't mistaken for bugs)

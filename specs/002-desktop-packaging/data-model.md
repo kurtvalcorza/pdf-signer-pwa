@@ -19,21 +19,32 @@ staleness nudge (FR-015/015a).
 |---|---|---|
 | `version` | string | Semver, from `package.json`. Displayed to the user (FR-015). |
 | `buildDate` | ISO-8601 string | Injected at build time (CI build/commit timestamp). **MUST** be embedded, never fetched (FR-015a). |
+| `engineDate` | ISO-8601 string | **Release date of the bundled Electron/Chromium version.** Derived at build time from the resolved `electron` version. |
+| `engineVersion` | string | The packaged Electron/Chromium version. Displayed alongside the build (FR-015). |
 | `commit` | string | Full source commit SHA. Traceability (FR-018). |
 | `distribution` | `'web' \| 'windows-portable' \| 'linux-appimage'` | Identifies the artifact. |
 | `selfUpdates` | `false` | Constant. Present so the disclosure is data-driven, not a hardcoded string (FR-015). |
 
 **Derived — not stored**:
 
-- `ageInDays` = `now - buildDate`. Recomputed per read; never cached to disk.
-- `isStale` = `ageInDays > STALENESS_THRESHOLD_DAYS` (**180**, R6).
+- `ageInDays` = `now - max(buildDate, engineDate)`… **no** — see below.
+- `isStale` = `(now - engineDate) > STALENESS_THRESHOLD_DAYS` (**180**, R6).
+
+**⚠ Staleness is measured from `engineDate`, NOT `buildDate`.** The disclosure's subject is the
+**frozen browser engine** — so the honest input is the engine's age, not the artifact's. A rebuild
+today from an unchanged lockfile resets `buildDate` and would silently suppress the warning while
+shipping a Chromium that is a year old and unpatched: the notice would go quiet exactly when it
+matters most, and a routine CI rerun would be enough to do it. `buildDate` remains displayed
+(FR-015 traceability) but MUST NOT drive `isStale`. *(Codex, PR #7 — a genuinely new insight, not a
+propagation fix: the original design measured the wrong thing.)*
 
 **Validation**:
 
-- A desktop build **MUST** fail to build if `buildDate` or `commit` is absent or a placeholder.
-  Shipping "unknown" would make the staleness nudge silently inoperative — a Principle IV defect that
-  no test would otherwise catch.
-- `buildDate` **MUST NOT** be `Date.now()` evaluated at runtime (that yields age 0 forever).
+- A desktop build **MUST** fail to build if `buildDate`, `engineDate`, `engineVersion`, or `commit`
+  is absent or a placeholder. Shipping "unknown" would make the staleness nudge silently inoperative
+  — a Principle IV defect that no test would otherwise catch.
+- `buildDate`/`engineDate` **MUST NOT** be `Date.now()` evaluated at runtime (that yields age 0
+  forever).
 
 **Trust boundary**: `isStale` compares an embedded constant against the **device clock**, which is
 untrusted and unverifiable offline. A wrong clock yields a spurious or missing notice. This is
@@ -87,10 +98,15 @@ launch
         └─ unpackaged            ──> default (dev only)
 ```
 
-**Note on the existing code**: `src/features/persistence/certStore.ts` already swallows storage
-failures and degrades to memory-only silently (`certStore.ts:16–24`). The *code path* therefore
-already survives read-only media — the work FR-011b adds is making that degradation **visible**,
-which is a shell/UI concern, not a persistence-layer change.
+**⚠ Note on the existing code — it does NOT already survive this.** `certStore.ts:16–24` swallows
+storage failures and degrades to memory-only silently, but that path **only runs when a write
+fails**. In `ephemeral` mode Electron is deliberately pointed at a writable temp `userData`, so
+IndexedDB writes **succeed** and the failure path never fires — the user's `.p12` lands in temp until
+cleanup, violating the memory-only promise. The required work is therefore **disabling opt-in
+persistence in `ephemeral` mode** (the affordance is unreachable; `saveCertificate`/`saveSignature`
+are never called), not merely surfacing a degradation. *(Corrected 2026-07-17: this note previously
+claimed the existing code path "already survives read-only media", which understated the work to a
+UI concern and would have licensed a relocate-only implementation. Codex, PR #7 — P1.)*
 
 ---
 
@@ -107,11 +123,26 @@ One published artifact for one platform (spec § Key Entities).
 | `sha256` | string | Published checksum (FR-017). |
 | `attestation` | reference | Sigstore build-provenance attestation (FR-018a, R8). |
 | `codeSigned` | `false` | Constant in this feature. Drives the FR-014 disclosure. |
-| `gateResult` | `'passed'` | **A build may only reach this entity's published state with a passing pyHanko run against its own output** (FR-010, Principle V). |
+| `gateResult` | `'passed'` | **Requires EVERY blocking gate to pass, not pyHanko alone** — see below. |
+
+**`gateResult: 'passed'` means all of these, per artifact:**
+
+1. pyHanko validates a signature produced by **this** artifact (FR-010)
+2. The **monitored-network** run recorded **zero** outbound attempts (SC-004 — the *primary* gate)
+3. Layer E2E: CSP alive, `bypassCSP` absent, layer 2 cancels, `blob:` allowed
+4. Layer-3 lint + packaged dependency audit (no Node HTTP client)
+5. Portable-state (two folders) + read-only degradation (FR-011a/b)
+6. **[Linux]** FUSE-less host via extract-and-run (FR-002a)
+
+*(Corrected 2026-07-17: this field previously meant a passing pyHanko run and nothing else. An
+artifact can validate its signatures perfectly while shipping a Node-side update check, telemetry, or
+DNS attempts — so an entity modelling release state on FR-010 alone would mark exactly that build
+publishable. It must mirror the release contract and T031, not a single requirement. Codex, PR #7 —
+P1.)*
 
 **Validation**:
 
-- `gateResult` **MUST** come from a run against *this artifact's* output — never copied from the web
+- `gateResult` **MUST** come from runs against *this artifact's* output — never copied from the web
   build or the other platform's run (Principle V, v1.1.0: evidence is not inherited by assertion).
 - A `DesktopBuild` with `codeSigned: false` **MUST** be accompanied by the FR-014 disclosure. The
   attestation does **not** satisfy this: it proves provenance, not authority, and it does not remove

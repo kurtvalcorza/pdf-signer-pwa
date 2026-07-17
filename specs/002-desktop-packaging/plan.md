@@ -149,8 +149,25 @@ enforced structurally rather than by convention: `electron/` compiles under its 
 from `src/` fails the web build rather than silently shipping.
 
 The rule to hold the line on: **`electron/` may know about the web app; the web app must not know
-about `electron/`.** The only two places `src/` changes at all are the service-worker registration
-flag (R5) and reading the injected build date (R6) — neither is in the signing path.
+about `electron/`.**
+
+`src/` changes are **limited to this list** — all outside the signing path (FR-009), none importing
+from `electron/`:
+
+| Change | Why | Requirement |
+|---|---|---|
+| Service-worker registration flag (`src/main.tsx`) | off by default; desktop skips the SW | R5 |
+| Read injected build/engine metadata (`src/lib/buildMetadata.ts`) | version, build date, engine age | R6, FR-015 |
+| Staleness notice (`src/components/StalenessNotice.tsx`) | **desktop-only module the web build never imports** | FR-015a, **FR-019a** |
+| About/info surface | version, engine, commit, no-self-update, data location | FR-013, FR-015 |
+| Disable "remember" affordances in `ephemeral` mode | memory-only enforced by not writing | FR-011b |
+
+**`src/features/signing/**` — zero diff** (FR-009, Principle III). T039 checks this.
+
+*(Amended 2026-07-17: this previously said `src/` changes "only" for the SW flag and build date,
+while tasks T020/T027/T028 require the UI work above. An implementer treating the structure rule as
+authoritative would have read the FR-011b/FR-015 disclosures as forbidden drift and dropped them —
+the structure rule would have deleted the honesty requirements. Codex, PR #7.)*
 
 ## Complexity Tracking
 
@@ -159,5 +176,5 @@ flag (R5) and reading the injected build date (R6) — neither is in the signing
 
 | Divergence | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
-| Service worker not registered in desktop builds (R5) | The SW exists to precache for offline web use. In a packaged app every asset is already local behind our own `app://` handler, so the SW adds a second cache layer with its own staleness semantics and forces an extra scheme privilege (`allowServiceWorkers`) — risk for zero benefit. | Keeping the SW in desktop was rejected: it would make the offline guarantee depend on Workbox cache correctness *in addition to* packaging, and a stale precache across versions is a real failure mode with no upside when the files ship inside the binary. Implemented as a build flag **off by default**, so the web build is byte-identical (FR-019), and it touches registration only — never the signing path (FR-009). |
+| Service worker not registered in desktop builds (R5) | The SW exists to precache for offline web use. In a packaged app every asset is already local behind our own `app://` handler, so the SW adds a second cache layer with its own staleness semantics and forces an extra scheme privilege (`allowServiceWorkers`) — risk for zero benefit. | Keeping the SW in desktop was rejected: it would make the offline guarantee depend on Workbox cache correctness *in addition to* packaging, and a stale precache across versions is a real failure mode with no upside when the files ship inside the binary. Implemented as a build flag **off by default**, so the web build's **behaviour** is unchanged (FR-019 — a behavioural guarantee, not byte-identity, since this feature's inert build metadata necessarily changes the bundle), and it touches registration only — never the signing path (FR-009). |
 | ~150–250 MB artifacts (SC-009) | Bundling Chromium is what keeps the engine aligned with the suite that validates the signing path (R1). | Tauri (~5–10 MB) rejected **for now**: WebKitGTK on Linux would run the signing path on an engine the project has never validated, and Principle V (v1.1.0) forbids inheriting that evidence by assertion. Revisit only after the gate is earned there. |

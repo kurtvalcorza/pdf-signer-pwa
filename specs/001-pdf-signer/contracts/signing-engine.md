@@ -18,15 +18,24 @@ type PlacementInput = {
 type Pkcs12 = { p12Bytes: Uint8Array; password: string };
 ```
 
-## Tier A — visual stamp (no crypto)
+## Tier A — visual stamp (internal pre-signing step, NOT an output)
 
 ```ts
 stampVisual(pdf: Uint8Array, placements: PlacementInput[]): Promise<Uint8Array>
 ```
 
-- Draws each placement as page content on its target page (FR-006/008/009/010).
+- Draws each placement as page content on its target page (FR-006/008/009).
 - MUST clamp/reject placements outside page bounds (FR-008).
 - Returns a full PDF. Safe to call ONLY before any signature exists.
+
+> **⚠ Amended 2026-07-17 — this function's result MUST NOT be handed to the user.** `stampVisual` is
+> still live (`src/App.tsx:279`), but only as the internal step that bakes *additional* placements
+> into page content **before** `signFirst` applies the cryptographic signature — the ordering rule.
+> The standalone "stamp & download without a certificate" flow it once served was removed by PR #4
+> (`a1a83ab`); **FR-010 is superseded** and no longer mandates a no-certificate export (the FR-010
+> reference above has been dropped for that reason). Returning a `stampVisual` output as a
+> deliverable would reintroduce exactly the artifact that looks signed and carries no verifiable
+> claim — see [spec.md](../spec.md) § Amendment: certificate-only signing. *(Codex, PR #7.)*
 
 ## Certificate generation (in-app, FR-018/032)
 

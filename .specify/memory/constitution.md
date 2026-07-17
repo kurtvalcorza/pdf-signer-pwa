@@ -137,15 +137,30 @@ misleading. Correctness here is a safety property, not a feature toggle.
 
 **Gating note**: This principle gates from day one and applies to **every distribution equally** —
 it is never deferred to a future release, and no distribution is exempt. A distribution MUST NOT
-carry a separate or divergent signing implementation; the signing path is shared, so that
-correctness is established once rather than re-litigated per platform.
+carry a separate or divergent signing implementation.
+
+**Sharing the implementation is not sharing the evidence.** A shared signing path removes
+*implementation* divergence; it does **not** establish the correctness of any packaged output, which
+still depends on that distribution's own packaging, asset serving, bundled engine, and runtime. Each
+artifact MUST still earn its own validator run under Principle V. *(Corrected in v1.1.0: an earlier
+draft of this note said the shared path meant "correctness is established once rather than
+re-litigated per platform" — which is exactly the inherit-by-assertion Principle V forbids, stated
+inside a NON-NEGOTIABLE principle where it would have outranked V. Codex, PR #7.)*
 
 **This constitution does not enumerate product scope.** Which capabilities ship, and in what form, is
 defined by the feature specs under `specs/` — the single source of truth. Governance states what is
 non-negotiable, not what exists. *(This clause was added in v1.1.0 after the prior enumeration went
-stale: it named a visual-stamp-only output as shipping v1 for months after the code had removed it.
-A constitution that duplicates the spec will drift from it every time scope moves, and a governance
+stale: it named a visual-stamp-only output as shipping v1 for days after the code had removed it. A
+constitution that duplicates the spec will drift from it every time scope moves, and a governance
 document that is quietly false is worse than one that is silent.)*
+
+> **Pointing at `specs/` only helps if `specs/` is true.** When this clause was introduced, the
+> spec's own `data-model.md` and `contracts/signing-engine.md` still described the removed
+> stamp-only export as an active path — so deleting the enumeration here would have **relocated** the
+> drift rather than removed it, while promoting the stale documents to sole authority. Those were
+> corrected in the same amendment. **Any future amendment that moves authority to another document
+> MUST verify that document is accurate first** — otherwise it launders a false claim into a more
+> authoritative place. *(Codex, PR #7 — the sharpest finding of that review.)*
 
 ### IV. Honest Security Posture & Purpose (No Overclaiming)
 

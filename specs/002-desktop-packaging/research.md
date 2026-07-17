@@ -73,7 +73,11 @@ escaping it (`..`), so the scheme cannot serve arbitrary host files.
 ## R3 — Portable state location (FR-011a/b)
 
 **Decision**: Before `app.whenReady()`, call `app.setPath('userData', <dir adjacent to the
-artifact>/data)`, resolving the artifact directory per platform:
+artifact>/**pdf-signer-data**)`, resolving the artifact directory per platform. *(Corrected
+2026-07-17: this said `/data`, while the path contract, data model, and quickstart all specify
+`pdf-signer-data/`. An implementation following the research doc would write state to a folder the
+cleanup instructions and portability tests never look in — so residue would survive a "correct"
+cleanup and the tests would still pass. One name: `pdf-signer-data/`. Codex, PR #7.)*
 
 | Platform | Source of truth | Notes |
 |---|---|---|
@@ -144,8 +148,15 @@ data*, and the temp-extraction behaviour should be stated plainly rather than gl
 the window to a remote origin or spawn one.
 
 **Verification (SC-004)** must be observed from **outside** the app — the spec says "not merely
-asserted internally". Options: run with no network interface; or assert via Playwright's Electron
-driver that no request event escapes. Prefer the former for the release gate.
+asserted internally". The **primary release gate is a live-but-monitored network** (firewall/proxy/
+packet capture) across launch → sign → idle → quit, failing on **any** DNS/TCP/HTTP attempt.
+
+*(Corrected 2026-07-17: this originally preferred running with **no network interface** for the
+release gate. That proves the app *works* offline — it cannot prove the app never *tries*: a Node-side
+update check, telemetry ping, or DNS lookup fails instantly against a dead interface, records
+nothing, and the signing flow stays green. Since this file is the design input for that gate, the
+weaker method here would have propagated into the implementation. The offline run is retained as a
+**separate** check of a different property. Codex, PR #7 — P1.)*
 
 ---
 
@@ -166,7 +177,10 @@ Still, it is the one intentional web/desktop divergence in the feature and must 
 plan's Complexity Tracking rather than buried.
 
 **FR-019 check**: implemented as a flag that is **off by default**, so the web build's behaviour is
-byte-identical to today unless the desktop build explicitly sets it.
+identical to today unless the desktop build explicitly sets it. *(FR-019 is a **behavioural**
+guarantee — byte-identity is impossible once this feature injects build metadata (T011), so claiming
+it would make the requirement self-violating. The web bundle must additionally contain **no**
+desktop-only code, FR-019a.)*
 
 ---
 

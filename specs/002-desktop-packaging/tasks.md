@@ -58,7 +58,10 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
 - [ ] T003 [P] Extend `eslint.config.js` with a Node-environment block scoped to `electron/**`, and
       a rule forbidding imports from `electron` inside `src/**`.
 - [ ] T004 Create `electron-builder.yml`: `appId`, `asar: true`, `files` limited to `dist/` +
-      compiled `electron/`, `publish: null`. Targets are added per-story (T024 win, T031 linux).
+      compiled `electron/`, `publish: null`. Targets are added per-story: **T018** (Windows
+      `portable`), **T023** (Linux `AppImage`). *(Corrected: previously cited T024/T031, which are
+      AppImage path verification and the release gate — following those refs would leave the builder
+      config with no target until the wrong phase. Codex, PR #7.)*
 
 ---
 
@@ -145,8 +148,12 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       be a runtime `Date.now()` (that yields age 0 forever, silently disabling T027). Inert for the
       web build (FR-019).
 - [ ] T012 Gate service-worker registration behind a build-time flag, **off by default**, at the
-      registration call site only (`src/main.tsx`). Desktop sets it; the web build stays
-      byte-identical (FR-019). Registration/bootstrap only — never the signing path (R5, FR-009).
+      registration call site only (`src/main.tsx`). Desktop sets it; the web build's **behaviour** is
+      unchanged (FR-019). Registration/bootstrap only — never the signing path (R5, FR-009).
+      *(Was "the web build stays byte-identical" — impossible and now contradicted by FR-019: T011's
+      build metadata necessarily changes the bundle's bytes. Chasing byte-identity would steer an
+      implementer to strip the metadata or treat an intended diff as a regression. The guarantee is
+      behavioural + no desktop-only code in the web bundle (FR-019a). Codex, PR #7.)*
 - [ ] T013 [P] Create `playwright.desktop.config.ts` targeting the **packaged** binary via
       `_electron.launch({ executablePath })`, reusing `tests/e2e/fixtures/`.
 
@@ -178,7 +185,13 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
          `app:` privileges object contains no truthy `bypassCSP` (assert the value passed to
          `registerSchemesAsPrivileged`, not a behaviour downstream of it). Additionally assert a
          CSP-disallowed **`app:`-served resource** is blocked.
-      3. **Layer 2** — assert a synthetic `https:` request is cancelled.
+      3. **Layer 2, isolated from CSP** — issue the synthetic `https:` request through a
+         **Chromium-session path the page CSP does not govern** (e.g. a main-process
+         `session`-routed load / non-renderer request) and assert **`onBeforeRequest` performed the
+         cancellation** — not merely that the request failed.
+         **A renderer `fetch('https://…')` is the wrong probe**: `connect-src 'none'` blocks it
+         first, so the assertion goes green even if the `webRequest` filter is missing or broken —
+         layer 1 masking layer 2, the mirror image of the meta-tag mistake. *(Codex, PR #7 — P1.)*
       4. **`blob:` allowed** — a real signed-PDF download completes (proves T008 didn't over-block).
 
       > **Steps 1 and 2 prove DIFFERENT things — neither substitutes for the other.**

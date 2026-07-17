@@ -131,7 +131,12 @@ Delivers complete standalone value even if the Linux build never ships.
 
 1. **Given** a Windows machine with no network connection, **When** the user runs the portable
    binary from an arbitrary directory (Desktop, USB stick, `Downloads`), **Then** the application
-   opens and is fully usable with no error, prompt, or degraded state.
+   opens and is fully usable with no error or degraded state — **excluding the OS's own
+   unsigned-binary warning** (SmartScreen), which is expected and disclosed (US3, FR-014).
+   *(Amended 2026-07-17: this required "no error, **prompt**, or degraded state", which the feature's
+   own US3 guarantees is impossible — an unsigned downloaded `.exe` triggers SmartScreen by design,
+   and only a code-signing certificate suppresses it. The P1 acceptance criterion contradicted the
+   P2 disclosure describing the same moment. Codex, PR #7.)*
 2. **Given** the application is open, **When** the user opens a PDF, places a signature image, and
    signs with a valid `.p12` and password, **Then** the resulting file is structurally equivalent to
    one produced by the web app for the same inputs, and passes the automated signature validator.
@@ -264,8 +269,12 @@ test. Codex, PR #7.)*
 **Distribution & portability**
 
 - **FR-001**: The system MUST produce a Windows desktop application delivered as a **single
-  executable file** that runs without an installer, without administrator rights, and without
-  writing to the Windows registry.
+  executable file** that runs without an installer, without administrator rights, and **without the
+  installer or the application writing to the Windows registry**. *(Scoped 2026-07-17: previously an
+  unqualified "without writing to the Windows registry". Windows itself records execution traces in
+  registry-backed locations (e.g. compatibility/MRU data) that no application can prevent — so the
+  unqualified promise fails under inspection even when the app does everything right. Consistent with
+  the rest of the no-trace scoping: we promise what we control. Codex, PR #7.)*
 - **FR-002**: The system MUST produce a Linux desktop application delivered as a **single executable
   file** that runs without root and without installing shared dependencies onto the host.
 - **FR-002a**: The Linux artifact MUST remain usable on hosts **without FUSE/libfuse configured**,
@@ -405,15 +414,21 @@ test. Codex, PR #7.)*
   are **structurally equivalent** and both validate.
 - **SC-004**: The application makes **zero** network requests across its entire lifecycle, observed
   from outside the app (not merely asserted internally).
-- **SC-005**: Everything the application writes lives in **one** directory adjacent to the artifact.
-  After running the app and deleting **the artifact and that adjacent folder**, a user finds **zero**
-  residual application data anywhere on the host — in particular, nothing in the operating system's
-  per-user application-data location. *(Amended 2026-07-17 — the original promised zero residue after
-  deleting **the binary alone**. That was false: a bundled browser engine writes cache/GPU/profile
-  files into its data directory on every launch, with or without opt-in, so a user following
-  single-file deletion instructions would leave data behind. The honest promise is not "one file" but
-  **"one place"** — a two-item cleanup the user can actually complete, disclosed as such. Codex,
-  PR #7.)*
+- **SC-005**: All **user content and application state** the app writes lives in **one** directory
+  adjacent to the artifact. After running the app and deleting **the artifact and that adjacent
+  folder**, a user finds **zero** residual user content or application state anywhere on the host —
+  in particular, nothing in the operating system's per-user application-data location.
+  **Two scoping caveats, both disclosed rather than glossed** (Principle IV):
+  (a) the Windows portable target extracts **its own program files** to a temp directory while
+  running and removes them on exit — a hard crash can leave them, and they are program code, never
+  user content;
+  (b) OS-controlled traces of having run an executable (prefetch, execution history, antivirus
+  records, shell MRU) are outside any application's reach. **This is a privacy tool, not an
+  anti-forensics tool.**
+  *(Amended 2026-07-17, twice. The original promised zero residue after deleting **the binary alone**
+  — false, since a bundled engine writes cache files into its data directory every launch. The
+  corrected version still said "zero residual **application data**" unqualified, which the
+  portable-paths contract's own temp-extraction caveat contradicts. Codex, PR #7.)*
 - **SC-006**: A user encountering a first-run security warning can find an accurate explanation of
   why it appears in **under 1 minute**, without contacting the author.
 - **SC-007**: A user can independently verify a downloaded binary's build provenance — confirming

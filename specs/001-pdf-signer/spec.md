@@ -171,7 +171,7 @@ A person without a digital signature image photographs their handwritten signatu
 - **Signature Image**: the visual signature (uploaded or captured); may have an original and a background-cleaned variant.
 - **Certificate (.p12)**: the user's PKCS#12 container holding a private key and certificate chain; unlocked transiently with a password; never persisted with its password or decrypted key.
 - **Signature Placement**: the chosen page, position, and size of the signature on the document.
-- **Signed Output**: the resulting PDF — either a visual stamp (Tier A) or a cryptographically signed document with an integrated signature field (Tier B).
+- **Signed Output**: the resulting PDF — **always** a cryptographically signed document with an integrated signature field (Tier B), whose visible appearance is the user's placed signature image. Additional placements may be baked into page content (Tier A) *before* signing, but a Tier A result is **never** a Signed Output on its own. *(Amended 2026-07-17: previously "either a visual stamp (Tier A) **or** a cryptographically signed document". That definition outlived the code by four days and could be cited to reintroduce the stamp-only export FR-010 now forbids. Codex, PR #7.)*
 
 ## Success Criteria *(mandatory)*
 

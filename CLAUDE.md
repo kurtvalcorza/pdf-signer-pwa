@@ -26,12 +26,27 @@ the web PWA stays primary and unchanged (FR-019).
 
 **Three traps this feature must not fall into** (see research.md):
 
-1. `bypassCSP: true` on the `app://` scheme silently voids `connect-src 'none'` — every test still
-   passes. Assert the CSP from *inside* the packaged app.
+1. `bypassCSP: true` on the `app://` scheme silently exempts `app:`-served resources from
+   `connect-src 'none'` — every test still passes. **Assert the value passed to
+   `registerSchemesAsPrivileged` directly.** Do *not* try to catch this by reading the CSP or probing
+   `connect-src`: `bypassCSP` leaves the meta tag untouched and is scheme-scoped, so both go green
+   with the bug live.
 2. Deriving the data dir from `process.execPath` writes state to a **temp extraction**, not next to
    the artifact. Use `PORTABLE_EXECUTABLE_DIR` / `APPIMAGE`. Test from **two** folders.
 3. Any desktop-only branch in the signing path voids the whole reason Electron was chosen over Tauri
    (FR-009) and re-opens the Principle V gate.
+4. `session.webRequest` does **not** see the main process. Node `fetch`/`http` in `electron/main`
+   bypass it — an eslint **import allow-list** (not a deny-list; `import got from 'got'` walks past
+   that) is the only guard there.
+
+**Two lessons from the 002 review** (48 findings over 4 rounds), worth applying to any spec work here:
+
+- **A claim must not outrun its mechanism.** 8 of the 48 were guarantees nothing enforced — "secrets
+  never reach swap" (the OS pages memory), "no evidence the app ever ran" (prefetch/Defender), "never
+  shows a libfuse error" (fails before our code runs). Before writing MUST NEVER, name the mechanism.
+- **Fix the claim everywhere, not where it was cited.** Most findings after round 1 were earlier fixes
+  that never reached sibling docs — `research.md`, `data-model.md`, `plan.md`, and this file each kept
+  teaching a corrected mistake. Grep the whole repo for the claim, not the line.
 
 ## Shipped feature: 001-pdf-signer
 
