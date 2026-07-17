@@ -8,6 +8,11 @@
 
 **Input**: User description: "Package the existing PDF Signer PWA as portable, single-file, offline desktop applications for Windows (portable .exe) and Linux (AppImage) — no installer, no registry writes, no network. The desktop build must preserve every constitutional guarantee of the web app (zero-server, offline-first, crypto correctness, on-device data minimization) and must reuse the same rendering engine the existing test suite and pyHanko signature gate already validate against, so existing correctness evidence carries over. Binaries are unsigned (no Authenticode / notarization) and this must be disclosed honestly to users. macOS is explicitly out of scope. The web PWA on Vercel remains the primary distribution and must continue to work unchanged."
 
+> **Note on the Input line above**: preserved verbatim as the historical record of the request. Its
+> phrase *"so existing correctness evidence carries over"* is **not** the requirement — FR-010 and
+> Constitution V require the signature gate to run against each packaged artifact's own output. The
+> shared engine buys **probability, not proof**. See Assumptions § Chosen approach.
+
 ## Overview
 
 The signing application currently reaches users as an installable web app. This feature adds a
@@ -91,8 +96,11 @@ requirements rather than merely this feature's good intentions.
 A user copies a single `.exe` onto a Windows machine — one with no internet connection, or one where
 they lack rights to install software. They double-click it, the signing app opens in its own window,
 and they complete the full existing flow: open a PDF, place a signature image, sign with a `.p12`,
-and save the signed file. They then delete the `.exe`, and the machine retains no evidence the app
-ever ran.
+and save the signed file. Everything the app wrote lives in **one folder beside the `.exe`**; they
+delete the `.exe` and that folder, and the machine retains no evidence the app ever ran. *(Amended
+2026-07-17: this previously said deleting the `.exe` alone left "no evidence" — false, since a
+bundled engine writes cache files into its data folder on every launch. Two items, one place, stated
+honestly. See SC-005. Codex, PR #7.)*
 
 **Why this priority**: This is the feature. Windows is the platform where "I can't install things"
 and "this machine is offline" most commonly co-occur, and it is the author's own platform, so it is
@@ -192,8 +200,13 @@ is the one that was published, given that no code-signing certificate vouches fo
 usable without it and it is meaningless until releases exist — but without it, "unsigned" has no
 mitigation at all.
 
-**Independent Test**: Publish a release, download the artifact on a different machine, and confirm
-its checksum matches the published value.
+**Independent Test**: Publish a release, download the artifact on a different machine, confirm its
+checksum matches the published value, **and independently verify its build-provenance attestation
+against the source commit and build workflow**. *(Amended 2026-07-17: the test stopped at the
+checksum, which only proves the download equals the published asset — it says nothing about who
+produced that asset, and would pass for a binary built on a laptop and uploaded by hand. Since
+FR-018a exists precisely to prove CI built it from a stated commit, the attestation check is the
+test. Codex, PR #7.)*
 
 **Acceptance Scenarios**:
 
@@ -320,8 +333,18 @@ its checksum matches the published value.
 
 **Non-regression**
 
-- **FR-019**: The existing web PWA MUST continue to build, deploy, and function unchanged. Desktop
-  packaging MUST NOT alter the web application's behaviour, bundle contents, or existing gates.
+- **FR-019**: The existing web PWA MUST continue to build, deploy, and **function unchanged**.
+  Desktop packaging MUST NOT alter the web application's **behaviour** or its existing gates, MUST
+  NOT add any network or persistence capability to it, and MUST NOT surface any desktop-only UI in
+  it. *(Amended 2026-07-17: previously also forbade altering "bundle contents". That was
+  unachievable as written and therefore misleading — the build-date metadata this feature injects
+  (FR-015) is inert, but it does change the web bundle's bytes, so the requirement was violated by
+  its own design from the start. The meaningful guarantee is **behavioural**, and it is stated as
+  such. Codex, PR #7.)*
+- **FR-019a**: Desktop-only user-facing code (e.g. the staleness notice, FR-015a) MUST NOT be
+  included in the web bundle at all — suppressing it at runtime via a `distribution` check is
+  insufficient. It MUST be isolated behind a module the web build never imports, so the web app does
+  not ship code for a distribution it is not.
 - **FR-020**: All existing functional requirements of the signing application (`001-pdf-signer`)
   MUST hold in the desktop applications. This feature adds distribution, not capability.
 
@@ -377,8 +400,14 @@ its checksum matches the published value.
 - **Chosen approach**: The desktop build wraps the existing web application in a runtime that
   bundles its own browser engine (Electron), rather than using the host's system webview. This is a
   deliberate trade: a much larger artifact in exchange for running on the *same engine family the
-  existing test suite and signature gate already validate against*, so correctness evidence carries
-  over. A system-webview approach (Tauri) would produce a far smaller binary but would run the
+  existing test suite and signature gate already validate against*, which makes a passing desktop
+  gate **likely** and makes a failure a real bug rather than an engine gap. **It does NOT mean web
+  evidence transfers**: FR-010 and Constitution V still require the gate to run against the packaged
+  artifact's own output, because `asar` layout, `app://` serving, node polyfills, and the packaged
+  engine are all untested by any web run. *(Amended 2026-07-17: this previously said "correctness
+  evidence carries over", which contradicted FR-010 and could have been cited to weaken T005/T021/
+  T025. The engine choice buys **probability**, never **proof**. Codex, PR #7.)*
+  A system-webview approach (Tauri) would produce a far smaller binary but would run the
   signing path on a different engine (WebKitGTK on Linux), requiring the Principle V gate to be
   re-earned there. Recorded as the assumption behind FR-009; revisit in `/speckit-plan` if wrong.
 - **Unsigned is accepted for now.** Code-signing certificates (Authenticode) are a recurring paid

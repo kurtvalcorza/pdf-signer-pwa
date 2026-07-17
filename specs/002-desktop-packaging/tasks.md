@@ -108,11 +108,25 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       Node's `fetch`/`http`/`https`/`net` in main bypass it completely. Layer 3 (T008a) is what
       covers that — this file is not sufficient on its own, and an earlier draft of the contract
       wrongly claimed it was. *(Codex, PR #7.)*
-- [ ] T008a [P] Add the **layer-3 Node-network prohibition**: an `eslint` `no-restricted-imports` /
-      `no-restricted-globals` rule scoped to `electron/**` banning `node:http`, `node:https`,
-      `node:net`, `node:dgram`, `node:tls` and global `fetch`, so a main-process network call fails
-      **lint** rather than review. Permit Electron's `net.fetch` **only** in `electron/protocol.ts`
-      for serving `app:` assets from disk.
+- [ ] T008a [P] Add the **layer-3 Node-network prohibition** for `electron/**`, in two parts —
+      **the first alone is not sufficient**:
+      1. `eslint` `no-restricted-imports` / `no-restricted-globals` banning `node:http`,
+         `node:https`, `node:net`, `node:dgram`, `node:tls` and global `fetch`.
+      2. An **import allow-list** for `electron/**`: only `electron`, `node:path`, `node:fs`,
+         `node:os`, `node:url` (and other explicitly-approved, non-network builtins) may be imported.
+         Any package import is a lint error unless added to the allow-list by name.
+      Permit Electron's `net.fetch` **only** in `electron/protocol.ts` for serving `app:` assets from
+      disk.
+      **Why the allow-list is load-bearing**: banning `node:http` does nothing about
+      `import got from 'got'` (or `axios`, `undici`, or a helper whose transitive dep runs an
+      updater). Those use Node networking that `webRequest` cannot see, and they pass a
+      builtins-only rule cleanly — which would leave layer 3, the *only* main-process guard, trivially
+      bypassable. Deny-listing names an attacker's imports; allow-listing names ours. *(Codex, PR #7 —
+      P1.)*
+- [ ] T008b [P] Add a **packaged-build dependency audit**: fail `build:desktop` if any module reachable
+      from `electron/**` in the packaged output declares or pulls a network-capable dependency
+      (`electron-updater`, `axios`, `got`, `undici`, `node-fetch`, …). Lint covers source; this covers
+      what actually ships.
       **`blob:` MUST be allowed** or the signed-PDF download silently breaks (R10) — the most likely
       way this file goes wrong. The carve-out is matched by **exact string**, never by pattern: a
       runtime-assembled URL reaching `openExternal` would be a general-purpose exfiltration
@@ -156,20 +170,27 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
       saved file. Asserts the full US1 flow end-to-end.
 - [ ] T015 [P] [US1] `tests/e2e-desktop/desktop-privacy.spec.ts` — assert each network layer
       **independently**, so no layer can mask another's failure:
-      1. **Layer 1 (CSP) in isolation** — from the renderer, attempt a `connect-src`-violating
-         request and assert a **`securitypolicyviolation` event fires** with
+      1. **Layer 1 (CSP) is alive** — from the renderer, attempt a `connect-src`-violating request
+         and assert a **`securitypolicyviolation` event fires** with
          `effectiveDirective: 'connect-src'`. A CSP block emits that event; a `webRequest` cancel
-         does **not**. This is the only signal that distinguishes the two.
-      2. **Scheme privileges** — assert the registered `app:` privileges contain no truthy
-         `bypassCSP`.
+         does **not** — this is the only signal that distinguishes the two.
+      2. **`bypassCSP` is absent** — assert **directly against the scheme registration** that the
+         `app:` privileges object contains no truthy `bypassCSP` (assert the value passed to
+         `registerSchemesAsPrivileged`, not a behaviour downstream of it). Additionally assert a
+         CSP-disallowed **`app:`-served resource** is blocked.
       3. **Layer 2** — assert a synthetic `https:` request is cancelled.
       4. **`blob:` allowed** — a real signed-PDF download completes (proves T008 didn't over-block).
 
-      > **Do NOT implement 1 by reading the CSP meta-tag string.** `bypassCSP: true` does not remove
-      > or alter the tag — the string still reads `connect-src 'none'` and the assertion passes with
-      > the bug present. And a `https:` request is cancelled by layer 2 regardless, so step 3 alone
-      > proves layer 2, never layer 1. *(Codex, PR #7 — a correct catch on the exact line this
-      > feature calls its highest risk: the original guard could not fail for the reason it existed.)*
+      > **Steps 1 and 2 prove DIFFERENT things — neither substitutes for the other.**
+      > `bypassCSP` is **scheme- and resource-scoped**: it exempts resources *served over `app:`* from
+      > the page CSP. A renderer `fetch('https://…')` is still governed by `connect-src`, so step 1
+      > fires its event and goes green **even with `bypassCSP: true`**. Step 1 proves the CSP exists
+      > and is enforced for `connect-src`; only **step 2** detects the privilege itself. Treating step
+      > 1 as the `bypassCSP` guard is the same mistake as reading the meta tag, one level deeper.
+      > *(Codex rounds 1 and 2, PR #7 — round 1 caught that reading the CSP string can't detect
+      > `bypassCSP`; round 2 caught that my replacement still couldn't, because I'd conflated "the CSP
+      > is alive" with "the privilege is absent". Do not read the CSP meta-tag string for step 1:
+      > `bypassCSP` leaves the tag untouched.)*
 - [ ] T016 [P] [US1] `tests/e2e-desktop/desktop-portable.spec.ts` — run the same binary from **two
       different directories**; assert each keeps its own state beside itself and **nothing** is
       written to `%APPDATA%`.
@@ -261,12 +282,17 @@ present, accurate, and stated without euphemism.
       passive, **non-blocking** notice once `ageInDays > STALENESS_THRESHOLD_DAYS` (**180**, a named
       constant — R6). Local clock comparison only; it MUST NOT regress into an update check
       (FR-006/007).
-      **⚠ MUST be gated on `distribution !== 'web'`.** The notice is rendered from shared `App.tsx`,
-      but only a distribution that **bundles its own engine** ships a frozen one — the web PWA runs
-      the user's own browser, which updates itself. Without the guard the web app would, 180 days
-      after any deploy, tell users "the bundled browser engine no longer receives security updates":
-      **false**, a user-facing regression (FR-019), and an overclaim by the very feature meant to
-      enforce honesty (Principle IV). *(Codex, PR #7.)*
+      **⚠ MUST NOT reach the web build at all (FR-019a).** Only a distribution that **bundles its own
+      engine** ships a frozen one — the web PWA runs the user's own browser, which updates itself. If
+      the notice rendered unguarded from shared `App.tsx`, the web app would, 180 days after any
+      deploy, tell users "the bundled browser engine no longer receives security updates": **false**,
+      a user-facing regression, and an overclaim by the very feature meant to enforce honesty
+      (Principle IV).
+      **A runtime `distribution !== 'web'` check is NOT enough** — it suppresses the notice but still
+      ships its code to web users. Isolate it behind a **desktop-only module the web build never
+      imports** (dynamic import resolved at build time, or a desktop-only entry), and assert in T038
+      that the web bundle contains no staleness code. *(Codex rounds 1 and 2, PR #7: round 1 caught
+      the missing guard; round 2 caught that a guard alone still violates the bundle requirement.)*
       Wording (FR-015b) must say the bundled engine no longer receives security updates, **without**
       implying a specific known vulnerability. **No "don't show again"** — that would create a new
       on-device store whose only purpose is suppressing a constitutionally required disclosure
@@ -299,9 +325,26 @@ phase MUST ship with or before any public release — not as a follow-up.
 - [ ] T030 [US4] Create `.github/workflows/release-desktop.yml` — matrix `windows-latest` (portable
       `.exe`) and `ubuntu-latest` (AppImage), both from **one commit**, no cross-compiling (R8).
       Leave `ci.yml` **untouched** (SC-008).
-- [ ] T031 [US4] Run the full desktop gate in CI per platform (T014–T017, T022) and the pyHanko
-      validation (T021, T025). **If either platform's gate is red, nothing publishes** — no partial
-      releases (SC-002, contracts/release-artifacts.md).
+- [ ] T031 [US4] Run the **full** desktop gate in CI per platform — every item below is
+      **blocking**; a release publishes only if all pass:
+      1. Layer/flow E2E: T014–T017 (Windows), T022 (Linux)
+      2. pyHanko on each artifact's **own** output: T021, T025
+      3. **The monitored-network gate (T031a)** — the *primary* SC-004 check
+      4. **The FUSE-less AppImage check (T023a)** — FR-002a
+      5. Layer-3 lint + dependency audit (T008a)
+
+      **If any platform's gate is red, nothing publishes** — no partial releases (SC-002,
+      contracts/release-artifacts.md).
+      *(Amended after Codex round 2: this listed only items 1–2, so CI could have published while
+      never running the contract's primary SC-004 check or the FUSE-less check — the two gates added
+      in round 1 landed in the contract and quickstart but never reached the task that enforces
+      them. A gate that isn't in the release job is a comment.)*
+- [ ] T031a [US4] Implement the **monitored-network gate**: run each packaged artifact with
+      networking **available but intercepted** (firewall/proxy/packet capture) across launch → sign →
+      idle → quit, and **fail the build on any DNS query or TCP/HTTP attempt**, successful or not
+      (SC-004, contracts/network-policy.md § Verification).
+      The offline run (T014's environment) proves the app *works* without a network; only this proves
+      it *never reaches for one*.
 - [ ] T032 [US4] Generate and publish `SHA256SUMS` per artifact (FR-017).
 - [ ] T033 [US4] Add build-provenance attestation via `actions/attest-build-provenance` (or
       `actions/attest`, which GitHub now steers new implementations toward — either satisfies
@@ -326,10 +369,14 @@ phase MUST ship with or before any public release — not as a follow-up.
 - [ ] T037 [P] Measure desktop cold-start and full-flow timings; append to `docs/perf.md` alongside
       the web figures. Windows cold start includes a temp extraction (R3) and is expected to dominate
       — **measure it rather than assuming**; SC-001's 60 s budget has enormous headroom (web: 977 ms).
-- [ ] T038 Confirm the web distribution is untouched: `npm run build && npm test &&
+- [ ] T038 Confirm the web distribution is behaviourally untouched: `npm run build && npm test &&
       npm run verify:signatures && npm run e2e && npm run e2e:pwa` all green **and unmodified**
       (SC-008/FR-019). If any needed editing to accommodate packaging, **fix the packaging, not the
-      test**.
+      test**. Additionally assert the **web bundle contains no desktop-only code** — grep the built
+      `dist/` for the staleness notice and any `electron` import (FR-019a).
+      Note FR-019 is a **behavioural** guarantee, not byte-identity: the inert build-date metadata
+      (T011) does change the bundle's bytes, which is why the requirement was reworded rather than
+      pretended-at.
 - [ ] T039 Re-run the plan's post-design Constitution Check against the built artifacts, and confirm
       `src/features/signing/**` has **zero** diff for this entire feature (FR-009 — the single
       constraint most likely to have eroded under implementation pressure).

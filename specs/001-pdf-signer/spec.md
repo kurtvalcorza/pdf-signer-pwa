@@ -191,7 +191,7 @@ A person without a digital signature image photographs their handwritten signatu
 ## Assumptions
 
 - Target users are individuals signing their own documents on a personal Android device (Chrome); desktop browsers are supported, iOS is best-effort.
-- Users bring their own `.p12`/`.pfx` certificate when they want cryptographic signing; the app does not generate certificates or act as a certificate authority in v1.
+- ~~Users bring their own `.p12`/`.pfx` certificate when they want cryptographic signing; the app does not generate certificates or act as a certificate authority in v1.~~ **SUPERSEDED 2026-07-17.** Users either bring their own `.p12`/`.pfx` **or generate a self-signed Digital ID in the app** — generation is mandatory (FR-018), because a certificate is now required for any output (FR-005) and a certless user would otherwise have no path at all. The app still does **not** act as a certificate authority for third parties. *(This stale assumption directly contradicted FR-018's `MUST` and could have been cited to omit the generator. Codex, PR #7.)*
 - Input PDFs are not encrypted/password-protected; encrypted PDFs are detected and rejected rather than decrypted.
 - "Under 2 seconds" processing from the source material is a goal, not a guarantee, and depends on document size and device.
 - Signatures are not timestamped and do not include long-term validation material, an accepted consequence of offline operation.

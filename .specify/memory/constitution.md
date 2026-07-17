@@ -150,8 +150,13 @@ document that is quietly false is worse than one that is silent.)*
 ### IV. Honest Security Posture & Purpose (No Overclaiming)
 
 **Purpose & non-goal**: The product is positioned as a privacy-preserving convenience and
-tamper-evidence tool — a private way to visibly sign and optionally cryptographically seal a PDF
-entirely on-device. It does NOT claim to produce legally-binding, qualified, or advanced electronic
+tamper-evidence tool — a private way to cryptographically sign a PDF entirely on-device, where the
+user's signature image is the visible appearance of that real signature. *(Amended in v1.1.0: this
+sentence previously read "visibly sign and **optionally** cryptographically seal". Cryptographic
+signing is not optional — it is the only path to any output. The stale wording survived here one
+paragraph away from the Principle III scope note corrected in the same amendment, and would have
+been citable to justify describing crypto as optional in UI or marketing — reintroducing the exact
+overclaim FR-005/FR-010 were amended to remove. Codex, PR #7.)* It does NOT claim to produce legally-binding, qualified, or advanced electronic
 signatures in any jurisdiction, and MUST NOT present itself as legal advice or as a substitute for a
 qualified trust-service provider. UI and copy MUST reflect this positioning.
 
