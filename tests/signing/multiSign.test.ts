@@ -548,15 +548,17 @@ describe('reserveExistingObjectNumbers (untrusted-bytes hardening)', () => {
     doc.addPage([10, 10]);
     return doc;
   };
-  const bytesOf = (s: string, minLen = 0) =>
-    new TextEncoder().encode(s.padEnd(minLen, ' '));
+  const bytesOf = (s: string, minLen = 0) => new TextEncoder().encode(s.padEnd(minLen, ' '));
 
   it('counts a header whose tokens are separated by a % comment (PDF whitespace)', async () => {
     const probe = await base();
     const start = probe.context.largestObjectNumber;
     const target = start + 5;
     // `N 0 %comment\nobj` is a header pdf-lib parses; a whitespace-only scan would miss it.
-    reserveExistingObjectNumbers(bytesOf(`%PDF-1.7\n${target} 0 %inline comment\nobj\n<< >>\nendobj\n`, 300), probe);
+    reserveExistingObjectNumbers(
+      bytesOf(`%PDF-1.7\n${target} 0 %inline comment\nobj\n<< >>\nendobj\n`, 300),
+      probe,
+    );
     expect(probe.context.largestObjectNumber).toBe(target);
   });
 
@@ -566,7 +568,10 @@ describe('reserveExistingObjectNumbers (untrusted-bytes hardening)', () => {
     const target = start + 6;
     // pdf-lib accepts NUL (0x00) as whitespace in a header; JS `\s` does not, so the scan
     // must match it explicitly or miss a container written this way.
-    reserveExistingObjectNumbers(bytesOf(`%PDF-1.7\n${target}\x00 0\x00 obj\n<< >>\nendobj\n`, 300), probe);
+    reserveExistingObjectNumbers(
+      bytesOf(`%PDF-1.7\n${target}\x00 0\x00 obj\n<< >>\nendobj\n`, 300),
+      probe,
+    );
     expect(probe.context.largestObjectNumber).toBe(target);
   });
 
@@ -581,6 +586,18 @@ describe('reserveExistingObjectNumbers (untrusted-bytes hardening)', () => {
     expect(probe.context.largestObjectNumber).toBe(1001);
   });
 
+  it('scans a huge digit run in linear time (no quadratic backtracking)', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    // A 500k-digit run with no `obj` keyword — the kind of byte sequence a stream can hold.
+    // A quadratic scan would take many seconds here; a 1s budget fails on regression.
+    const bytes = bytesOf(`%PDF-1.7\n${'1'.repeat(500_000)} not-a-header\n`);
+    const t0 = performance.now();
+    reserveExistingObjectNumbers(bytes, probe);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(probe.context.largestObjectNumber).toBe(start); // nothing looked like a header
+  });
+
   it('rejects an object number without safe-integer headroom (nextRef would saturate)', async () => {
     const probe = await base();
     const start = probe.context.largestObjectNumber;
@@ -588,7 +605,10 @@ describe('reserveExistingObjectNumbers (untrusted-bytes hardening)', () => {
     // A crafted MAX_SAFE_INTEGER header must be dropped: taking it as the floor would
     // saturate nextRef()'s `+= 1` and duplicate object numbers. The bound is headroom
     // below MAX_SAFE_INTEGER, NOT the file length (that would drop sparse numbers, above).
-    const doc = bytesOf(`%PDF-1.7\n9007199254740991 0 obj\n<< >>\nendobj\n${real} 0 obj\n<< >>\nendobj\n`, 300);
+    const doc = bytesOf(
+      `%PDF-1.7\n9007199254740991 0 obj\n<< >>\nendobj\n${real} 0 obj\n<< >>\nendobj\n`,
+      300,
+    );
     reserveExistingObjectNumbers(doc, probe);
     expect(probe.context.largestObjectNumber).toBe(real);
     expect(probe.context.largestObjectNumber).toBeLessThan(Number.MAX_SAFE_INTEGER - 1024);
