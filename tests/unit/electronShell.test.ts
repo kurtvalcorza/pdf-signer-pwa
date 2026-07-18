@@ -11,6 +11,25 @@ const require = createRequire(import.meta.url);
 const { APP_SCHEME_PRIVILEGES } = require('../../electron/protocol.js');
 const { ALLOWED_SCHEMES, REPO_URL } = require('../../electron/network.js');
 const paths = require('../../electron/paths.js');
+const { loadBuildMetadata } = require('../../electron/buildmeta.js');
+import { writeFileSync, mkdtempSync as _mkdtemp } from 'node:fs';
+
+function writeBuildInfo(engineDaysOld: number, buildDaysOld = 0): string {
+  const dir = _mkdtemp(join(tmpdir(), 'buildinfo-'));
+  const file = join(dir, 'build-info.json');
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: '1.2.3',
+      buildDate: new Date(Date.now() - buildDaysOld * 86_400_000).toISOString(),
+      engineVersion: '43.1.1',
+      engineDate: new Date(Date.now() - engineDaysOld * 86_400_000).toISOString(),
+      commit: 'deadbeefcafe',
+      selfUpdates: false,
+    }),
+  );
+  return file;
+}
 
 const savedEnv = { ...process.env };
 afterEach(() => {
@@ -67,5 +86,27 @@ describe('electron shell — portable data resolution (traps #2)', () => {
     const r = paths.resolvePortableData();
     expect(r.mode).toBe('default');
     expect(r.userData).toBeNull(); // main leaves Electron's default in place; nothing relocated
+  });
+});
+
+describe('electron shell — staleness (US3): isStale derives from engineDate, not buildDate', () => {
+  it('is stale when the engine is older than the 180-day threshold', () => {
+    process.env.PDFSIGNER_BUILD_INFO = writeBuildInfo(200);
+    expect(loadBuildMetadata().isStale).toBe(true);
+  });
+  it('is NOT stale when the engine is fresh', () => {
+    process.env.PDFSIGNER_BUILD_INFO = writeBuildInfo(10);
+    expect(loadBuildMetadata().isStale).toBe(false);
+  });
+  it('a fresh buildDate does NOT silence a stale engine (regression guard, FR-015a)', () => {
+    process.env.PDFSIGNER_BUILD_INFO = writeBuildInfo(365, 0); // old engine, brand-new rebuild
+    const m = loadBuildMetadata();
+    expect(m.isStale).toBe(true);
+    expect(m.buildAgeInDays).toBeLessThan(2); // build IS fresh…
+    expect(m.engineAgeInDays).toBeGreaterThan(300); // …but the engine is not
+  });
+  it('returns null when no build-info exists (dev run) rather than crashing', () => {
+    process.env.PDFSIGNER_BUILD_INFO = join(tmpdir(), 'does-not-exist-build-info.json');
+    expect(loadBuildMetadata()).toBeNull();
   });
 });

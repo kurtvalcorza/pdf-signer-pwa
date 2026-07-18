@@ -6,9 +6,11 @@ asar: true
 files:
   - dist/**
   - electron/**
+  - '!electron/verify-packaged.mjs' # dev/test util (imports playwright) — must not ship in the artifact
   - package.json
 # publish: null — FR-007 is satisfied by the ABSENCE of an update feed, not a flag.
 publish: null
+icon: public/icons/icon-512.png
 directories:
   output: release
 win:
@@ -19,3 +21,7 @@ linux:
   # Single-file AppImage, no .deb (FR-002). Linux artifacts build on Linux only (R8).
   target: AppImage
   category: Office
+  synopsis: Privacy-first, offline, on-device PDF signing
+  desktop:
+    entry:
+      Name: PDF Signer

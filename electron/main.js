@@ -29,7 +29,16 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // sandbox off so the preload can require the shell's buildmeta module (US3 surfaces). The
+      // renderer stays isolated (contextIsolation) with no Node integration; the preload injects only
+      // vanilla DOM chrome and never exposes Node to the page.
+      sandbox: false,
+      preload: path.join(__dirname, 'preload.js'),
+      // Hand the resolved data location to the preload's about surface (FR-013 disclosure).
+      additionalArguments: [
+        '--pdfsigner-data=' +
+          JSON.stringify({ mode: dataLocation.mode, path: dataLocation.userData }),
+      ],
     },
   });
   lockWindow(win);

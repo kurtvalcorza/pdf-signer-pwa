@@ -1,0 +1,111 @@
+# US4 — build, gate, and publish the portable desktop artifacts (Windows portable + Linux AppImage)
+# from ONE commit, with checksums + build-provenance attestation. Leaves ci.yml untouched (SC-008).
+#
+# The release gate is authoritative in contracts/release-artifacts.md § Release gate; this workflow
+# implements it. Any platform's gate red -> nothing publishes (SC-002): fail-fast matrix + the publish
+# job `needs:` every build leg, so a partial release is structurally impossible.
+name: release-desktop
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release
+  id-token: write # provenance attestation (Sigstore OIDC)
+  attestations: write # provenance attestation record
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true # a red platform must stop the whole release
+      matrix:
+        include:
+          - os: windows-latest
+            unpacked: 'release/win-unpacked/PDF Signer.exe'
+            artifact: 'release/*.exe'
+          - os: ubuntu-latest
+            unpacked: 'release/linux-unpacked/pdf-signer-pwa'
+            artifact: 'release/*.AppImage'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyhanko
+      - run: npm ci
+      - name: Install Linux headless deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Build desktop artifact (portable .exe / AppImage) from this commit
+        run: npm run build:desktop
+      - name: Web gates untouched (SC-008/FR-019)
+        run: npm test && npm run verify:signatures
+
+      # --- Per-distribution gate (Principle V — earns its own pass) ---
+      - name: Desktop E2E (sign -> pyHanko, portable state, layer 2, US3 surfaces) [Windows]
+        if: runner.os == 'Windows'
+        run: npx playwright test --config playwright.desktop.config.ts
+      - name: Desktop E2E [Linux, xvfb]
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npx playwright test --config playwright.desktop.config.ts
+      - name: Packaged artifact signs a pyHanko-valid PDF [Windows]
+        if: runner.os == 'Windows'
+        run: node electron/verify-packaged.mjs
+      - name: Packaged artifact signs a pyHanko-valid PDF [Linux, xvfb]
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node electron/verify-packaged.mjs
+
+      # --- Checksums + provenance for the shipped artifact ---
+      - name: SHA256SUMS
+        shell: bash
+        run: |
+          cd release
+          FILE=$(ls *.exe *.AppImage 2>/dev/null | head -1)
+          sha256sum "$FILE" > "$FILE.sha256"
+      - name: Provenance attestation (FR-018a — record in GitHub attestations API, not a release asset)
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ${{ matrix.artifact }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          path: |
+            ${{ matrix.artifact }}
+            release/*.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: build # only runs if BOTH build legs succeeded — no partial release (SC-002)
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+      # T032a — gate the required USER-FACING disclosures before publishing. The unsigned-binary
+      # warning promises a verification path and the FUSE-less fallback is the only no-root Linux path,
+      # so publishing without them is an overclaim. (Assets are gated by upload-artifact if-no-files.)
+      - name: Gate release disclosures present (FR-014/015/018a/002a)
+        run: |
+          set -e
+          D=docs/desktop.md
+          for needle in "SmartScreen" "does not update itself" "gh attestation verify" "appimage-extract-and-run" "no user content remains"; do
+            grep -qiF "$needle" "$D" || { echo "MISSING disclosure in $D: $needle"; exit 1; }
+          done
+          echo "All required disclosures present."
+      - name: Publish release with artifacts + checksums
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-artifacts/**/*
+          body_path: docs/desktop.md
+          fail_on_unmatched_files: true

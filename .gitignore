@@ -39,3 +39,6 @@ tests/signing/tampered/
 
 # Electron packaging output
 release/
+
+# Generated build metadata (injected at build:desktop time)
+electron/build-info.json

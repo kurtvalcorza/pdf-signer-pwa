@@ -16,7 +16,7 @@
     "e2e": "playwright test",
     "e2e:pwa": "npm run build && playwright test --config playwright.pwa.config.ts",
     "e2e:desktop": "npm run build && playwright test --config playwright.desktop.config.ts",
-    "build:desktop": "npm run build && electron-builder --config electron-builder.yml",
+    "build:desktop": "npm run build && node scripts/gen-build-info.mjs && electron-builder --config electron-builder.yml",
     "icons": "node scripts/make-icons.mjs",
     "verify:signatures": "node scripts/verify-signatures.mjs",
     "perf": "npm run build && playwright test --config playwright.perf.config.ts"
