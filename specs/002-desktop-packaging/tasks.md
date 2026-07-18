@@ -242,13 +242,22 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
 - [ ] T017 [P] [US1] `tests/e2e-desktop/desktop-readonly.spec.ts` — run from a non-writable
       directory; assert signing still works, the user is **told** persistence is unavailable, and
       nothing lands in the OS user-data dir (FR-011b).
+- [ ] T017a [P] [US1] `tests/e2e-desktop/desktop-concurrent.spec.ts` — cover the concurrent-instance
+      control specified in [spec.md](spec.md) § Edge Cases (a data-directory-scoped single-instance
+      lock, not the global app): (1) a **second copy launched from the same folder** defers to the
+      running instance and does not open a competing store; (2) **two copies in different folders run
+      independently** (distinct data dirs — complements T016); (3) a **stale lock** left by a killed
+      instance is reclaimed on next launch, not fatal. Without this the spec names a mechanism nothing
+      builds or proves, leaving the corruption/deadlock edge case unimplemented. *(Codex, PR #11.)*
 
 ### Implementation for User Story 1
 
 - [ ] T018 [US1] Add the `portable` Windows target to `electron-builder.yml` (single file, no
       installer, no registry — FR-001).
-- [ ] T019 [US1] Make T014–T017 pass. **No changes to `src/features/signing/**`** — if a failure
-      seems to demand one, the shell is wrong (FR-009).
+- [ ] T019 [US1] Make T014–T017a pass — including the **data-directory-scoped single-instance lock**
+      in the shell (`electron/` main + `electron/paths.ts`), keyed to the resolved data dir so
+      same-folder copies serialize while different-folder copies stay independent (T017a). **No changes
+      to `src/features/signing/**`** — if a failure seems to demand one, the shell is wrong (FR-009).
 - [ ] T020 [US1] Surface the read-only/ephemeral state visibly in the UI **and disable opt-in
       persistence entirely in `ephemeral` mode** — the "remember" affordances are not offered, and
       `saveCertificate`/`saveSignature` are never reached (FR-011b,
@@ -396,10 +405,17 @@ phase MUST ship with or before any public release — not as a follow-up.
       1. Layer/flow E2E: T014–T017 (Windows), T022 (Linux)
       2. pyHanko on each artifact's **own** output: T021, T025
       3. **The monitored-network gate (T031a)** — the *primary* SC-004 check
-      4. **The FUSE-less AppImage check (T023a)** — FR-002a
+      4. **The FUSE-less AppImage check (T023a)** — FR-002a — **and [Linux] the two-folder portability
+         spec run under `--appimage-extract-and-run` (T024)**: a pass under the FUSE mount does not
+         prove `electron/paths.ts` resolves state beside the *original* AppImage rather than the
+         extraction temp, and FUSE-less hosts are exactly where users hit it (Codex, PR #11)
       5. Layer-3 **source lint (T008a) AND the packaged-output dependency audit (T008b)** — T008a
          alone misses network-capable deps that actually ship
-      6. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
+      6. **The layer-5 crash/metrics assertion (network-policy.md § Verification)** — `crashReporter.start()`
+         absent from `electron/**` and the metrics-disable switches present. A *source/build-time* check
+         is required because an armed reporter with no crash during the run emits nothing, so the
+         monitored gate (item 3) cannot observe it (Codex, PR #11)
+      7. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
          on pushes to `main`, PRs, and manual dispatch, so a tag-triggered release workflow would
          **not** re-run them: this job must either run them or declare an explicit dependency on a
          successful CI run for the same SHA. *(Codex, PR #7 — verified against `ci.yml`'s triggers.)*
@@ -427,10 +443,13 @@ phase MUST ship with or before any public release — not as a follow-up.
       aggregator a green Windows leg could publish while Linux was red (the partial release SC-002
       forbids). Do **not** use `if: always()` on this job — that would let it publish on a partial
       failure, defeating the point. Before it publishes, it MUST also **gate on the US3 disclosures
-      being present** (T029 `docs/desktop.md` + the release-notes template actually contain the
-      unsigned-binary and no-self-update statements, FR-014/FR-015): those disclosures are required
-      release scope (Phase 5 checkpoint), but nothing blocked on them, so a release could ship without
-      them. A required disclosure that no job checks is a disclosure that silently goes missing.
+      AND the verification path being present**: (i) `docs/desktop.md` + the release-notes template
+      actually contain the unsigned-binary and no-self-update statements (T029, FR-014/FR-015); **and
+      (ii) they contain the pinned checksum + attestation verification command** (T034, FR-018a) — the
+      unsigned-binary disclosure *promises* a way to verify instead, so publishing the warning without
+      the verification steps is itself an overclaim (FR-014). Both are required release scope (Phase 5
+      checkpoint) that nothing previously blocked on. A required disclosure — or the verification path
+      it promises — that no job checks is one that silently goes missing. *(Codex, PR #11.)*
 - [ ] T033 [US4] Add build-provenance attestation via `actions/attest-build-provenance` (or
       `actions/attest`, which GitHub now steers new implementations toward — either satisfies
       FR-018a). Permissions: `id-token: write`, `attestations: write`, `contents: write`.

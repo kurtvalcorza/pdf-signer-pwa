@@ -453,10 +453,14 @@ test. Codex, PR #7.)*
   are **structurally equivalent** and both validate.
 - **SC-004**: The application makes **zero** network requests across its entire lifecycle, observed
   from outside the app (not merely asserted internally).
-- **SC-005**: All **user content and application state** the app writes lives in **one** directory
-  adjacent to the artifact. After running the app and deleting **the artifact and that adjacent
-  folder**, a user finds **zero** residual user content or application state anywhere on the host —
-  in particular, nothing in the operating system's per-user application-data location.
+- **SC-005**: All **user content and application state** the app writes in normal (writable-adjacent)
+  operation lives in **one** directory adjacent to the artifact. After running the app and deleting
+  **the artifact and that adjacent folder**, a user finds **zero residual user content** anywhere on
+  the host — in particular, nothing in the operating system's per-user application-data location. The
+  guarantee is stated for **user content** because the three caveats below admit bounded
+  **non-user-content** residue (extracted program files, ephemeral engine cache) that a crash can
+  leave *outside* the adjacent folder — never a document, certificate, or signature. Release copy and
+  acceptance tests MUST assert the user-content promise, not an unqualified "zero application state".
   **Three scoping caveats, all disclosed rather than glossed** (Principle IV):
   (a) **program-file extraction residue** — the Windows portable target extracts **its own program
   files** to a temp directory while running and removes them on exit; the Linux AppImage under the

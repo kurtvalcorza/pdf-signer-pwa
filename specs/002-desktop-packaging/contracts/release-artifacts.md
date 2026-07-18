@@ -47,7 +47,8 @@ build (per platform)
    │           └─> scripts/validate_pdf.py  (pyHanko)                    [FR-010]
    ├─> layer E2E: CSP alive + bypassCSP absent + layer 2 + blob:         [Principle I]
    ├─> MONITORED-NETWORK run: live-but-intercepted network, launch→sign→
-   │     idle→quit; FAIL on any DNS/TCP/HTTP attempt                     [SC-004, primary]
+   │     idle→quit; FAIL on ANY egress — any packet/socket, any protocol
+   │     (TCP/UDP/ICMP/DNS/QUIC), by name or numeric IP. NOT a protocol list [SC-004, primary]
    ├─> layer-3 lint + packaged dependency audit                          [no Node HTTP client]
    ├─> portable-state check (two folders) + read-only degradation        [FR-011a/b]
    └─> [Linux] FUSE-less host via extract-and-run fallback               [FR-002a]
