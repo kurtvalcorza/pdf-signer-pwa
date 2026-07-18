@@ -42,6 +42,12 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       `dependencies` — a runtime dep would leak the shell into the web bundle, FR-019/R9). Add
       scripts: `build:desktop`, `e2e:desktop`. **Do NOT add `electron-updater`** — FR-007 is
       satisfied by its absence, which is stronger than any configuration flag (R4).
+      **⚠ Protect the web deploy**: set `ELECTRON_SKIP_BINARY_DOWNLOAD=1` in the Vercel project's
+      build environment. `electron`'s postinstall otherwise downloads a ~150 MB platform binary during
+      Vercel's `npm install`, bloating and occasionally flaking the deploy — and Vercel only ever
+      *builds* the web app (`npm run build`), never *runs* Electron, so the binary is pure waste there.
+      The bundle itself is unaffected (nothing in `src/` imports `electron`; `electron-builder` is
+      never invoked in the web build), so this is a build-time guard, not a code change.
 - [ ] T002 [P] Create `tsconfig.electron.json` compiling `electron/**` for the Electron main
       process, excluded from the web `tsconfig.json` so the two graphs cannot silently merge.
       **⚠ The root `package.json` declares `"type": "module"` (line 5).** A plain CommonJS emit
@@ -113,8 +119,14 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       wrongly claimed it was. *(Codex, PR #7.)*
 - [ ] T008a [P] Add the **layer-3 Node-network prohibition** for `electron/**`, in two parts —
       **the first alone is not sufficient**:
-      1. `eslint` `no-restricted-imports` / `no-restricted-globals` banning `node:http`,
-         `node:https`, `node:net`, `node:dgram`, `node:tls` and global `fetch`.
+      1. `eslint` `no-restricted-imports` / `no-restricted-globals` / `no-restricted-syntax` encoding
+         **every concrete ban enumerated in
+         [contracts/network-policy.md](contracts/network-policy.md) § rules** — not a paraphrase:
+         builtins `node:http`, `node:https`, `node:net`, `node:dgram`, `node:tls`; the two
+         network-capable **`electron` named exports** `net` and `autoUpdater` (banned by import *and*
+         property access — `autoUpdater` needs no `electron-updater` package, so it slips the FR-007
+         guard); and the import-less **globals** `fetch`, `WebSocket`, `XMLHttpRequest`, `EventSource`
+         (a `new WebSocket('wss://…')` has nothing to import, so only a global/syntax rule catches it).
       2. An **import allow-list** for `electron/**`: only `electron`, `node:path`, `node:fs`,
          `node:os`, `node:url` (and other explicitly-approved, non-network builtins) may be imported.
          Any package import is a lint error unless added to the allow-list by name.
@@ -293,6 +305,11 @@ complete a sign, validate with pyHanko.
       an overclaim I introduced while fixing the FUSE finding itself.)*
 - [ ] T024 [US2] Verify `electron/paths.ts` resolves via `APPIMAGE` on a real AppImage (the mount
       path differs from the file path — R3), and make T022 pass.
+      **Also run the two-folder portability spec (T016) under `--appimage-extract-and-run`**, not only
+      the default FUSE-mounted launch: extract-and-run unpacks the squashfs to a *different* temp
+      location, and `APPIMAGE` must still point at the original file so the data folder lands beside
+      it — never in the extraction temp. A pass under FUSE does not prove the fallback path, and
+      FUSE-less hosts (T023a) are exactly where users hit it.
 - [ ] T025 [US2] Run the pyHanko gate (`scripts/validate_pdf.py` via `npm run verify:signatures`)
       against the PDF produced by the **AppImage** in T022 (FR-010).
 
@@ -320,11 +337,12 @@ present, accurate, and stated without euphemism.
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Implement the staleness nudge in `src/components/StalenessNotice.tsx` (threshold
-      constant + `isStale` derivation in `src/lib/buildMetadata.ts`, rendered from `src/App.tsx`) —
-      passive, **non-blocking** notice once `ageInDays > STALENESS_THRESHOLD_DAYS` (**180**, a named
-      constant — R6). Local clock comparison only; it MUST NOT regress into an update check
-      (FR-006/007).
+- [ ] T027 [US3] Implement the staleness nudge as a **desktop-only** notice module (using the shared,
+      inert `isStale` derivation + `STALENESS_THRESHOLD_DAYS` constant in `src/lib/buildMetadata.ts`),
+      included **only in the desktop renderer build and never imported by shared `src/App.tsx`**
+      (FR-019a) — passive, **non-blocking** notice once `ageInDays > STALENESS_THRESHOLD_DAYS`
+      (**180**, a named constant — R6). Local clock comparison only; it MUST NOT regress into an update
+      check (FR-006/007).
       **⚠ MUST NOT reach the web build at all (FR-019a).** Only a distribution that **bundles its own
       engine** ships a frozen one — the web PWA runs the user's own browser, which updates itself. If
       the notice rendered unguarded from shared `App.tsx`, the web app would, 180 days after any
@@ -387,18 +405,32 @@ phase MUST ship with or before any public release — not as a follow-up.
          successful CI run for the same SHA. *(Codex, PR #7 — verified against `ci.yml`'s triggers.)*
 
       **If any platform's gate is red, nothing publishes** — no partial releases (SC-002,
-      contracts/release-artifacts.md).
+      contracts/release-artifacts.md). This is **enforced by the aggregation job T032a**, not by hope:
+      each matrix leg gates only its *own* platform and cannot see the other's result.
       *(Amended after Codex round 2: this listed only items 1–2, so CI could have published while
       never running the contract's primary SC-004 check or the FUSE-less check — the two gates added
       in round 1 landed in the contract and quickstart but never reached the task that enforces
       them. A gate that isn't in the release job is a comment.)*
 - [ ] T031a [US4] Implement the **monitored-network gate**: run each packaged artifact with
-      networking **available but intercepted** (firewall/proxy/packet capture) across launch → sign →
-      idle → quit, and **fail the build on any DNS query or TCP/HTTP attempt**, successful or not
-      (SC-004, contracts/network-policy.md § Verification).
+      networking **available but intercepted** (firewall/proxy/packet capture over the whole app
+      process tree) across launch → sign → idle → quit, and **fail the build on ANY outbound packet or
+      socket, on any protocol, to any destination** — TCP, **UDP**, ICMP, raw sockets, DNS, QUIC,
+      resolved by name or numeric IP. **Not a `DNS`/`TCP`/`HTTP` allow-list** — that is the protocol
+      hole network-policy.md § Verification closes as a release blocker (a main-process `node:dgram`
+      UDP send to a numeric IP touches none of those and exfiltrates anyway) (SC-004).
       The offline run (T014's environment) proves the app *works* without a network; only this proves
       it *never reaches for one*.
 - [ ] T032 [US4] Generate and publish `SHA256SUMS` per artifact (FR-017).
+- [ ] T032a [US4] Add a single **publish/aggregation job** that `needs:` **every** matrix leg and
+      **all** blocking gates (T031 per platform, T031a) so publishing is one job that runs **only when
+      all legs succeeded** — the matrix legs run per-platform and cannot see each other, so without an
+      aggregator a green Windows leg could publish while Linux was red (the partial release SC-002
+      forbids). Do **not** use `if: always()` on this job — that would let it publish on a partial
+      failure, defeating the point. Before it publishes, it MUST also **gate on the US3 disclosures
+      being present** (T029 `docs/desktop.md` + the release-notes template actually contain the
+      unsigned-binary and no-self-update statements, FR-014/FR-015): those disclosures are required
+      release scope (Phase 5 checkpoint), but nothing blocked on them, so a release could ship without
+      them. A required disclosure that no job checks is a disclosure that silently goes missing.
 - [ ] T033 [US4] Add build-provenance attestation via `actions/attest-build-provenance` (or
       `actions/attest`, which GitHub now steers new implementations toward — either satisfies
       FR-018a). Permissions: `id-token: write`, `attestations: write`, `contents: write`.
@@ -431,7 +463,10 @@ phase MUST ship with or before any public release — not as a follow-up.
       npm run verify:signatures && npm run e2e && npm run e2e:pwa` all green **and unmodified**
       (SC-008/FR-019). If any needed editing to accommodate packaging, **fix the packaging, not the
       test**. Additionally assert the **web bundle contains no desktop-only code** — grep the built
-      `dist/` for the staleness notice and any `electron` import (FR-019a).
+      `dist/` for **every desktop-only surface** (the staleness notice **and the about/info surface**,
+      T027/T028) and any `electron` import (FR-019a). The check is about the *surface*, not one string:
+      any module the desktop build adds must be absent from the web `dist/`, or FR-019a is breached by
+      the next desktop-only addition that nobody remembered to grep for.
       Note FR-019 is a **behavioural** guarantee, not byte-identity: the inert build-date metadata
       (T011) does change the bundle's bytes, which is why the requirement was reworded rather than
       pretended-at.

@@ -42,7 +42,10 @@ behind.
 > imply otherwise.
 
 This feature deliberately adds **no new user-facing signing behaviour**. Every existing capability
-(visual stamp, PKCS#12 signing, in-app certificate generation, counter-signing) behaves identically.
+(placing a visible signature on the page, PKCS#12 signing, in-app certificate generation,
+counter-signing) behaves identically. *(Not "visual stamp": since 001's cert-only amendment the visible
+image is the **appearance of a signature**, not a standalone stamp-only output — see
+`specs/001-pdf-signer/spec.md` § Amendment.)*
 
 ## Clarifications
 
@@ -266,7 +269,13 @@ test. Codex, PR #7.)*
   still deferred to the web behaviour after the mechanism was corrected everywhere else — and sitting
   in the authoritative spec, it could justify a relocate-only implementation. Codex, PR #7.)*
 - **A second copy launched while one is running**: two instances of a portable app must not corrupt
-  each other's opt-in store or deadlock over it.
+  each other's opt-in store or deadlock over it. **Control**: a single-instance lock **scoped to the
+  resolved data directory** (a lockfile in that folder), NOT the global app — so (a) a second copy
+  launched from the **same** folder defers to the running instance rather than opening a competing
+  store, while (b) copies in **different** folders resolve to different data directories and run fully
+  independently (SC-011 — the two-folder guarantee). The lock releases on quit, and a **stale lock
+  left by a crash must not permanently block launch** (it is reclaimed, not fatal). *(Named because
+  stating "must not corrupt or deadlock" without a mechanism is a claim outrunning its enforcement.)*
 - **The user saves a signed file to a path that no longer exists** (unplugged USB): must fail with a
   recoverable message, never with silent loss of the signed bytes.
 - **Antivirus quarantines the unsigned binary mid-run**: outside the app's control, but the failure
@@ -448,17 +457,25 @@ test. Codex, PR #7.)*
   adjacent to the artifact. After running the app and deleting **the artifact and that adjacent
   folder**, a user finds **zero** residual user content or application state anywhere on the host —
   in particular, nothing in the operating system's per-user application-data location.
-  **Two scoping caveats, both disclosed rather than glossed** (Principle IV):
-  (a) the Windows portable target extracts **its own program files** to a temp directory while
-  running and removes them on exit — a hard crash can leave them, and they are program code, never
-  user content;
-  (b) OS-controlled traces of having run an executable (prefetch, execution history, antivirus
+  **Three scoping caveats, all disclosed rather than glossed** (Principle IV):
+  (a) **program-file extraction residue** — the Windows portable target extracts **its own program
+  files** to a temp directory while running and removes them on exit; the Linux AppImage under the
+  FUSE-less `--appimage-extract-and-run` fallback (FR-002a) likewise unpacks its squashfs to a
+  working directory that can **persist** after exit. Both are **program code, never user content**,
+  and a hard crash (or the extract-and-run path) can leave them;
+  (b) **ephemeral `userData`** — when the adjacent directory is read-only, Electron is pointed at a
+  throwaway temp `userData` for its own engine cache. Opt-in persistence is **disabled, not relocated**
+  (portable-paths.md), so this holds **no user content**; it is removed on quit, and a crash can leave
+  engine cache there — again never a `.p12` or document;
+  (c) OS-controlled traces of having run an executable (prefetch, execution history, antivirus
   records, shell MRU) are outside any application's reach. **This is a privacy tool, not an
   anti-forensics tool.**
-  *(Amended 2026-07-17, twice. The original promised zero residue after deleting **the binary alone**
-  — false, since a bundled engine writes cache files into its data directory every launch. The
-  corrected version still said "zero residual **application data**" unqualified, which the
-  portable-paths contract's own temp-extraction caveat contradicts. Codex, PR #7.)*
+  *(Amended 2026-07-17, twice, then 2026-07-18 for the ephemeral and Linux extract-and-run cases. The
+  original promised zero residue after deleting **the binary alone** — false, since a bundled engine
+  writes cache files into its data directory every launch. The next version said "zero residual
+  **application data**" unqualified, which the portable-paths temp-extraction caveat contradicts; and
+  it covered only the Windows extraction, omitting the Linux extract-and-run residue and the read-only
+  ephemeral `userData`. Codex, PR #7.)*
 - **SC-006**: A user encountering a first-run security warning can find an accurate explanation of
   why it appears in **under 1 minute**, without contacting the author.
 - **SC-007**: A user can independently verify a downloaded binary's build provenance — confirming

@@ -15,7 +15,7 @@ looks fine and violates a NON-NEGOTIABLE principle silently.
 **Rationale**: Principle V (as amended in v1.1.0) now says explicitly that validator evidence is
 per-distribution and **cannot be inherited by assertion**, and that a distribution on a different
 engine "MUST earn its own passing gate". Both options must therefore run the pyHanko gate. The
-difference is what happens when it *fails*: on Electron the engine matches what the 78 existing unit
+difference is what happens when it *fails*: on Electron the engine matches what the 83 existing unit
 tests and the Playwright suite already validate, so a failure is a real bug; on Tauri (WebKitGTK on
 Linux) a failure could be an engine gap in `canvas`, `crypto.getRandomValues`, WASM, or PDF
 rendering, each needing separate diagnosis and possibly a per-engine workaround inside the signing
@@ -33,6 +33,13 @@ That was a *Chromium-to-Chromium* difference. A Chromium-to-WebKit difference is
   user complaint; revisiting means re-earning the Principle V gate on WebKitGTK first.
 - **Neutralino / system webview via Go/C#** — same engine-divergence problem as Tauri, smaller
   ecosystem, no gain.
+- **Python shell (pywebview + PyInstaller)** — proposed for its small binary, but it is the **Tauri
+  trade-off with a Python host**: pywebview renders in the OS webview (WebView2 on Windows,
+  **WebKitGTK on Linux**), so it inherits R1's whole engine-divergence problem and forfeits the
+  single controlled Chromium engine the per-distribution Principle V evidence depends on. It also
+  removes the ability to reason about engine age, which the FR-015a staleness nudge assumes. Doing
+  the *signing* in Python (pyHanko as signer, not validator) is a separate non-starter: FR-009
+  forbids a second/divergent signing implementation and Principle I forbids a server. Rejected.
 - **PWA install only (status quo)** — already works and remains the primary distribution, but does
   not satisfy the "single file, no URL, air-gapped machine" use case that motivates this feature.
 
@@ -280,7 +287,7 @@ main/preload entry points and a separate build script. `vite.config.ts` gains at
 - Electron and `electron-builder` are **devDependencies** — they must never enter the web bundle.
 - The desktop main/preload live outside `src/` (see plan's Structure Decision) so the web build's
   module graph is untouched.
-- The existing web gates (`npm run build`, 78 unit tests, `verify:signatures`, Playwright, PWA E2E)
+- The existing web gates (`npm run build`, 83 unit tests, `verify:signatures`, Playwright, PWA E2E)
   must stay green and unmodified; SC-008 is measured by exactly that.
 
 ---

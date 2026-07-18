@@ -32,7 +32,7 @@ satisfied by absence, not configuration).
 **Storage**: IndexedDB via `idb-keyval`, unchanged — relocated by pointing Electron's `userData` at a
 directory adjacent to the artifact (R3). No new persistence code.
 
-**Testing**: Vitest (78 existing unit tests, unchanged); Playwright for the desktop E2E via
+**Testing**: Vitest (83 existing unit tests, unchanged); Playwright for the desktop E2E via
 `_electron.launch({ executablePath })` against the **packaged** binary (R7); `scripts/validate_pdf.py`
 (pyHanko) as the release gate on desktop-produced output.
 
@@ -183,6 +183,19 @@ from `src/` fails the web build rather than silently shipping.
 The rule to hold the line on: **`electron/` may know about the web app; the web app must not know
 about `electron/`.**
 
+**Same repository, not a separate one** (decision recorded 2026-07-18). The desktop shell lives in
+this repo, not a spun-off one, because the entire correctness argument rests on **one shared signing
+engine**: the desktop build compiles the *same* `src/features/signing/**` into the *same* renderer
+bundle, so the shared engine is a structural fact, not a version pin. A separate repo would make
+"shared" mean "shared by whatever version was last pulled in" — precisely the *inherited-by-assertion*
+failure Principle V (v1.1.0) forbids — and would turn the release contract's "both artifacts from one
+commit" into a cross-repo coordination problem that drifts silently (e.g. a signing fix landing on web
+but not yet on desktop). The isolation a split would buy already exists structurally (devDependency +
+`tsconfig.electron.json` + the lint boundary above), so a split adds coordination cost for no
+containment gain. The one real concern it appears to solve — Electron heaviness polluting the web
+deploy — is handled by `ELECTRON_SKIP_BINARY_DOWNLOAD=1` on the deploy runner (T001); nothing in
+`src/` imports `electron`, so the web bundle is unaffected and `electron-builder` never runs there.
+
 `src/` changes are **limited to this list** — all outside the signing path (FR-009), none importing
 from `electron/`:
 
@@ -190,8 +203,8 @@ from `electron/`:
 |---|---|---|
 | Service-worker registration flag (`src/main.tsx`) | off by default; desktop skips the SW | R5 |
 | Read injected build/engine metadata (`src/lib/buildMetadata.ts`) | version, build date, engine age | R6, FR-015 |
-| Staleness notice (`src/components/StalenessNotice.tsx`) | **desktop-only module the web build never imports** | FR-015a, **FR-019a** |
-| About/info surface | version, engine, commit, no-self-update, data location | FR-013, FR-015 |
+| Staleness notice (desktop-only renderer module) | included **only in the desktop build; never imported by `src/App.tsx`** | FR-015a, **FR-019a** |
+| About/info surface (**desktop-only**, same isolation as the notice) | version, engine, commit, no-self-update, data location | FR-013, FR-015, **FR-019a** |
 | Disable "remember" affordances in `ephemeral` mode | memory-only enforced by not writing | FR-011b |
 
 **`src/features/signing/**` — zero diff** (FR-009, Principle III). T039 checks this.
