@@ -68,7 +68,8 @@ try {
     throw new Error('packaged artifact produced no signed PDF');
   }
   console.log(`[pkg] signed PDF: ${saved} (${statSync(saved).size} bytes)`);
-  const out = execFileSync('python', [resolve(ROOT, 'scripts/validate_pdf.py'), saved], { encoding: 'utf8' });
+  const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  const out = execFileSync(python, [resolve(ROOT, 'scripts/validate_pdf.py'), saved], { encoding: 'utf8' });
   if (!out.includes('RESULT: PASS')) throw new Error('pyHanko did not PASS:\n' + out);
   console.log('[pkg] pyHanko RESULT: PASS — packaged artifact signs a valid PDF.');
 } catch (e) {

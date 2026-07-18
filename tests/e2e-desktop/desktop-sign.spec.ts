@@ -63,8 +63,10 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
     expect(saved, 'a signed PDF was downloaded').toBeTruthy();
     expect(existsSync(saved!) && statSync(saved!).size > 0).toBe(true);
 
-    // FR-010 gate — pyHanko must validate THIS artifact's output.
-    const out = execFileSync('python', [resolve(ROOT, 'scripts/validate_pdf.py'), saved!], {
+    // FR-010 gate — pyHanko must validate THIS artifact's output. PYTHON env for cross-platform
+    // (Windows: `python`; Linux/CI: `python3` or a venv path).
+    const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+    const out = execFileSync(python, [resolve(ROOT, 'scripts/validate_pdf.py'), saved!], {
       cwd: ROOT,
       encoding: 'utf8',
     });
