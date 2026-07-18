@@ -216,6 +216,14 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
          advisory" while **no task asserted it** — T015 didn't list it and T031 gates T014–T017, so an
          implementation could serve files outside `dist/` and pass the release gate. A claim
          outrunning its mechanism, written into the fix for that exact pattern.)*
+      6. **`shell.openExternal` reachable ONLY by the exact repo URL** — assert the "View source on
+         GitHub" control invokes `openExternal` with the exact compile-time repo URL, and that **no
+         other URL** (a runtime-assembled string, or any other `https:` URL) can reach `openExternal`.
+         This is the release-gate assertion the contract maps here; without it a widened "any https"
+         carve-out — a general-purpose exfiltration primitive — would pass every listed E2E gate.
+         See [contracts/network-policy.md](contracts/network-policy.md) § Verification / Carve-out.
+         *(Codex, PR #11: `openExternal` appeared only in implementation notes, so the mapped E2E ran
+         without it.)*
 
       > **Steps 1 and 2 prove DIFFERENT things — neither substitutes for the other.**
       > `bypassCSP` is **scheme- and resource-scoped**: it exempts resources *served over `app:`* from
@@ -343,6 +351,15 @@ present, accurate, and stated without euphemism.
       client reachable** from the code path (FR-015a); and assert the notice is
       **never shown when `distribution === 'web'`**, however old the build (guards T027's regression
       — this is the assertion that keeps the web app from lying).
+- [ ] T026a [P] [US3] `tests/e2e-desktop/desktop-us3.spec.ts` — the **packaged-app** surface test that
+      T031 item 7 gates on (T026 is a *unit* test of `isStale`; it does not drive the running artifact,
+      so it cannot satisfy the gate on its own). Launch the packaged binary and assert: (1) the
+      about/no-self-update surface (T028) renders **unconditionally**; (2) under an **injected
+      stale-metadata fixture/override** (an `engineDate` past the threshold — the mechanism this task
+      *creates*), the staleness notice (T027) renders; (3) a **fresh** metadata fixture shows **no**
+      notice (the fresh-build case that must not fail the release); (4) **zero network** throughout. Add
+      the corresponding entry to `playwright.desktop.config.ts` so it runs for both artifacts.
+      *(Codex/Claude, PR #11: the gate required a stale-metadata fixture that no task built.)*
 
 ### Implementation for User Story 3
 
@@ -381,8 +398,13 @@ present, accurate, and stated without euphemism.
 - [ ] T029 [P] [US3] Write `docs/desktop.md` — the unsigned-binary disclosure: what SmartScreen shows
       (*"Windows protected your PC"* → **More info → Run anyway**), `chmod +x` on Linux, and how to
       verify instead. Must state plainly that **an attestation is not a code-signing certificate and
-      does not remove the warning** (contracts/release-artifacts.md). Also record the honest temp-
-      extraction caveat (R3): "leaves absolutely nothing, ever" is **not** an accurate claim.
+      does not remove the warning** (contracts/release-artifacts.md). Record the **full SC-005 residue
+      story**, not just the Windows temp extraction: (a) Windows portable temp-extracted program files;
+      (b) the **read-only-media ephemeral `userData` engine cache** (a crash can leave it in temp); and
+      (c) Linux `--appimage-extract-and-run` extracted files. "Leaves absolutely nothing, ever" is
+      **not** an accurate claim; the honest promise is **no user content** remains after deleting the
+      artifact and adjacent folder. *(Codex, PR #11: the ephemeral read-only case was admitted in
+      SC-005 but never reached the user-facing docs, leaving users the old "delete the folder" model.)*
 
 **Checkpoint**: The binaries describe themselves honestly. Per the constitution's honesty gate, this
 phase MUST ship with or before any public release — not as a follow-up.
@@ -417,9 +439,10 @@ phase MUST ship with or before any public release — not as a follow-up.
          absent from `electron/**` and the metrics-disable switches present. A *source/build-time* check
          is required because an armed reporter with no crash during the run emits nothing, so the
          monitored gate (item 3) cannot observe it (Codex, PR #11)
-      7. **Packaged US3 surfaces render in the RUNNING app** (not a doc scan; a build could omit
-         T027/T028 and still pass a text check) — assert the about/no-self-update surface (T028)
-         **unconditionally**, and the staleness notice (T027) **under a stale-metadata fixture/override**.
+      7. **Packaged US3 surfaces render in the RUNNING app** (**T026a**, per platform; not a doc scan —
+         a build could omit T027/T028 and still pass a text check) — assert the about/no-self-update
+         surface (T028) **unconditionally**, and the staleness notice (T027) **under a stale-metadata
+         fixture/override**.
          The notice only renders once the engine age exceeds the threshold (FR-015a), so gating on it
          unconditionally would fail a legitimately-fresh release — or pressure the app to show an ageing
          warning that is false. Test the *capability* with stale metadata, not the fresh build's silence
@@ -459,13 +482,20 @@ phase MUST ship with or before any public release — not as a follow-up.
       the required text AND the existence of the assets that text refers to** — instructions without
       artifacts are as useless as artifacts without instructions:
       (i) `docs/desktop.md` + the release-notes template contain the **unsigned-binary**,
-          **no-self-update**, pinned **checksum + attestation verification command**, and the
-          **`--appimage-extract-and-run` fallback** text (T029/T034, FR-014/015/018a/002a — the
+          **no-self-update**, pinned **checksum + attestation verification command**, the
+          **`--appimage-extract-and-run` fallback** text, and the **SC-005 residue caveat** (the honest
+          "no user content" scope incl. the read-only ephemeral cache and extract-and-run cases — no
+          unqualified "nothing remains") (T029/T034, FR-014/015/018a/002a — the
           FUSE-less fallback is the *only* usable no-root path on such hosts, so omitting it ships an
           AppImage many users cannot launch);
-      (ii) the actual **`SHA256SUMS` and provenance-attestation assets were produced** (T032/T033
-          succeeded) and are attached — a release with correct instructions but no checksum/attestation
-          asset makes the FR-014/FR-018a mitigation unusable while the job is green.
+      (ii) the actual verification artifacts exist for *this* release: the **`SHA256SUMS` asset is
+          attached** (T032), **and** the **provenance attestation is recorded and verifiable** — `gh
+          attestation verify <artifact> --repo …` succeeds (T033). Note `actions/attest-build-provenance`
+          uploads the attestation to GitHub's **attestations API, not as a release asset**, so gate on
+          the *verifiable record*, NOT an attached bundle file (requiring an attached asset would fail a
+          valid attested release). Instructions without artifacts are as useless as artifacts without
+          instructions — a green job with neither leaves the FR-014/FR-018a mitigation unusable.
+          *(Codex, PR #11.)*
       (US3 *packaged-app* surfaces are covered by T031 item 7, on which this job `needs:`.)
       A required disclosure, the assets it points at, or the surface it promises — that no job checks is
       one that silently goes missing. *(Codex, PR #11.)*
