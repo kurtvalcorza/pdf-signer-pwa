@@ -78,10 +78,17 @@ try {
     throw new Error('packaged artifact produced no signed PDF');
   }
   console.log(`[pkg] signed PDF: ${saved} (${statSync(saved).size} bytes)`);
-  const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
-  const out = execFileSync(python, [resolve(ROOT, 'scripts/validate_pdf.py'), saved], { encoding: 'utf8' });
-  if (!out.includes('RESULT: PASS')) throw new Error('pyHanko did not PASS:\n' + out);
-  console.log('[pkg] pyHanko RESULT: PASS — packaged artifact signs a valid PDF.');
+  // The no-egress gate runs this inside a network namespace with no route out — pyHanko validation
+  // is irrelevant there (and could itself attempt network, polluting the egress measurement). Skip it
+  // for that run; a separate gate validates the same artifact with the network available.
+  if (process.env.PDFSIGNER_SKIP_VALIDATE === '1') {
+    console.log('[pkg] launch+sign OK (pyHanko validation skipped for the no-egress run).');
+  } else {
+    const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+    const out = execFileSync(python, [resolve(ROOT, 'scripts/validate_pdf.py'), saved], { encoding: 'utf8' });
+    if (!out.includes('RESULT: PASS')) throw new Error('pyHanko did not PASS:\n' + out);
+    console.log('[pkg] pyHanko RESULT: PASS — packaged artifact signs a valid PDF.');
+  }
 } catch (e) {
   failed = e;
 } finally {

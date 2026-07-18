@@ -99,8 +99,11 @@ jobs:
           sleep 2
           # Same APPIMAGE data-location branch as the signing gate above, for consistency.
           APPIMAGE_PATH=$(ls release/*.AppImage | head -1)
+          # Skip pyHanko here: this run's job is egress monitoring, and pyHanko validation (a) needs a
+          # network and (b) could itself emit traffic and pollute the capture. The artifact's signature
+          # is validated in the step above, with the network available.
           sudo ip netns exec appns su "$USER" -c \
-            "PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE='$APPIMAGE_PATH' ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs"
+            "PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE='$APPIMAGE_PATH' PDFSIGNER_SKIP_VALIDATE=1 ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs"
           sleep 2
           # Stop the capture cleanly (SIGINT makes tcpdump flush + exit) BEFORE reading the pcap.
           sudo pkill -INT -f 'tcpdump.*egress.pcap' || true
