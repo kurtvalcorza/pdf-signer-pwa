@@ -70,6 +70,10 @@ jobs:
       # SC-004 no-egress gate (network-namespace method, contracts/release-artifacts.md § Verification):
       # run the packaged app with a monitored dummy default route and NO real network, capturing on the
       # namespace's interface. Fail on ANY captured packet over the whole app process tree.
+      #
+      # ⚠ KNOWN GAP (explicit, not implicit): this runs on LINUX only. An equivalent Windows egress gate
+      # (WFP/pktmon) is a follow-up — the Windows leg's no-egress guarantee currently rests on the
+      # layer-3 import lint + the offline behaviour, not a packet-level capture. Tracked in issue #12.
       - name: No-egress gate — packet capture over the app process tree (SC-004) [Linux]
         if: runner.os == 'Linux'
         run: |
@@ -92,13 +96,15 @@ jobs:
           test "$COUNT" -eq 0
 
       # --- Checksums + provenance for the shipped artifact ---
-      - name: SHA256SUMS
+      # PER-PLATFORM name so the two matrix legs don't both upload a file literally named SHA256SUMS
+      # (GitHub release assets must be uniquely named — a collision would fail publish AFTER one leg's
+      # assets are attached = a partial release). The publish job MERGES these into one SHA256SUMS.
+      - name: Per-platform checksum
         shell: bash
         run: |
           cd release
           FILE=$(ls *.exe *.AppImage 2>/dev/null | head -1)
-          # Named exactly as docs/desktop.md tells users to verify: `sha256sum -c SHA256SUMS`.
-          sha256sum "$FILE" > SHA256SUMS
+          sha256sum "$FILE" > "SHA256SUMS-${{ runner.os }}"
       - name: Provenance attestation (FR-018a — record in GitHub attestations API, not a release asset)
         uses: actions/attest-build-provenance@v1
         with:
@@ -108,7 +114,7 @@ jobs:
           name: desktop-${{ runner.os }}
           path: |
             ${{ matrix.artifact }}
-            release/SHA256SUMS
+            release/SHA256SUMS-${{ runner.os }}
           if-no-files-found: error
 
   publish:
@@ -133,9 +139,18 @@ jobs:
             grep -qiF "$needle" "$D" || { echo "MISSING disclosure in $D: $needle"; exit 1; }
           done
           echo "All required disclosures present."
+      # Merge the per-platform checksums into ONE SHA256SUMS (what docs/desktop.md tells users to
+      # `sha256sum -c`), and stage the artifacts under unique names for the release.
+      - name: Assemble release files
+        run: |
+          set -e
+          mkdir -p out
+          cat dist-artifacts/**/SHA256SUMS-* > out/SHA256SUMS
+          find dist-artifacts -type f \( -name '*.exe' -o -name '*.AppImage' \) -exec cp {} out/ \;
+          echo "--- SHA256SUMS ---"; cat out/SHA256SUMS
       - name: Publish release with artifacts + checksums
         uses: softprops/action-gh-release@v2
         with:
-          files: dist-artifacts/**/*
+          files: out/*
           body_path: docs/desktop.md
           fail_on_unmatched_files: true

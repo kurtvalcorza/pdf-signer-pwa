@@ -62,6 +62,30 @@ test('US3: the about / no-self-update surface renders unconditionally', async ()
   }
 });
 
+test('instance lock: a graceful quit releases it, so relaunch from the same folder works', async () => {
+  const portableDir = mkdtempSync(join(tmpdir(), 'lock-e2e-'));
+  const launch = () =>
+    electron.launch({
+      args: [MAIN],
+      cwd: ROOT,
+      env: { ...process.env, PDFSIGNER_HEADLESS: '1', PORTABLE_EXECUTABLE_DIR: portableDir },
+    });
+  try {
+    const a = await launch();
+    await (await a.firstWindow()).waitForLoadState('domcontentloaded');
+    await a.close(); // will-quit → instanceLock.release()
+
+    // Second launch in the SAME folder must open a window — if release() had not run, the stale
+    // lock could (on PID reuse) make this defer and never show a window.
+    const b = await launch();
+    const win = await b.firstWindow();
+    await expect(win).toHaveTitle(/PDF Signer/);
+    await b.close();
+  } finally {
+    rmSync(portableDir, { recursive: true, force: true });
+  }
+});
+
 test('FR-011b: read-only media disables opt-in persistence and tells the user', async () => {
   const app = await electron.launch({
     args: [MAIN],

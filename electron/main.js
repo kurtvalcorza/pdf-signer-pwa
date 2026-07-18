@@ -93,8 +93,12 @@ app.whenReady().then(() => {
   });
 });
 
-// Ephemeral (read-only media): remove the throwaway userData on quit — leftovers are a bug (FR-011b).
 app.on('will-quit', () => {
+  // Release the single-instance lock so a graceful quit doesn't leave a lockfile with our (now
+  // exited) PID — a coincidental PID reuse could otherwise make the next launch think a live
+  // instance still owns the folder. (The stale-reclaim path is the backstop, not a substitute.)
+  instanceLock.release();
+  // Ephemeral (read-only media): remove the throwaway userData on quit — leftovers are a bug (FR-011b).
   if (dataLocation.mode === 'ephemeral' && dataLocation.userData) {
     try {
       fs.rmSync(dataLocation.userData, { recursive: true, force: true });
