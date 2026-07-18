@@ -417,10 +417,13 @@ phase MUST ship with or before any public release — not as a follow-up.
          absent from `electron/**` and the metrics-disable switches present. A *source/build-time* check
          is required because an armed reporter with no crash during the run emits nothing, so the
          monitored gate (item 3) cannot observe it (Codex, PR #11)
-      7. **Packaged US3 surfaces present in the RUNNING app** — assert the staleness notice (T027) and
-         the about/no-self-update surface (T028) actually render in the *packaged* artifact, not merely
-         that docs contain the phrases. A build could omit T027/T028 and still pass a text scan; FR-015/
-         FR-015a require the app itself to disclose (Codex, PR #11)
+      7. **Packaged US3 surfaces render in the RUNNING app** (not a doc scan; a build could omit
+         T027/T028 and still pass a text check) — assert the about/no-self-update surface (T028)
+         **unconditionally**, and the staleness notice (T027) **under a stale-metadata fixture/override**.
+         The notice only renders once the engine age exceeds the threshold (FR-015a), so gating on it
+         unconditionally would fail a legitimately-fresh release — or pressure the app to show an ageing
+         warning that is false. Test the *capability* with stale metadata, not the fresh build's silence
+         (Codex, PR #11)
       8. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
          on pushes to `main`, PRs, and manual dispatch, so a tag-triggered release workflow would
          **not** re-run them: this job must either run them or declare an explicit dependency on a

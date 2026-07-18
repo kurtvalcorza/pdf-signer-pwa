@@ -50,7 +50,9 @@ build (per platform)
    ├─> launch the PACKAGED artifact via Playwright (_electron.launch)
    │     └─> complete a real signing flow → signed PDF
    │           └─> scripts/validate_pdf.py  (pyHanko)                    [FR-010]
-   ├─> layer E2E: CSP alive + bypassCSP absent + layer 2 + blob:         [Principle I]
+   ├─> layer E2E: CSP alive + bypassCSP absent + layer 2 + blob: allowed +
+   │     app:// path-traversal REFUSED (T015 step 5) + openExternal reachable
+   │     ONLY by the exact repo URL                                       [Principle I, FR-020]
    ├─> MONITORED-NETWORK run: launch→sign→idle→quit under PACKET-LEVEL
    │     monitoring (firewall / packet capture / network namespace over the
    │     WHOLE process tree — NOT a proxy, which sees only configured HTTP(S));
@@ -62,8 +64,10 @@ build (per platform)
    │                                                                      cannot observe an armed reporter]
    ├─> portable-state: two folders + read-only degradation +
    │     same-folder single-instance lock (defer + stale-lock recovery)  [FR-011a/b, concurrency]
-   ├─> packaged US3 surfaces present in the RUNNING app: staleness
-   │     notice + about/no-self-update surface                           [FR-015/015a — not a doc scan]
+   ├─> packaged US3 surfaces in the RUNNING app: about/no-self-update
+   │     surface UNCONDITIONALLY; staleness notice under a STALE-metadata
+   │     fixture/override (a fresh build must NOT show it — do not gate on
+   │     it unconditionally, or a valid release fails / is pressured to lie) [FR-015/015a — not a doc scan]
    └─> [Linux] FUSE-less host: launch+sign AND the two-folder portability
          spec, BOTH under --appimage-extract-and-run                     [FR-002a, R3]
          │

@@ -21,12 +21,14 @@ Linux that never contacts a network and keeps everything it writes in **one fold
 delete the artifact and that folder, and **no user content remains** (SC-005; bounded
 non-user-content residue such as engine cache or extracted program files is disclosed there).
 
-> **This is the product's top-level claim, so it is scoped precisely** (Principle IV): it covers
-> **application and user data**. It does **not** claim zero footprint. A bundled engine writes
-> cache/profile data into that folder on every launch whether or not the user opts into anything; the
-> Windows portable target extracts its own program files to temp while running (a crash can leave
-> them); and the OS records that an executable ran in places no application can reach. **A privacy
-> tool, not an anti-forensics tool.** See SC-005. *(Amended 2026-07-17: previously "leaves no trace on
+> **This is the product's top-level claim, so it is scoped precisely** (Principle IV): it guarantees
+> **no residual user content** (documents, certificates, signatures). It does **not** claim zero
+> footprint, and it does **not** promise zero *non-user-content* residue: a bundled engine writes
+> cache/profile data into that folder on every launch; the Windows portable target extracts its own
+> program files to temp while running, and the Linux AppImage does the same under
+> `--appimage-extract-and-run` (a crash can leave either **outside** the adjacent folder); and the OS
+> records that an executable ran in places no application can reach. Those bounded exceptions are
+> disclosed in SC-005. **A privacy tool, not an anti-forensics tool.** *(Amended 2026-07-17: previously "leaves no trace on
 > the host machine unless the user asks it to" — a top-level promise the design cannot keep, and the
 > sentence most likely to become release copy. Codex, PR #7.)*
 
