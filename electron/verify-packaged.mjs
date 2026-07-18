@@ -14,12 +14,17 @@ const ROOT = resolve(HERE, '..');
 const FIX = resolve(ROOT, 'tests/e2e/fixtures');
 const CERT_PASSWORD = 'e2e-pass';
 
-// The portable .exe is a self-extracting stub that re-launches a child process, so Playwright cannot
-// attach to it. Drive the win-unpacked build — the actual asar-packed Electron app (same bits the
-// stub extracts and runs), which proves asar packing + the packaged app itself.
-const exe = resolve(ROOT, 'release/win-unpacked/PDF Signer.exe');
+// The portable .exe / AppImage are self-extracting wrappers that re-launch a child, so Playwright
+// cannot attach to them. Drive the *-unpacked build — the actual asar-packed Electron app (the same
+// bits the wrapper extracts and runs), which proves asar packing + the packaged app itself.
+// PKG_EXE overrides the path (e.g. an extracted AppImage's AppRun target).
+const exe =
+  (process.env.PKG_EXE && resolve(ROOT, process.env.PKG_EXE)) ||
+  (process.platform === 'win32'
+    ? resolve(ROOT, 'release/win-unpacked/PDF Signer.exe')
+    : resolve(ROOT, 'release/linux-unpacked/pdf-signer-pwa'));
 if (!existsSync(exe)) {
-  console.error('No win-unpacked build. Run: npm run build:desktop');
+  console.error(`No packaged build at ${exe}. Run: npm run build:desktop`);
   process.exit(1);
 }
 execFileSync(process.execPath, [resolve(ROOT, 'scripts/make-e2e-fixtures.mjs')], { stdio: 'inherit' });
