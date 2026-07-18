@@ -259,6 +259,157 @@ export function addIncrementalPlaceholder(
 }
 
 /**
+ * Raise pdf-lib's object counter above every object number the FILE already uses, so
+ * the update allocates only genuinely free numbers. MUST be called before anything is
+ * registered on the probe (image embedding, appearance streams).
+ *
+ * `PDFContext.largestObjectNumber` counts only the objects pdf-lib *registered*. In a
+ * compressed file the container objects — every `/Type /ObjStm` object stream and every
+ * `/Type /XRef` cross-reference stream — are consumed as structure and never registered,
+ * so their numbers are invisible to it and get handed straight back out as "free". The
+ * new object then clobbers a live ObjStm, and every object stored inside it (typically
+ * the catalog, the page, the AcroForm, and the earlier signature's own dictionary) stops
+ * resolving: Acrobat follows the xref to "object N is in object stream 8", finds our
+ * image there instead, and reports "Expected a dict object" against the EARLIER
+ * signature. pdf-lib never notices, because it resolves by scanning the bytes for
+ * `N g obj` headers rather than by following the xref — a re-parse still looks perfect,
+ * which is why `assertUpdateWellFormed` cannot catch this on its own.
+ *
+ * The safe floor is the max of two independently-observable bounds, so no single one can
+ * make it fail open:
+ *   - `probe.context.largestObjectNumber` — every object pdf-lib registered, which
+ *     includes the *compressed* objects that live inside the ObjStms; and
+ *   - the highest `objNum genNum obj` header in the raw bytes — which is exactly where the
+ *     unregistered ObjStm/XRef *container* objects appear (they are top-level indirect
+ *     objects, so they always carry a header).
+ * Together these cover every object number in the file. `/Size` is deliberately NOT
+ * trusted: an attacker-controlled trailer could understate it (fail open, bug returns)
+ * or overstate it wildly (a huge counter advance). Over-counting from an incidental
+ * header-looking byte sequence inside a stream is harmless here — it can only raise the
+ * floor, never lower it, so a new object still cannot collide.
+ *
+ * The scan is a single linear pass keyed off the `obj` keyword — NOT a global regex over
+ * the whole file. A regex like `(\d+)\s+\d+\s+obj` backtracks quadratically on the long
+ * digit runs that occur in stream bytes (a browser-side denial of service on hostile
+ * input); walking from each `obj` and reading the two integers before it touches every
+ * byte a bounded number of times regardless of content. It also lets comments and the
+ * full PDF whitespace set (which includes NUL, unlike JS `\s`) be handled exactly.
+ *
+ * The counter is set directly rather than advanced in a loop: `nextRef()` is just
+ * `largestObjectNumber += 1`, so assigning the field is the same result in O(1) and
+ * cannot be turned into a denial-of-service by a pathological object number.
+ */
+export function reserveExistingObjectNumbers(signedPdf: Uint8Array, probe: PDFDocument): void {
+  const ctx = probe.context;
+  // Object numbers are identifiers, not byte offsets: a valid file may number an object
+  // sparsely, far above its object count, so they are NOT bounded by file length. The only
+  // bound needed is headroom below MAX_SAFE_INTEGER — past it, `nextRef()`'s `+= 1` stops
+  // advancing and would hand two new objects the same number.
+  const MAX_OBJ = Number.MAX_SAFE_INTEGER - 1024; // 1024 ≫ the handful of objects we add
+  const highest = highestObjectHeaderNumber(signedPdf, MAX_OBJ);
+  if (highest > ctx.largestObjectNumber) ctx.largestObjectNumber = highest;
+}
+
+const isPdfWhitespace = (c: number): boolean =>
+  // PDF whitespace (spec 7.2.3): NUL, HT, LF, FF, CR, SP. Note NUL, which JS `\s` omits.
+  c === 0x00 || c === 0x09 || c === 0x0a || c === 0x0c || c === 0x0d || c === 0x20;
+const isDigit = (c: number): boolean => c >= 0x30 && c <= 0x39;
+
+/**
+ * The highest object number carried by an `objNum genNum obj` header in `bytes`, or 0 if
+ * none. A single forward pass: a header is attempted only at a token-boundary digit, and a
+ * failed attempt skips the whole object-number digit run, so every byte is visited a
+ * bounded number of times — no quadratic regex backtracking over long digit runs in stream
+ * data. `%` comments and the full PDF whitespace set (incl. NUL) are handled between tokens
+ * exactly as pdf-lib parses them. Numbers at or above `maxObj` are ignored — crafted bytes,
+ * never a real object (and they would break the object counter). Over-matching an incidental
+ * `int int obj` in a stream is safe: this value is only ever used to RAISE a floor.
+ */
+function highestObjectHeaderNumber(bytes: Uint8Array, maxObj: number): number {
+  const n = bytes.length;
+  let highest = 0;
+  let i = 0;
+  while (i < n) {
+    // Only start a header where an object number legitimately could — a digit at a token
+    // boundary (start of file, or after whitespace/a delimiter). Anything else: advance.
+    const atBoundary = i === 0 || isPdfWhitespace(bytes[i - 1]) || isPdfDelimiter(bytes[i - 1]);
+    if (!isDigit(bytes[i]) || !atBoundary) {
+      i++;
+      continue;
+    }
+    const header = parseObjectHeader(bytes, i, maxObj);
+    if (header) {
+      if (header.objNum > highest) highest = header.objNum;
+      i = header.end; // consume the whole `objNum genNum obj`
+    } else {
+      while (i < n && isDigit(bytes[i])) i++; // skip this digit run; never rescan it
+    }
+  }
+  return highest;
+}
+
+/**
+ * Parse `objNum genNum obj` starting at `start` (a digit). Returns the object number
+ * (`-1` if it overflows `maxObj`) and the index just past `obj`, or null if the bytes are
+ * not a header. `%` comments and NUL count as inter-token whitespace, matching pdf-lib.
+ */
+function parseObjectHeader(
+  bytes: Uint8Array,
+  start: number,
+  maxObj: number,
+): { objNum: number; end: number } | null {
+  const n = bytes.length;
+  let i = start;
+  let num = 0;
+  let overflow = false;
+  while (i < n && isDigit(bytes[i])) {
+    num = num * 10 + (bytes[i] - 0x30);
+    if (num >= maxObj) overflow = true;
+    i++;
+  }
+  let j = skipWhitespaceAndComments(bytes, i);
+  if (j === i) return null; // object number and generation must be separated
+  i = j;
+  const genStart = i;
+  while (i < n && isDigit(bytes[i])) i++;
+  if (i === genStart) return null; // no generation number
+  j = skipWhitespaceAndComments(bytes, i);
+  if (j === i) return null; // generation and keyword must be separated
+  i = j;
+  if (bytes[i] !== 0x6f || bytes[i + 1] !== 0x62 || bytes[i + 2] !== 0x6a) return null; // not `obj`
+  const after = i + 3 < n ? bytes[i + 3] : -1;
+  if (after !== -1 && !isPdfWhitespace(after) && !isPdfDelimiter(after)) return null; // `object`
+  return { objNum: overflow ? -1 : num, end: i + 3 };
+}
+
+/** Index after a run of PDF whitespace and `%…EOL` comments beginning at `i`. */
+function skipWhitespaceAndComments(bytes: Uint8Array, i: number): number {
+  const n = bytes.length;
+  for (;;) {
+    while (i < n && isPdfWhitespace(bytes[i])) i++;
+    if (i < n && bytes[i] === 0x25 /* % */) {
+      i++;
+      while (i < n && bytes[i] !== 0x0a && bytes[i] !== 0x0d) i++;
+      continue;
+    }
+    return i;
+  }
+}
+
+const isPdfDelimiter = (c: number): boolean =>
+  // PDF delimiters (spec 7.2.3): ( ) < > [ ] { } / %
+  c === 0x28 ||
+  c === 0x29 ||
+  c === 0x3c ||
+  c === 0x3e ||
+  c === 0x5b ||
+  c === 0x5d ||
+  c === 0x7b ||
+  c === 0x7d ||
+  c === 0x2f ||
+  c === 0x25;
+
+/**
  * The `/Info` reference and `/ID` array of the file's previous trailer, read verbatim
  * from the bytes at `prevXref`. Handles both a classic `trailer << … >>` and an
  * xref-stream object (`N g obj << /Type /XRef … >>`). Missing entries come back

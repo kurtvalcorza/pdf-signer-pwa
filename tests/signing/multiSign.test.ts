@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { makeSelfSignedP12 } from './fixtures/makeCert';
 import { signFirst } from '../../src/features/signing/signFirst';
 import { signIncremental } from '../../src/features/signing/signIncremental';
+import { reserveExistingObjectNumbers } from '../../src/features/signing/incrementalUpdate';
 import { loadPdf } from '../../src/features/viewer/loadPdf';
 import { CertificationLockedError, type PlacementInput } from '../../src/features/signing/types';
 
@@ -473,6 +474,27 @@ describe('multi-signature (incremental)', () => {
     const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
     expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
     expect(await activeFieldsRefs(out)).toHaveLength(2);
+
+    // Guard the container-clobber bug directly. In a compressed file the only real
+    // `N g obj` headers are the object-stream (/Type /ObjStm) and cross-reference-stream
+    // (/Type /XRef) containers; the catalog, page, AcroForm and the earlier signature all
+    // live INSIDE the ObjStm. If the counter-sign reuses one of those container numbers
+    // for a brand-new object (image/appearance/sig/widget), the ObjStm is overwritten and
+    // every object it held stops resolving via the xref — Acrobat then reports "Expected a
+    // dict object" against the EARLIER signature. pdf-lib resolves by byte-scanning headers
+    // rather than following the xref, so `activeFieldsRefs` above cannot see this: only a
+    // header-number collision between the base file and the appended revision can. See
+    // reserveExistingObjectNumbers in incrementalUpdate.ts.
+    const headerNums = (buf: Uint8Array): Set<number> => {
+      const s = Buffer.from(buf).toString('latin1');
+      const nums = new Set<number>();
+      for (const m of s.matchAll(/(?:^|\n)(\d+) \d+ obj/g)) nums.add(Number(m[1]));
+      return nums;
+    };
+    const baseHeaders = headerNums(bytes);
+    const appendedHeaders = headerNums(out.subarray(bytes.length));
+    const clobbered = [...appendedHeaders].filter((n) => baseHeaders.has(n));
+    expect(clobbered).toEqual([]);
   }, 40000);
 
   it('counter-signs on a page other than the first (widget lands on that page)', async () => {
@@ -515,4 +537,80 @@ describe('multi-signature (incremental)', () => {
     writeFileSync(resolve(TAMPERED, 'tampered.pdf'), tampered);
     expect(tampered.length).toBe(first.length);
   }, 30000);
+});
+
+describe('reserveExistingObjectNumbers (untrusted-bytes hardening)', () => {
+  // The floor scan runs on attacker-controllable PDF bytes; these guard the two ways it
+  // could go wrong — a real container header it must NOT miss, and a bogus one it must
+  // NOT trust (Codex, PR #9).
+  const base = async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([10, 10]);
+    return doc;
+  };
+  const bytesOf = (s: string, minLen = 0) => new TextEncoder().encode(s.padEnd(minLen, ' '));
+
+  it('counts a header whose tokens are separated by a % comment (PDF whitespace)', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    const target = start + 5;
+    // `N 0 %comment\nobj` is a header pdf-lib parses; a whitespace-only scan would miss it.
+    reserveExistingObjectNumbers(
+      bytesOf(`%PDF-1.7\n${target} 0 %inline comment\nobj\n<< >>\nendobj\n`, 300),
+      probe,
+    );
+    expect(probe.context.largestObjectNumber).toBe(target);
+  });
+
+  it('counts a header whose tokens are separated by NUL bytes (PDF whitespace)', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    const target = start + 6;
+    // pdf-lib accepts NUL (0x00) as whitespace in a header; JS `\s` does not, so the scan
+    // must match it explicitly or miss a container written this way.
+    reserveExistingObjectNumbers(
+      bytesOf(`%PDF-1.7\n${target}\x00 0\x00 obj\n<< >>\nendobj\n`, 300),
+      probe,
+    );
+    expect(probe.context.largestObjectNumber).toBe(target);
+  });
+
+  it('counts a legally SPARSE object number that exceeds the file byte length', async () => {
+    const probe = await base();
+    // A valid file may number a container far above its object count. Object 1001 in a
+    // ~40-byte file is legal (sparse xref); rejecting it as "> file length" would leave the
+    // floor too low and let the next new object reuse the container's number (Codex, PR #9).
+    const doc = bytesOf(`%PDF-1.7\n1001 0 obj\n<< >>\nendobj\n`);
+    expect(doc.length).toBeLessThan(1001);
+    reserveExistingObjectNumbers(doc, probe);
+    expect(probe.context.largestObjectNumber).toBe(1001);
+  });
+
+  it('scans a huge digit run in linear time (no quadratic backtracking)', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    // A 500k-digit run with no `obj` keyword — the kind of byte sequence a stream can hold.
+    // A quadratic scan would take many seconds here; a 1s budget fails on regression.
+    const bytes = bytesOf(`%PDF-1.7\n${'1'.repeat(500_000)} not-a-header\n`);
+    const t0 = performance.now();
+    reserveExistingObjectNumbers(bytes, probe);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(probe.context.largestObjectNumber).toBe(start); // nothing looked like a header
+  });
+
+  it('rejects an object number without safe-integer headroom (nextRef would saturate)', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    const real = start + 7;
+    // A crafted MAX_SAFE_INTEGER header must be dropped: taking it as the floor would
+    // saturate nextRef()'s `+= 1` and duplicate object numbers. The bound is headroom
+    // below MAX_SAFE_INTEGER, NOT the file length (that would drop sparse numbers, above).
+    const doc = bytesOf(
+      `%PDF-1.7\n9007199254740991 0 obj\n<< >>\nendobj\n${real} 0 obj\n<< >>\nendobj\n`,
+      300,
+    );
+    reserveExistingObjectNumbers(doc, probe);
+    expect(probe.context.largestObjectNumber).toBe(real);
+    expect(probe.context.largestObjectNumber).toBeLessThan(Number.MAX_SAFE_INTEGER - 1024);
+  });
 });

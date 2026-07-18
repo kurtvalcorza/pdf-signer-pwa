@@ -11,7 +11,11 @@ import {
   appearanceLayout,
   type Rotation,
 } from '../../lib/coords';
-import { addIncrementalPlaceholder, acroFormFieldRefs } from './incrementalUpdate';
+import {
+  addIncrementalPlaceholder,
+  acroFormFieldRefs,
+  reserveExistingObjectNumbers,
+} from './incrementalUpdate';
 
 /**
  * Tier B — a subsequent cryptographic signature added as a BYTE-LEVEL INCREMENTAL
@@ -43,6 +47,14 @@ export async function signIncremental(
   // Read structure WITHOUT mutating/saving the signed bytes (read-only load; the
   // probe's parsed objects are also what the incremental update is built from).
   const probe = await PDFDocument.load(signedPdf);
+
+  // Reserve every object number the file already uses BEFORE embedding anything. In a
+  // compressed PDF, object-stream and xref-stream container objects are never registered
+  // on pdf-lib's context, so their numbers look "free" and would be reused — silently
+  // clobbering a live object stream and hiding the earlier signature. Must precede the
+  // first register() below (image/appearance), and originalLargestObjectNumber is read
+  // AFTER it so the newly-embedded resources are still detected as new.
+  reserveExistingObjectNumbers(signedPdf, probe);
   const originalLargestObjectNumber = probe.context.largestObjectNumber;
 
   const lock = modificationLock(probe);
