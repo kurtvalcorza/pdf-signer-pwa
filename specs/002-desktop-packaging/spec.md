@@ -18,31 +18,38 @@
 The signing application currently reaches users as an installable web app. This feature adds a
 second, parallel distribution: a **single-file, run-anywhere desktop application** for Windows and
 Linux that never contacts a network and keeps everything it writes in **one folder beside itself** —
-delete the artifact and that folder, and no application or user data remains.
+delete the artifact and that folder, and **no user content remains** (SC-005; bounded
+non-user-content residue such as engine cache or extracted program files is disclosed there).
 
-> **This is the product's top-level claim, so it is scoped precisely** (Principle IV): it covers
-> **application and user data**. It does **not** claim zero footprint. A bundled engine writes
-> cache/profile data into that folder on every launch whether or not the user opts into anything; the
-> Windows portable target extracts its own program files to temp while running (a crash can leave
-> them); and the OS records that an executable ran in places no application can reach. **A privacy
-> tool, not an anti-forensics tool.** See SC-005. *(Amended 2026-07-17: previously "leaves no trace on
+> **This is the product's top-level claim, so it is scoped precisely** (Principle IV): it guarantees
+> **no residual user content** (documents, certificates, signatures). It does **not** claim zero
+> footprint, and it does **not** promise zero *non-user-content* residue: a bundled engine writes
+> cache/profile data into that folder on every launch; the Windows portable target extracts its own
+> program files to temp while running, and the Linux AppImage does the same under
+> `--appimage-extract-and-run` (a crash can leave either **outside** the adjacent folder); and the OS
+> records that an executable ran in places no application can reach. Those bounded exceptions are
+> disclosed in SC-005. **A privacy tool, not an anti-forensics tool.** *(Amended 2026-07-17: previously "leaves no trace on
 > the host machine unless the user asks it to" — a top-level promise the design cannot keep, and the
 > sentence most likely to become release copy. Codex, PR #7.)*
 
 The value is not new signing capability — it is **reach and provability**. A user who cannot or will
 not trust a URL (an air-gapped machine, a locked-down workstation, a reviewer who wants to inspect
 what they are running) can copy one file onto the machine, run it, sign a document, and then remove
-it **along with the one data folder it creates beside itself** — leaving no application or user data
-behind.
+it **along with the one data folder it creates beside itself** — leaving **no user content** behind
+(SC-005 discloses the bounded non-user-content residue).
 
-> **Scope of the "no trace" claim** (Principle IV): it covers **data the application writes**, which
-> all lives in one folder beside the artifact (SC-005). It does **not** and cannot cover
+> **Scope of the "no trace" claim** (Principle IV): it covers **user content the application writes**,
+> which all lives in one folder beside the artifact (SC-005) — the bounded non-user-content residue
+> (engine cache, extracted program files) is disclosed there too. It does **not** and cannot cover
 > OS-controlled traces of having run an executable at all — prefetch, execution history, antivirus
 > records, shell MRU. This is a privacy tool, **not an anti-forensics tool**, and no surface may
 > imply otherwise.
 
 This feature deliberately adds **no new user-facing signing behaviour**. Every existing capability
-(visual stamp, PKCS#12 signing, in-app certificate generation, counter-signing) behaves identically.
+(placing a visible signature on the page, PKCS#12 signing, in-app certificate generation,
+counter-signing) behaves identically. *(Not "visual stamp": since 001's cert-only amendment the visible
+image is the **appearance of a signature**, not a standalone stamp-only output — see
+`specs/001-pdf-signer/spec.md` § Amendment.)*
 
 ## Clarifications
 
@@ -118,16 +125,17 @@ requirements rather than merely this feature's good intentions.
 A user copies a single `.exe` onto a Windows machine — one with no internet connection, or one where
 they lack rights to install software. They double-click it, the signing app opens in its own window,
 and they complete the full existing flow: open a PDF, place a signature image, sign with a `.p12`,
-and save the signed file. Everything the app wrote lives in **one folder beside the `.exe`**; they
-delete the `.exe` and that folder, and **no application or user data remains on the machine**.
+and save the signed file. The user content the app wrote lives in **one folder beside the `.exe`**;
+they delete the `.exe` and that folder, and **no user content remains on the machine** (SC-005).
 
 > *(Amended 2026-07-17, twice, both by Codex review on PR #7. It first said deleting the `.exe` alone
 > left "no evidence" — false, since a bundled engine writes cache files into its data folder every
 > launch. The corrected version still claimed the machine "retains no evidence the app ever ran" —
 > also false, and not ours to promise: running any executable can leave OS-controlled traces
 > (execution history, prefetch, Defender records, shell recent-file entries) that no application can
-> reach or erase. The guarantee is scoped to what the app writes: **no application or user data
-> residue**. It is not an anti-forensics tool and must never imply it is.)*
+> reach or erase. The guarantee is scoped to **user content**: no document, certificate, or signature
+> residue (bounded non-user-content residue — engine cache, extracted program files — is disclosed in
+> SC-005). It is not an anti-forensics tool and must never imply it is.)*
 
 **Why this priority**: This is the feature. Windows is the platform where "I can't install things"
 and "this machine is offline" most commonly co-occur, and it is the author's own platform, so it is
@@ -151,9 +159,11 @@ Delivers complete standalone value even if the Linux build never ships.
    signs with a valid `.p12` and password, **Then** the resulting file is structurally equivalent to
    one produced by the web app for the same inputs, and passes the automated signature validator.
 3. **Given** the user has signed a document and closed the app, **When** the user deletes the binary
-   **and its adjacent data folder** and inspects the machine, **Then** no application data remains
+   **and its adjacent data folder** and inspects the machine, **Then** no **user content** remains
    anywhere on the system — in particular nothing in `%APPDATA%` — except files the user explicitly
-   saved. *(Amended 2026-07-17: deleting the binary alone is not sufficient, and the app must say so
+   saved. (Bounded non-user-content residue — engine cache, extracted program files, especially after
+   a crash or on read-only media — is disclosed in SC-005 and is never a document, certificate, or
+   signature.) *(Amended 2026-07-17: deleting the binary alone is not sufficient, and the app must say so
    — a bundled engine writes cache files beside itself on every launch. See SC-005.)*
 4. **Given** the application is running, **When** any attempt is made to reach the network, **Then**
    it fails — the app functions identically whether or not a connection exists.
@@ -197,8 +207,9 @@ disabled, complete a sign, validate with pyHanko.
 2. **Given** the AppImage is running offline, **When** the user completes the signing flow, **Then**
    the output passes the automated signature validator.
 3. **Given** the user deletes the AppImage **and its adjacent data folder**, **When** the machine is
-   inspected, **Then** no application data remains except files the user explicitly saved (see
-   SC-005).
+   inspected, **Then** no **user content** remains except files the user explicitly saved — bounded
+   non-user-content residue (engine cache, or program files extracted by `--appimage-extract-and-run`)
+   may persist and is disclosed in SC-005.
 
 ---
 
@@ -266,7 +277,13 @@ test. Codex, PR #7.)*
   still deferred to the web behaviour after the mechanism was corrected everywhere else — and sitting
   in the authoritative spec, it could justify a relocate-only implementation. Codex, PR #7.)*
 - **A second copy launched while one is running**: two instances of a portable app must not corrupt
-  each other's opt-in store or deadlock over it.
+  each other's opt-in store or deadlock over it. **Control**: a single-instance lock **scoped to the
+  resolved data directory** (a lockfile in that folder), NOT the global app — so (a) a second copy
+  launched from the **same** folder defers to the running instance rather than opening a competing
+  store, while (b) copies in **different** folders resolve to different data directories and run fully
+  independently (SC-011 — the two-folder guarantee). The lock releases on quit, and a **stale lock
+  left by a crash must not permanently block launch** (it is reclaimed, not fatal). *(Named because
+  stating "must not corrupt or deadlock" without a mechanism is a claim outrunning its enforcement.)*
 - **The user saves a signed file to a path that no longer exists** (unplugged USB): must fail with a
   recoverable message, never with silent loss of the signed bytes.
 - **Antivirus quarantines the unsigned binary mid-run**: outside the app's control, but the failure
@@ -444,21 +461,33 @@ test. Codex, PR #7.)*
   are **structurally equivalent** and both validate.
 - **SC-004**: The application makes **zero** network requests across its entire lifecycle, observed
   from outside the app (not merely asserted internally).
-- **SC-005**: All **user content and application state** the app writes lives in **one** directory
-  adjacent to the artifact. After running the app and deleting **the artifact and that adjacent
-  folder**, a user finds **zero** residual user content or application state anywhere on the host —
-  in particular, nothing in the operating system's per-user application-data location.
-  **Two scoping caveats, both disclosed rather than glossed** (Principle IV):
-  (a) the Windows portable target extracts **its own program files** to a temp directory while
-  running and removes them on exit — a hard crash can leave them, and they are program code, never
-  user content;
-  (b) OS-controlled traces of having run an executable (prefetch, execution history, antivirus
+- **SC-005**: All **user content and application state** the app writes in normal (writable-adjacent)
+  operation lives in **one** directory adjacent to the artifact. After running the app and deleting
+  **the artifact and that adjacent folder**, a user finds **zero residual user content** anywhere on
+  the host — in particular, nothing in the operating system's per-user application-data location. The
+  guarantee is stated for **user content** because the three caveats below admit bounded
+  **non-user-content** residue (extracted program files, ephemeral engine cache) that a crash can
+  leave *outside* the adjacent folder — never a document, certificate, or signature. Release copy and
+  acceptance tests MUST assert the user-content promise, not an unqualified "zero application state".
+  **Three scoping caveats, all disclosed rather than glossed** (Principle IV):
+  (a) **program-file extraction residue** — the Windows portable target extracts **its own program
+  files** to a temp directory while running and removes them on exit; the Linux AppImage under the
+  FUSE-less `--appimage-extract-and-run` fallback (FR-002a) likewise unpacks its squashfs to a
+  working directory that can **persist** after exit. Both are **program code, never user content**,
+  and a hard crash (or the extract-and-run path) can leave them;
+  (b) **ephemeral `userData`** — when the adjacent directory is read-only, Electron is pointed at a
+  throwaway temp `userData` for its own engine cache. Opt-in persistence is **disabled, not relocated**
+  (portable-paths.md), so this holds **no user content**; it is removed on quit, and a crash can leave
+  engine cache there — again never a `.p12` or document;
+  (c) OS-controlled traces of having run an executable (prefetch, execution history, antivirus
   records, shell MRU) are outside any application's reach. **This is a privacy tool, not an
   anti-forensics tool.**
-  *(Amended 2026-07-17, twice. The original promised zero residue after deleting **the binary alone**
-  — false, since a bundled engine writes cache files into its data directory every launch. The
-  corrected version still said "zero residual **application data**" unqualified, which the
-  portable-paths contract's own temp-extraction caveat contradicts. Codex, PR #7.)*
+  *(Amended 2026-07-17, twice, then 2026-07-18 for the ephemeral and Linux extract-and-run cases. The
+  original promised zero residue after deleting **the binary alone** — false, since a bundled engine
+  writes cache files into its data directory every launch. The next version said "zero residual
+  **application data**" unqualified, which the portable-paths temp-extraction caveat contradicts; and
+  it covered only the Windows extraction, omitting the Linux extract-and-run residue and the read-only
+  ephemeral `userData`. Codex, PR #7.)*
 - **SC-006**: A user encountering a first-run security warning can find an accurate explanation of
   why it appears in **under 1 minute**, without contacting the author.
 - **SC-007**: A user can independently verify a downloaded binary's build provenance — confirming

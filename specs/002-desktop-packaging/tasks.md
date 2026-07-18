@@ -42,6 +42,12 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       `dependencies` — a runtime dep would leak the shell into the web bundle, FR-019/R9). Add
       scripts: `build:desktop`, `e2e:desktop`. **Do NOT add `electron-updater`** — FR-007 is
       satisfied by its absence, which is stronger than any configuration flag (R4).
+      **⚠ Protect the web deploy**: set `ELECTRON_SKIP_BINARY_DOWNLOAD=1` in the Vercel project's
+      build environment. `electron`'s postinstall otherwise downloads a ~150 MB platform binary during
+      Vercel's `npm install`, bloating and occasionally flaking the deploy — and Vercel only ever
+      *builds* the web app (`npm run build`), never *runs* Electron, so the binary is pure waste there.
+      The bundle itself is unaffected (nothing in `src/` imports `electron`; `electron-builder` is
+      never invoked in the web build), so this is a build-time guard, not a code change.
 - [ ] T002 [P] Create `tsconfig.electron.json` compiling `electron/**` for the Electron main
       process, excluded from the web `tsconfig.json` so the two graphs cannot silently merge.
       **⚠ The root `package.json` declares `"type": "module"` (line 5).** A plain CommonJS emit
@@ -113,8 +119,14 @@ deliberately **outside `src/`**, so the web app's module graph is provably untou
       wrongly claimed it was. *(Codex, PR #7.)*
 - [ ] T008a [P] Add the **layer-3 Node-network prohibition** for `electron/**`, in two parts —
       **the first alone is not sufficient**:
-      1. `eslint` `no-restricted-imports` / `no-restricted-globals` banning `node:http`,
-         `node:https`, `node:net`, `node:dgram`, `node:tls` and global `fetch`.
+      1. `eslint` `no-restricted-imports` / `no-restricted-globals` / `no-restricted-syntax` encoding
+         **every concrete ban enumerated in
+         [contracts/network-policy.md](contracts/network-policy.md) § rules** — not a paraphrase:
+         builtins `node:http`, `node:https`, `node:net`, `node:dgram`, `node:tls`; the two
+         network-capable **`electron` named exports** `net` and `autoUpdater` (banned by import *and*
+         property access — `autoUpdater` needs no `electron-updater` package, so it slips the FR-007
+         guard); and the import-less **globals** `fetch`, `WebSocket`, `XMLHttpRequest`, `EventSource`
+         (a `new WebSocket('wss://…')` has nothing to import, so only a global/syntax rule catches it).
       2. An **import allow-list** for `electron/**`: only `electron`, `node:path`, `node:fs`,
          `node:os`, `node:url` (and other explicitly-approved, non-network builtins) may be imported.
          Any package import is a lint error unless added to the allow-list by name.
@@ -204,6 +216,14 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
          advisory" while **no task asserted it** — T015 didn't list it and T031 gates T014–T017, so an
          implementation could serve files outside `dist/` and pass the release gate. A claim
          outrunning its mechanism, written into the fix for that exact pattern.)*
+      6. **`shell.openExternal` reachable ONLY by the exact repo URL** — assert the "View source on
+         GitHub" control invokes `openExternal` with the exact compile-time repo URL, and that **no
+         other URL** (a runtime-assembled string, or any other `https:` URL) can reach `openExternal`.
+         This is the release-gate assertion the contract maps here; without it a widened "any https"
+         carve-out — a general-purpose exfiltration primitive — would pass every listed E2E gate.
+         See [contracts/network-policy.md](contracts/network-policy.md) § Verification / Carve-out.
+         *(Codex, PR #11: `openExternal` appeared only in implementation notes, so the mapped E2E ran
+         without it.)*
 
       > **Steps 1 and 2 prove DIFFERENT things — neither substitutes for the other.**
       > `bypassCSP` is **scheme- and resource-scoped**: it exempts resources *served over `app:`* from
@@ -230,13 +250,22 @@ validate the output with pyHanko. Delivers complete value even if the Linux buil
 - [ ] T017 [P] [US1] `tests/e2e-desktop/desktop-readonly.spec.ts` — run from a non-writable
       directory; assert signing still works, the user is **told** persistence is unavailable, and
       nothing lands in the OS user-data dir (FR-011b).
+- [ ] T017a [P] [US1] `tests/e2e-desktop/desktop-concurrent.spec.ts` — cover the concurrent-instance
+      control specified in [spec.md](spec.md) § Edge Cases (a data-directory-scoped single-instance
+      lock, not the global app): (1) a **second copy launched from the same folder** defers to the
+      running instance and does not open a competing store; (2) **two copies in different folders run
+      independently** (distinct data dirs — complements T016); (3) a **stale lock** left by a killed
+      instance is reclaimed on next launch, not fatal. Without this the spec names a mechanism nothing
+      builds or proves, leaving the corruption/deadlock edge case unimplemented. *(Codex, PR #11.)*
 
 ### Implementation for User Story 1
 
 - [ ] T018 [US1] Add the `portable` Windows target to `electron-builder.yml` (single file, no
       installer, no registry — FR-001).
-- [ ] T019 [US1] Make T014–T017 pass. **No changes to `src/features/signing/**`** — if a failure
-      seems to demand one, the shell is wrong (FR-009).
+- [ ] T019 [US1] Make T014–T017a pass — including the **data-directory-scoped single-instance lock**
+      in the shell (`electron/` main + `electron/paths.ts`), keyed to the resolved data dir so
+      same-folder copies serialize while different-folder copies stay independent (T017a). **No changes
+      to `src/features/signing/**`** — if a failure seems to demand one, the shell is wrong (FR-009).
 - [ ] T020 [US1] Surface the read-only/ephemeral state visibly in the UI **and disable opt-in
       persistence entirely in `ephemeral` mode** — the "remember" affordances are not offered, and
       `saveCertificate`/`saveSignature` are never reached (FR-011b,
@@ -273,10 +302,10 @@ complete a sign, validate with pyHanko.
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T022 [P] [US2] Run the `tests/e2e-desktop/` suite (T014–T017) against the AppImage on Linux via
-      `playwright.desktop.config.ts`, with `executablePath` pointed at the built AppImage. Same
-      assertions, second artifact — **not** an inherited pass (Principle V). The suite is shared; the
-      *run* is not.
+- [ ] T022 [P] [US2] Run the `tests/e2e-desktop/` suite (**T014–T017a**, incl. the concurrent-instance
+      lock) against the AppImage on Linux via `playwright.desktop.config.ts`, with `executablePath`
+      pointed at the built AppImage. Same assertions, second artifact — **not** an inherited pass
+      (Principle V). The suite is shared; the *run* is not.
 
 ### Implementation for User Story 2
 
@@ -293,6 +322,11 @@ complete a sign, validate with pyHanko.
       an overclaim I introduced while fixing the FUSE finding itself.)*
 - [ ] T024 [US2] Verify `electron/paths.ts` resolves via `APPIMAGE` on a real AppImage (the mount
       path differs from the file path — R3), and make T022 pass.
+      **Also run the two-folder portability spec (T016) under `--appimage-extract-and-run`**, not only
+      the default FUSE-mounted launch: extract-and-run unpacks the squashfs to a *different* temp
+      location, and `APPIMAGE` must still point at the original file so the data folder lands beside
+      it — never in the extraction temp. A pass under FUSE does not prove the fallback path, and
+      FUSE-less hosts (T023a) are exactly where users hit it.
 - [ ] T025 [US2] Run the pyHanko gate (`scripts/validate_pdf.py` via `npm run verify:signatures`)
       against the PDF produced by the **AppImage** in T022 (FR-010).
 
@@ -317,14 +351,24 @@ present, accurate, and stated without euphemism.
       client reachable** from the code path (FR-015a); and assert the notice is
       **never shown when `distribution === 'web'`**, however old the build (guards T027's regression
       — this is the assertion that keeps the web app from lying).
+- [ ] T026a [P] [US3] `tests/e2e-desktop/desktop-us3.spec.ts` — the **packaged-app** surface test that
+      T031 item 7 gates on (T026 is a *unit* test of `isStale`; it does not drive the running artifact,
+      so it cannot satisfy the gate on its own). Launch the packaged binary and assert: (1) the
+      about/no-self-update surface (T028) renders **unconditionally**; (2) under an **injected
+      stale-metadata fixture/override** (an `engineDate` past the threshold — the mechanism this task
+      *creates*), the staleness notice (T027) renders; (3) a **fresh** metadata fixture shows **no**
+      notice (the fresh-build case that must not fail the release); (4) **zero network** throughout. Add
+      the corresponding entry to `playwright.desktop.config.ts` so it runs for both artifacts.
+      *(Codex/Claude, PR #11: the gate required a stale-metadata fixture that no task built.)*
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Implement the staleness nudge in `src/components/StalenessNotice.tsx` (threshold
-      constant + `isStale` derivation in `src/lib/buildMetadata.ts`, rendered from `src/App.tsx`) —
-      passive, **non-blocking** notice once `ageInDays > STALENESS_THRESHOLD_DAYS` (**180**, a named
-      constant — R6). Local clock comparison only; it MUST NOT regress into an update check
-      (FR-006/007).
+- [ ] T027 [US3] Implement the staleness nudge as a **desktop-only** notice module (using the shared,
+      inert `isStale` derivation + `STALENESS_THRESHOLD_DAYS` constant in `src/lib/buildMetadata.ts`),
+      included **only in the desktop renderer build and never imported by shared `src/App.tsx`**
+      (FR-019a) — passive, **non-blocking** notice once `ageInDays > STALENESS_THRESHOLD_DAYS`
+      (**180**, a named constant — R6). Local clock comparison only; it MUST NOT regress into an update
+      check (FR-006/007).
       **⚠ MUST NOT reach the web build at all (FR-019a).** Only a distribution that **bundles its own
       engine** ships a frozen one — the web PWA runs the user's own browser, which updates itself. If
       the notice rendered unguarded from shared `App.tsx`, the web app would, 180 days after any
@@ -354,8 +398,13 @@ present, accurate, and stated without euphemism.
 - [ ] T029 [P] [US3] Write `docs/desktop.md` — the unsigned-binary disclosure: what SmartScreen shows
       (*"Windows protected your PC"* → **More info → Run anyway**), `chmod +x` on Linux, and how to
       verify instead. Must state plainly that **an attestation is not a code-signing certificate and
-      does not remove the warning** (contracts/release-artifacts.md). Also record the honest temp-
-      extraction caveat (R3): "leaves absolutely nothing, ever" is **not** an accurate claim.
+      does not remove the warning** (contracts/release-artifacts.md). Record the **full SC-005 residue
+      story**, not just the Windows temp extraction: (a) Windows portable temp-extracted program files;
+      (b) the **read-only-media ephemeral `userData` engine cache** (a crash can leave it in temp); and
+      (c) Linux `--appimage-extract-and-run` extracted files. "Leaves absolutely nothing, ever" is
+      **not** an accurate claim; the honest promise is **no user content** remains after deleting the
+      artifact and adjacent folder. *(Codex, PR #11: the ephemeral read-only case was admitted in
+      SC-005 but never reached the user-facing docs, leaving users the old "delete the folder" model.)*
 
 **Checkpoint**: The binaries describe themselves honestly. Per the constitution's honesty gate, this
 phase MUST ship with or before any public release — not as a follow-up.
@@ -374,31 +423,82 @@ phase MUST ship with or before any public release — not as a follow-up.
       `.exe`) and `ubuntu-latest` (AppImage), both from **one commit**, no cross-compiling (R8).
       Leave `ci.yml` **untouched** (SC-008).
 - [ ] T031 [US4] Run the **full** desktop gate in CI per platform — every item below is
-      **blocking**; a release publishes only if all pass:
-      1. Layer/flow E2E: T014–T017 (Windows), T022 (Linux)
+      **blocking**; a release publishes only if all pass. **The authoritative, complete gate list is
+      [contracts/release-artifacts.md](contracts/release-artifacts.md) § Release gate; this enumeration
+      maps each gate to its task and MUST match it — if they diverge, the contract wins.**
+      1. Layer/flow E2E: T014–T017 **+ T017a** (Windows), T022 (Linux)
       2. pyHanko on each artifact's **own** output: T021, T025
       3. **The monitored-network gate (T031a)** — the *primary* SC-004 check
-      4. **The FUSE-less AppImage check (T023a)** — FR-002a
+      4. **The FUSE-less AppImage check (T023a)** — FR-002a — **and [Linux] the two-folder portability
+         spec run under `--appimage-extract-and-run` (T024)**: a pass under the FUSE mount does not
+         prove `electron/paths.ts` resolves state beside the *original* AppImage rather than the
+         extraction temp, and FUSE-less hosts are exactly where users hit it (Codex, PR #11)
       5. Layer-3 **source lint (T008a) AND the packaged-output dependency audit (T008b)** — T008a
          alone misses network-capable deps that actually ship
-      6. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
+      6. **The layer-5 crash/metrics assertion (network-policy.md § Verification)** — `crashReporter.start()`
+         absent from `electron/**` and the metrics-disable switches present. A *source/build-time* check
+         is required because an armed reporter with no crash during the run emits nothing, so the
+         monitored gate (item 3) cannot observe it (Codex, PR #11)
+      7. **Packaged US3 surfaces render in the RUNNING app** (**T026a**, per platform; not a doc scan —
+         a build could omit T027/T028 and still pass a text check) — assert the about/no-self-update
+         surface (T028) **unconditionally**, and the staleness notice (T027) **under a stale-metadata
+         fixture/override**.
+         The notice only renders once the engine age exceeds the threshold (FR-015a), so gating on it
+         unconditionally would fail a legitimately-fresh release — or pressure the app to show an ageing
+         warning that is false. Test the *capability* with stale metadata, not the fresh build's silence
+         (Codex, PR #11)
+      8. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
          on pushes to `main`, PRs, and manual dispatch, so a tag-triggered release workflow would
          **not** re-run them: this job must either run them or declare an explicit dependency on a
          successful CI run for the same SHA. *(Codex, PR #7 — verified against `ci.yml`'s triggers.)*
 
       **If any platform's gate is red, nothing publishes** — no partial releases (SC-002,
-      contracts/release-artifacts.md).
+      contracts/release-artifacts.md). This is **enforced by the aggregation job T032a**, not by hope:
+      each matrix leg gates only its *own* platform and cannot see the other's result.
       *(Amended after Codex round 2: this listed only items 1–2, so CI could have published while
       never running the contract's primary SC-004 check or the FUSE-less check — the two gates added
       in round 1 landed in the contract and quickstart but never reached the task that enforces
       them. A gate that isn't in the release job is a comment.)*
 - [ ] T031a [US4] Implement the **monitored-network gate**: run each packaged artifact with
-      networking **available but intercepted** (firewall/proxy/packet capture) across launch → sign →
-      idle → quit, and **fail the build on any DNS query or TCP/HTTP attempt**, successful or not
-      (SC-004, contracts/network-policy.md § Verification).
+      networking **available but monitored at the PACKET level** — firewall / packet capture / network
+      namespace over the whole app process tree. **A proxy is NOT sufficient** and a proxy-only
+      implementation is disallowed: it sees only the HTTP(S) traffic it is configured for, so a
+      main-process `node:dgram` UDP send or an ICMP/raw-socket egress to a numeric IP passes straight
+      through while the job still claims to be "monitoring". Run across launch → sign → idle → quit,
+      and **fail the build on ANY outbound packet or
+      socket, on any protocol, to any destination** — TCP, **UDP**, ICMP, raw sockets, DNS, QUIC,
+      resolved by name or numeric IP. **Not a `DNS`/`TCP`/`HTTP` allow-list** — that is the protocol
+      hole network-policy.md § Verification closes as a release blocker (a main-process `node:dgram`
+      UDP send to a numeric IP touches none of those and exfiltrates anyway) (SC-004).
       The offline run (T014's environment) proves the app *works* without a network; only this proves
       it *never reaches for one*.
 - [ ] T032 [US4] Generate and publish `SHA256SUMS` per artifact (FR-017).
+- [ ] T032a [US4] Add a single **publish/aggregation job** that `needs:` **every** matrix leg and
+      **all** blocking gates (T031 per platform, T031a) so publishing is one job that runs **only when
+      all legs succeeded** — the matrix legs run per-platform and cannot see each other, so without an
+      aggregator a green Windows leg could publish while Linux was red (the partial release SC-002
+      forbids). Do **not** use `if: always()` on this job — that would let it publish on a partial
+      failure, defeating the point. Before it publishes, it MUST also gate on **both the presence of
+      the required text AND the existence of the assets that text refers to** — instructions without
+      artifacts are as useless as artifacts without instructions:
+      (i) `docs/desktop.md` + the release-notes template contain the **unsigned-binary**,
+          **no-self-update**, pinned **checksum + attestation verification command**, the
+          **`--appimage-extract-and-run` fallback** text, and the **SC-005 residue caveat** (the honest
+          "no user content" scope incl. the read-only ephemeral cache and extract-and-run cases — no
+          unqualified "nothing remains") (T029/T034, FR-014/015/018a/002a — the
+          FUSE-less fallback is the *only* usable no-root path on such hosts, so omitting it ships an
+          AppImage many users cannot launch);
+      (ii) the actual verification artifacts exist for *this* release: the **`SHA256SUMS` asset is
+          attached** (T032), **and** the **provenance attestation is recorded and verifiable** — `gh
+          attestation verify <artifact> --repo …` succeeds (T033). Note `actions/attest-build-provenance`
+          uploads the attestation to GitHub's **attestations API, not as a release asset**, so gate on
+          the *verifiable record*, NOT an attached bundle file (requiring an attached asset would fail a
+          valid attested release). Instructions without artifacts are as useless as artifacts without
+          instructions — a green job with neither leaves the FR-014/FR-018a mitigation unusable.
+          *(Codex, PR #11.)*
+      (US3 *packaged-app* surfaces are covered by T031 item 7, on which this job `needs:`.)
+      A required disclosure, the assets it points at, or the surface it promises — that no job checks is
+      one that silently goes missing. *(Codex, PR #11.)*
 - [ ] T033 [US4] Add build-provenance attestation via `actions/attest-build-provenance` (or
       `actions/attest`, which GitHub now steers new implementations toward — either satisfies
       FR-018a). Permissions: `id-token: write`, `attestations: write`, `contents: write`.
@@ -431,7 +531,10 @@ phase MUST ship with or before any public release — not as a follow-up.
       npm run verify:signatures && npm run e2e && npm run e2e:pwa` all green **and unmodified**
       (SC-008/FR-019). If any needed editing to accommodate packaging, **fix the packaging, not the
       test**. Additionally assert the **web bundle contains no desktop-only code** — grep the built
-      `dist/` for the staleness notice and any `electron` import (FR-019a).
+      `dist/` for **every desktop-only surface** (the staleness notice **and the about/info surface**,
+      T027/T028) and any `electron` import (FR-019a). The check is about the *surface*, not one string:
+      any module the desktop build adds must be absent from the web `dist/`, or FR-019a is breached by
+      the next desktop-only addition that nobody remembered to grep for.
       Note FR-019 is a **behavioural** guarantee, not byte-identity: the inert build-date metadata
       (T011) does change the bundle's bytes, which is why the requirement was reworded rather than
       pretended-at.

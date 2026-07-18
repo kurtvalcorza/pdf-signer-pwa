@@ -198,6 +198,7 @@ network.
 > destinations, that is a **release blocker**, not a refinement. *(Codex, PR #7 — P1, in direct answer
 > to my own question of whether layer 6 was sufficient. It wasn't.)*
 | No updater present | Assert `electron-updater` absent from the dependency tree and the packaged app | Build-time check |
+| **No crash/metrics reporting (layer 5)** | Assert `crashReporter.start()` is **never called** in `electron/**` and the Chromium metrics-disabling switches ARE set. A source/build-time check is required *in addition to* the monitored gate: `crashReporter` armed with no crash during the run emits nothing, so layer 6 alone cannot prove it is disarmed — absence of an *observed* upload is not proof the reporter is off | Build-time check (+ layer 6 backstop) |
 | Repo link works, and only it | Clicking "View source on GitHub" invokes `shell.openExternal` (not an in-app window); assert **no other** URL can reach `openExternal` | Desktop E2E |
 
 ## Honest limits (Principle IV — state these, do not imply otherwise)

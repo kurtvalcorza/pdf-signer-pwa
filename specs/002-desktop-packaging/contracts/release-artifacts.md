@@ -40,26 +40,51 @@ Enterprise Cloud.)
 
 ## Release gate (FR-010, Principle V — **blocking**)
 
+**This diagram is the AUTHORITATIVE gate list.** `tasks.md` T031/T032a map each gate to its
+implementing task and MUST match this list; where they diverge, **this contract wins**. A gate absent
+*here* is not enforced (Codex, PR #7/#11) — so new blocking gates are added here first, then mirrored
+into the task mapping.
+
 ```text
 build (per platform)
    ├─> launch the PACKAGED artifact via Playwright (_electron.launch)
    │     └─> complete a real signing flow → signed PDF
    │           └─> scripts/validate_pdf.py  (pyHanko)                    [FR-010]
-   ├─> layer E2E: CSP alive + bypassCSP absent + layer 2 + blob:         [Principle I]
-   ├─> MONITORED-NETWORK run: live-but-intercepted network, launch→sign→
-   │     idle→quit; FAIL on any DNS/TCP/HTTP attempt                     [SC-004, primary]
+   ├─> layer E2E: CSP alive + bypassCSP absent + layer 2 + blob: allowed +
+   │     app:// path-traversal REFUSED (T015 step 5) + openExternal reachable
+   │     ONLY by the exact repo URL                                       [Principle I, FR-020]
+   ├─> MONITORED-NETWORK run: launch→sign→idle→quit under PACKET-LEVEL
+   │     monitoring (firewall / packet capture / network namespace over the
+   │     WHOLE process tree — NOT a proxy, which sees only configured HTTP(S));
+   │     FAIL on ANY egress — any packet/socket, any protocol (TCP/UDP/ICMP/
+   │     DNS/QUIC), by name or numeric IP. NOT a protocol list            [SC-004, primary]
    ├─> layer-3 lint + packaged dependency audit                          [no Node HTTP client]
-   ├─> portable-state check (two folders) + read-only degradation        [FR-011a/b]
-   └─> [Linux] FUSE-less host via extract-and-run fallback               [FR-002a]
+   ├─> layer-5: crashReporter.start() absent + metrics switches set      [no phone-home; build-time —
+   │                                                                      a crash-free monitored run
+   │                                                                      cannot observe an armed reporter]
+   ├─> portable-state: two folders + read-only degradation +
+   │     same-folder single-instance lock (defer + stale-lock recovery)  [FR-011a/b, concurrency]
+   ├─> packaged US3 surfaces in the RUNNING app: about/no-self-update
+   │     surface UNCONDITIONALLY; staleness notice under a STALE-metadata
+   │     fixture/override (a fresh build must NOT show it — do not gate on
+   │     it unconditionally, or a valid release fails / is pressured to lie) [FR-015/015a — not a doc scan]
+   └─> [Linux] FUSE-less host: launch+sign AND the two-folder portability
+         spec, BOTH under --appimage-extract-and-run                     [FR-002a, R3]
          │
-         ├─ ALL pass on BOTH platforms ──> eligible to publish
+         ├─ ALL pass on BOTH platforms ──> publish/aggregation job, which ALSO requires:
+         │     • SHA256SUMS + provenance attestation ASSETS produced      [FR-017/018a — not just docs]
+         │     • docs/release notes carry the unsigned-binary, no-self-update,
+         │       pinned verification command, AND --appimage-extract-and-run
+         │       fallback text                                            [FR-014/015/018a/002a]
          └─ ANY fail ──────────────────> NOTHING publishes (neither platform)
 ```
 
 *(Corrected 2026-07-17: this diagram previously made an artifact "eligible to publish" the moment
-pyHanko passed. A build with a Node-side update check, telemetry, or DNS attempts could therefore
-validate its signatures and ship — the monitored-network and layer-3 gates existed only in the task
-list, and **a gate that isn't in the release contract is a suggestion**. Codex, PR #7 — P1.)*
+pyHanko passed — the monitored-network and layer-3 gates existed only in the task list, and **a gate
+that isn't in the release contract is a suggestion**. Extended 2026-07-18 (Codex, PR #11) to the full
+blocking set — layer-5, concurrency lock, packet-level monitoring, packaged US3 surfaces, produced
+verification assets, and the extract-and-run portability variant + fallback docs — so the contract, as
+the publishing authority, no longer trails the task list.)*
 
 Non-negotiable rules:
 

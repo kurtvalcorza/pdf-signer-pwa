@@ -127,14 +127,18 @@ One published artifact for one platform (spec § Key Entities).
 | `codeSigned` | `false` | Constant in this feature. Drives the FR-014 disclosure. |
 | `gateResult` | `'passed'` | **Requires EVERY blocking gate to pass, not pyHanko alone** — see below. |
 
-**`gateResult: 'passed'` means all of these, per artifact:**
-
-1. pyHanko validates a signature produced by **this** artifact (FR-010)
-2. The **monitored-network** run recorded **zero** outbound attempts (SC-004 — the *primary* gate)
-3. Layer E2E: CSP alive, `bypassCSP` absent, layer 2 cancels, `blob:` allowed
-4. Layer-3 lint + packaged dependency audit (no Node HTTP client)
-5. Portable-state (two folders) + read-only degradation (FR-011a/b)
-6. **[Linux]** FUSE-less host via extract-and-run (FR-002a)
+**`gateResult: 'passed'` means EVERY blocking gate in
+[contracts/release-artifacts.md](contracts/release-artifacts.md) § Release gate passed for *this*
+artifact — that diagram is the authoritative list, and this entity MUST NOT re-enumerate a subset (a
+partial copy here is exactly how a build gets marked `passed` while skipping a gate the contract now
+makes blocking). At time of writing that list is: pyHanko on this artifact's own output; the
+packet-level monitored-network run (zero egress); the full layer E2E (CSP alive, `bypassCSP` absent,
+layer 2 cancels, `blob:` allowed, `app://` traversal refused, `openExternal` exact-URL-only); layer-3
+lint + packaged dependency audit; **layer-5** (no `crashReporter.start()`, metrics off); portable-state
+(two folders + read-only degradation + the data-dir-scoped concurrency lock); packaged US3 surfaces
+(about unconditional, staleness under a stale-metadata fixture); and **[Linux]** the FUSE-less host
+launch+sign **and** two-folder portability, both under `--appimage-extract-and-run`. If this sentence
+and the contract diverge, the contract wins. *(Codex, PR #11: this field trailed the expanded gate.)*
 
 *(Corrected 2026-07-17: this field previously meant a passing pyHanko run and nothing else. An
 artifact can validate its signatures perfectly while shipping a Node-side update check, telemetry, or
