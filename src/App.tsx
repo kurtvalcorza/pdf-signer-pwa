@@ -25,6 +25,11 @@ import {
   clearSignature,
   hasRememberedSignature,
 } from './features/persistence/signatureStore';
+import { persistenceAvailable } from './lib/desktopPersistence';
+
+// Opt-in persistence is unavailable on desktop read-only media (FR-011b) — the "remember" affordances
+// are then not offered and nothing is written. Evaluated once at load (the shell sets it at startup).
+const canPersist = persistenceAvailable();
 
 interface ImageAsset {
   url: string;
@@ -183,6 +188,7 @@ export default function App() {
 
   // Toggle remembering the currently-selected signature image (explicit opt-in).
   const toggleRememberSignature = useCallback(async (on: boolean, asset: ImageAsset | null) => {
+    if (on && !canPersist) return; // read-only media: never write (FR-011b)
     setRememberSig(on); // reflect the toggle immediately (controlled input)
     if (on && asset) {
       const ok = await saveSignature(asset.bytes, asset.format);
@@ -283,7 +289,7 @@ export default function App() {
           });
         }
 
-        if (req.remember) await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
+        if (req.remember && canPersist) await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
         downloadPdf(signed, doc.name.replace(/\.pdf$/i, '') + '-signed.pdf');
         setMode('stamp');
         if (note) setError(note);
@@ -486,7 +492,7 @@ export default function App() {
               </div>
             )}
 
-            {selectedAsset && (
+            {selectedAsset && canPersist && (
               <label className="flex items-center gap-2 px-1 text-xs text-white/60">
                 <input
                   type="checkbox"

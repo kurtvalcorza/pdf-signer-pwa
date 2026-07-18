@@ -1,0 +1,27 @@
+# electron-builder — portable, single-file offline builds (T004). No installer, no auto-update.
+appId: com.kurtvalcorza.pdfsignerpwa
+productName: PDF Signer
+# asar keeps the app one file inside the artifact; dist/ + electron/ are all that ship.
+asar: true
+files:
+  - dist/**
+  - electron/**
+  - '!electron/verify-packaged.mjs' # dev/test util (imports playwright) — must not ship in the artifact
+  - package.json
+# publish: null — FR-007 is satisfied by the ABSENCE of an update feed, not a flag.
+publish: null
+icon: public/icons/icon-512.png
+directories:
+  output: release
+win:
+  # Windows portable target = a single self-contained .exe, no installer, no registry (FR-001).
+  target: portable
+  # Unsigned by design in this feature (FR-014); SmartScreen is disclosed in docs/desktop.md.
+linux:
+  # Single-file AppImage, no .deb (FR-002). Linux artifacts build on Linux only (R8).
+  target: AppImage
+  category: Office
+  synopsis: Privacy-first, offline, on-device PDF signing
+  desktop:
+    entry:
+      Name: PDF Signer

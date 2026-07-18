@@ -3,6 +3,10 @@ import { DisclosureBanner } from './DisclosureBanner';
 import { loadCertificate, clearCertificate } from '../features/persistence/certStore';
 import { generateSelfSignedP12 } from '../features/signing/generateCert';
 import { downloadBytes } from '../features/signing/export';
+import { persistenceAvailable } from '../lib/desktopPersistence';
+
+// Read-only desktop media (FR-011b): no opt-in cert persistence — never offered, never loaded.
+const canPersist = persistenceAvailable();
 
 export interface SignRequest {
   p12Bytes: Uint8Array;
@@ -42,6 +46,7 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [genError, setGenError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!canPersist) return; // read-only media: don't load a remembered cert
     loadCertificate().then((c) => {
       if (c) {
         setP12Bytes(c.p12Bytes);
@@ -221,7 +226,7 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         className="rounded-lg bg-white/10 px-4 py-3 text-sm outline-none placeholder:text-white/30"
       />
 
-      {!creating && (
+      {!creating && canPersist && (
         <label className="flex items-center gap-2 text-xs text-white/60">
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
           Remember this certificate on this device (never the password)

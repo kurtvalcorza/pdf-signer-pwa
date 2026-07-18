@@ -1,0 +1,4 @@
+{
+  "//": "Scopes CommonJS to the Electron shell (T002 option a). The repo root is \"type\": \"module\"; without this, .js here would be resolved as ESM and the shell would die before the window opens.",
+  "type": "commonjs"
+}
