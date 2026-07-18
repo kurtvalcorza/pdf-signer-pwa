@@ -49,34 +49,58 @@ function registerAppScheme() {
  * host-file disclosure primitive. Registered inside app.whenReady().
  */
 function handleAppProtocol(distDir) {
-  const distRootReal = realpath(distDir); // resolved once; symlink-normalised dist root
   protocol.handle(SCHEME, async (request) => {
     const { pathname } = new URL(request.url);
-    const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
-    const resolved = path.resolve(distDir, rel === '' ? 'index.html' : rel);
-    const relToDist = path.relative(distDir, resolved);
-    if (relToDist.startsWith('..') || path.isAbsolute(relToDist)) {
-      return new Response('forbidden', { status: 403 });
-    }
-    try {
-      // Lexical containment is not enough: a symlink UNDER dist/ could point outside it. Compare REAL
-      // (symlink-resolved) paths before reading, so app:// can never become a host-file disclosure.
-      const [real, root] = await Promise.all([realpath(resolved), distRootReal]);
-      const realRel = path.relative(root, real);
-      if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
-        return new Response('forbidden', { status: 403 });
+    const r = await resolveWithinDist(distDir, pathname);
+    if (r.status === 'forbidden') return new Response('forbidden', { status: 403 });
+    if (r.status === 'ok') {
+      try {
+        const data = await readFile(r.realPath);
+        const type = MIME[path.extname(r.realPath).toLowerCase()] || 'application/octet-stream';
+        return new Response(data, { headers: { 'content-type': type } });
+      } catch {
+        // e.g. the path resolved to the dist dir itself (EISDIR) — fall through to the SPA index.
       }
-      const data = await readFile(real);
-      const type = MIME[path.extname(real).toLowerCase()] || 'application/octet-stream';
-      return new Response(data, { headers: { 'content-type': type } });
-    } catch {
-      // Missing file → SPA fallback: unknown client routes resolve to index.html (inside dist/).
-      const html = await readFile(path.join(distDir, 'index.html'));
-      return new Response(html, { headers: { 'content-type': 'text/html' } });
     }
+    // 'missing' or a directory → SPA fallback: unknown client routes resolve to index.html.
+    const html = await readFile(path.join(distDir, 'index.html'));
+    return new Response(html, { headers: { 'content-type': 'text/html' } });
   });
+}
+
+/**
+ * Resolve a request pathname to a real file WITHIN `distDir`, or refuse it. Two layers:
+ *   1. lexical containment (rejects `../…`, absolute paths);
+ *   2. **realpath** containment — a symlink under dist/ could pass the lexical check while pointing
+ *      outside, so we compare symlink-resolved paths. Without this, `app://` becomes a host-file
+ *      disclosure primitive.
+ * Returns `{ status: 'ok', realPath }` | `{ status: 'forbidden' }` | `{ status: 'missing' }`
+ * (missing → the caller serves the SPA index). Exported for unit testing.
+ */
+async function resolveWithinDist(distDir, pathname) {
+  const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
+  const resolved = path.resolve(distDir, rel === '' ? 'index.html' : rel);
+  const relLex = path.relative(distDir, resolved);
+  if (relLex.startsWith('..') || path.isAbsolute(relLex)) return { status: 'forbidden' };
+  let real, root;
+  try {
+    [real, root] = await Promise.all([realpath(resolved), realpath(distDir)]);
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? { status: 'missing' } : { status: 'forbidden' };
+  }
+  const relReal = path.relative(root, real);
+  if (relReal.startsWith('..') || path.isAbsolute(relReal)) return { status: 'forbidden' };
+  return { status: 'ok', realPath: real };
 }
 
 const appURL = (p = 'index.html') => `${SCHEME}://${HOST}/${p}`;
 
-module.exports = { registerAppScheme, handleAppProtocol, appURL, SCHEME, HOST, APP_SCHEME_PRIVILEGES };
+module.exports = {
+  registerAppScheme,
+  handleAppProtocol,
+  resolveWithinDist,
+  appURL,
+  SCHEME,
+  HOST,
+  APP_SCHEME_PRIVILEGES,
+};

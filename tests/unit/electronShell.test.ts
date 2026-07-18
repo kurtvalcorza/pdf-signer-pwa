@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 // runtime returns a path string, so importing these modules is safe as long as the electron-using
 // functions aren't called — we only assert the pure constants/logic here.
 const require = createRequire(import.meta.url);
-const { APP_SCHEME_PRIVILEGES } = require('../../electron/protocol.js');
+const { APP_SCHEME_PRIVILEGES, resolveWithinDist } = require('../../electron/protocol.js');
 const { ALLOWED_SCHEMES, REPO_URL } = require('../../electron/network.js');
 const paths = require('../../electron/paths.js');
 const { loadBuildMetadata } = require('../../electron/buildmeta.js');
@@ -109,6 +109,46 @@ describe('electron shell — staleness (US3): isStale derives from engineDate, n
     process.env.PDFSIGNER_BUILD_INFO = join(tmpdir(), 'does-not-exist-build-info.json');
     expect(loadBuildMetadata()).toBeNull();
   });
+});
+
+describe('electron shell — app: scheme path safety (resolveWithinDist)', () => {
+  const withDist = (fn: (dir: string) => Promise<void> | void) => async () => {
+    const dir = _mkdtemp(join(tmpdir(), 'dist-'));
+    writeFileSync(join(dir, 'index.html'), '<html></html>');
+    try {
+      await fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it('serves a real file inside dist', withDist(async (dir) => {
+    const r = await resolveWithinDist(dir, '/index.html');
+    expect(r.status).toBe('ok');
+  }));
+
+  it('refuses lexical `..` traversal', withDist(async (dir) => {
+    expect((await resolveWithinDist(dir, '/../../secret')).status).toBe('forbidden');
+  }));
+
+  it('reports missing for unknown routes (→ SPA fallback)', withDist(async (dir) => {
+    expect((await resolveWithinDist(dir, '/some/client/route')).status).toBe('missing');
+  }));
+
+  it('refuses a symlink that ESCAPES dist (realpath, not lexical)', withDist(async (dir) => {
+    const { symlinkSync, writeFileSync: wf } = await import('node:fs');
+    const outside = _mkdtemp(join(tmpdir(), 'outside-'));
+    wf(join(outside, 'secret.txt'), 'top secret');
+    let made = false;
+    try {
+      symlinkSync(join(outside, 'secret.txt'), join(dir, 'evil')); // may fail on Windows non-admin
+      made = true;
+    } catch {
+      /* environment can't create symlinks — the lexical/traversal cases still cover the guard */
+    }
+    if (made) expect((await resolveWithinDist(dir, '/evil')).status).toBe('forbidden');
+    rmSync(outside, { recursive: true, force: true });
+  }));
 });
 
 describe('electron shell — data-directory single-instance lock', () => {

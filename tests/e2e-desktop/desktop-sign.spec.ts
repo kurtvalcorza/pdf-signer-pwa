@@ -94,6 +94,23 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
  * MAIN-process session request (`session.fetch`), which the page CSP does not govern, so only the
  * webRequest cancellation can stop it.
  */
+test('desktop: layer-5 no-phone-home switches are set (not just crashReporter absent)', async () => {
+  const app = await electron.launch({ args: [MAIN], cwd: ROOT, env: { ...process.env, PDFSIGNER_HEADLESS: '1' } });
+  try {
+    await app.firstWindow();
+    // A build-time/runtime assertion: a live run that happens to make no request proves nothing about
+    // whether these are set. Read them directly from the command line (network-policy.md § layer 5).
+    const set = await app.evaluate(({ app: a }) =>
+      ['disable-background-networking', 'disable-component-update', 'disable-domain-reliability', 'disable-breakpad'].map(
+        (s) => a.commandLine.hasSwitch(s),
+      ),
+    );
+    expect(set).toEqual([true, true, true, true]);
+  } finally {
+    await app.close();
+  }
+});
+
 test('desktop: a remote https request is cancelled by webRequest, not CSP (layer 2)', async () => {
   const app = await electron.launch({ args: [MAIN], cwd: ROOT, env: { ...process.env, PDFSIGNER_HEADLESS: '1' } });
   try {

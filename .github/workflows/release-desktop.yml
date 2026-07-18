@@ -97,8 +97,10 @@ jobs:
           # packets in its stdio buffer past our read window and report a false COUNT=0.
           sudo ip netns exec appns tcpdump -i any -n -U -w /tmp/egress.pcap 'not (host 127.0.0.1 or host ::1)' &
           sleep 2
+          # Same APPIMAGE data-location branch as the signing gate above, for consistency.
+          APPIMAGE_PATH=$(ls release/*.AppImage | head -1)
           sudo ip netns exec appns su "$USER" -c \
-            'PKG_EXE=release/squashfs-root/pdf-signer-pwa ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs'
+            "PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE='$APPIMAGE_PATH' ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs"
           sleep 2
           # Stop the capture cleanly (SIGINT makes tcpdump flush + exit) BEFORE reading the pcap.
           sudo pkill -INT -f 'tcpdump.*egress.pcap' || true
