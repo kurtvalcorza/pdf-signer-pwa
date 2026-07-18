@@ -19,7 +19,9 @@ permissions:
 jobs:
   build:
     strategy:
-      fail-fast: true # a red platform must stop the whole release
+      # false so BOTH platforms build/gate to completion and surface their own failures — publish is
+      # gated by `needs: build` (every leg must succeed), so a red platform still blocks the release.
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -133,7 +135,10 @@ jobs:
         shell: bash
         run: |
           cd release
-          FILE=$(ls *.exe *.AppImage 2>/dev/null | head -1)
+          # `ls *.exe *.AppImage` fails (set -e) because one glob never matches per platform. List all,
+          # then filter — so the present artifact is found on either OS.
+          FILE=$(ls | grep -E '\.(exe|AppImage)$' | head -1)
+          echo "checksumming: $FILE"
           sha256sum "$FILE" > "SHA256SUMS-${{ runner.os }}"
       - name: Provenance attestation (FR-018a — record in GitHub attestations API, not a release asset)
         uses: actions/attest-build-provenance@v1
