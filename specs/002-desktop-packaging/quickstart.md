@@ -102,8 +102,10 @@ directory as a fallback; the temp `userData` is removed on quit.
 
 Observed from **outside** the app — the spec says "not merely asserted internally".
 
-1. **Primary gate**: run with networking **available but monitored** (firewall/proxy/packet capture
-   that logs and blocks) across launch → sign → idle → quit. **Fail on ANY outbound packet or socket,
+1. **Primary gate**: run with networking **available but monitored at the packet level** (firewall /
+   packet capture / network namespace over the whole process tree — **not a proxy**, which sees only
+   configured HTTP(S) and misses UDP/ICMP to a numeric IP) across launch → sign → idle → quit. **Fail
+   on ANY outbound packet or socket,
    on any protocol, to any destination** — TCP, UDP, ICMP, DNS, QUIC, by name or numeric IP,
    successful or not. **Not** a `DNS`/`TCP`/`HTTP` allow-list: a main-process UDP send to a numeric IP
    would slip that and exfiltrate anyway (network-policy.md § Verification).

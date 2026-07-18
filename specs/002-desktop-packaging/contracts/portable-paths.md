@@ -6,14 +6,16 @@ store, including a desktop application data directory)
 
 ## The promise this contract keeps
 
-> *"Everything the app writes lives in **one place**, right next to the artifact — delete the
-> artifact and that folder, and no application or user data remains."*
+> *"Everything the app writes in normal (writable-adjacent) operation lives in **one place**, right
+> next to the artifact — delete the artifact and that folder, and **no user content remains**."*
 
 **One place, not one file.** A bundled engine writes cache/GPU/profile files into its data directory
 on every launch, opt-in or not, so "delete the binary and nothing remains" was never achievable and
-is not claimed (SC-005). And the promise is scoped to **application and user data** — running an
-executable can leave OS-controlled traces (prefetch, execution history, antivirus records) that no
-app can reach. This is a privacy tool, not an anti-forensics tool. *(Both corrections: Codex, PR #7.)*
+is not claimed (SC-005). The guarantee is scoped to **user content**: bounded non-user-content residue
+(engine cache, and — in the read-only ephemeral case or under `--appimage-extract-and-run` — files
+*outside* the adjacent folder) may persist and is disclosed in SC-005; and running an executable can
+leave OS-controlled traces (prefetch, execution history, antivirus records) that no app can reach.
+This is a privacy tool, not an anti-forensics tool. *(Corrections: Codex, PR #7/#11.)*
 
 The promise is only true if every write the application makes lands next to the artifact. This
 contract exists because Electron's **defaults break that promise silently** — the default `userData`

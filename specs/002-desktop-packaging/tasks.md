@@ -294,10 +294,10 @@ complete a sign, validate with pyHanko.
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T022 [P] [US2] Run the `tests/e2e-desktop/` suite (T014–T017) against the AppImage on Linux via
-      `playwright.desktop.config.ts`, with `executablePath` pointed at the built AppImage. Same
-      assertions, second artifact — **not** an inherited pass (Principle V). The suite is shared; the
-      *run* is not.
+- [ ] T022 [P] [US2] Run the `tests/e2e-desktop/` suite (**T014–T017a**, incl. the concurrent-instance
+      lock) against the AppImage on Linux via `playwright.desktop.config.ts`, with `executablePath`
+      pointed at the built AppImage. Same assertions, second artifact — **not** an inherited pass
+      (Principle V). The suite is shared; the *run* is not.
 
 ### Implementation for User Story 2
 
@@ -401,8 +401,10 @@ phase MUST ship with or before any public release — not as a follow-up.
       `.exe`) and `ubuntu-latest` (AppImage), both from **one commit**, no cross-compiling (R8).
       Leave `ci.yml` **untouched** (SC-008).
 - [ ] T031 [US4] Run the **full** desktop gate in CI per platform — every item below is
-      **blocking**; a release publishes only if all pass:
-      1. Layer/flow E2E: T014–T017 (Windows), T022 (Linux)
+      **blocking**; a release publishes only if all pass. **The authoritative, complete gate list is
+      [contracts/release-artifacts.md](contracts/release-artifacts.md) § Release gate; this enumeration
+      maps each gate to its task and MUST match it — if they diverge, the contract wins.**
+      1. Layer/flow E2E: T014–T017 **+ T017a** (Windows), T022 (Linux)
       2. pyHanko on each artifact's **own** output: T021, T025
       3. **The monitored-network gate (T031a)** — the *primary* SC-004 check
       4. **The FUSE-less AppImage check (T023a)** — FR-002a — **and [Linux] the two-folder portability
@@ -415,7 +417,11 @@ phase MUST ship with or before any public release — not as a follow-up.
          absent from `electron/**` and the metrics-disable switches present. A *source/build-time* check
          is required because an armed reporter with no crash during the run emits nothing, so the
          monitored gate (item 3) cannot observe it (Codex, PR #11)
-      7. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
+      7. **Packaged US3 surfaces present in the RUNNING app** — assert the staleness notice (T027) and
+         the about/no-self-update surface (T028) actually render in the *packaged* artifact, not merely
+         that docs contain the phrases. A build could omit T027/T028 and still pass a text scan; FR-015/
+         FR-015a require the app itself to disclose (Codex, PR #11)
+      8. **The existing web gates (T038) green for the same commit** — SC-008/FR-019. `ci.yml` runs
          on pushes to `main`, PRs, and manual dispatch, so a tag-triggered release workflow would
          **not** re-run them: this job must either run them or declare an explicit dependency on a
          successful CI run for the same SHA. *(Codex, PR #7 — verified against `ci.yml`'s triggers.)*
@@ -428,8 +434,12 @@ phase MUST ship with or before any public release — not as a follow-up.
       in round 1 landed in the contract and quickstart but never reached the task that enforces
       them. A gate that isn't in the release job is a comment.)*
 - [ ] T031a [US4] Implement the **monitored-network gate**: run each packaged artifact with
-      networking **available but intercepted** (firewall/proxy/packet capture over the whole app
-      process tree) across launch → sign → idle → quit, and **fail the build on ANY outbound packet or
+      networking **available but monitored at the PACKET level** — firewall / packet capture / network
+      namespace over the whole app process tree. **A proxy is NOT sufficient** and a proxy-only
+      implementation is disallowed: it sees only the HTTP(S) traffic it is configured for, so a
+      main-process `node:dgram` UDP send or an ICMP/raw-socket egress to a numeric IP passes straight
+      through while the job still claims to be "monitoring". Run across launch → sign → idle → quit,
+      and **fail the build on ANY outbound packet or
       socket, on any protocol, to any destination** — TCP, **UDP**, ICMP, raw sockets, DNS, QUIC,
       resolved by name or numeric IP. **Not a `DNS`/`TCP`/`HTTP` allow-list** — that is the protocol
       hole network-policy.md § Verification closes as a release blocker (a main-process `node:dgram`
@@ -442,14 +452,20 @@ phase MUST ship with or before any public release — not as a follow-up.
       all legs succeeded** — the matrix legs run per-platform and cannot see each other, so without an
       aggregator a green Windows leg could publish while Linux was red (the partial release SC-002
       forbids). Do **not** use `if: always()` on this job — that would let it publish on a partial
-      failure, defeating the point. Before it publishes, it MUST also **gate on the US3 disclosures
-      AND the verification path being present**: (i) `docs/desktop.md` + the release-notes template
-      actually contain the unsigned-binary and no-self-update statements (T029, FR-014/FR-015); **and
-      (ii) they contain the pinned checksum + attestation verification command** (T034, FR-018a) — the
-      unsigned-binary disclosure *promises* a way to verify instead, so publishing the warning without
-      the verification steps is itself an overclaim (FR-014). Both are required release scope (Phase 5
-      checkpoint) that nothing previously blocked on. A required disclosure — or the verification path
-      it promises — that no job checks is one that silently goes missing. *(Codex, PR #11.)*
+      failure, defeating the point. Before it publishes, it MUST also gate on **both the presence of
+      the required text AND the existence of the assets that text refers to** — instructions without
+      artifacts are as useless as artifacts without instructions:
+      (i) `docs/desktop.md` + the release-notes template contain the **unsigned-binary**,
+          **no-self-update**, pinned **checksum + attestation verification command**, and the
+          **`--appimage-extract-and-run` fallback** text (T029/T034, FR-014/015/018a/002a — the
+          FUSE-less fallback is the *only* usable no-root path on such hosts, so omitting it ships an
+          AppImage many users cannot launch);
+      (ii) the actual **`SHA256SUMS` and provenance-attestation assets were produced** (T032/T033
+          succeeded) and are attached — a release with correct instructions but no checksum/attestation
+          asset makes the FR-014/FR-018a mitigation unusable while the job is green.
+      (US3 *packaged-app* surfaces are covered by T031 item 7, on which this job `needs:`.)
+      A required disclosure, the assets it points at, or the surface it promises — that no job checks is
+      one that silently goes missing. *(Codex, PR #11.)*
 - [ ] T033 [US4] Add build-provenance attestation via `actions/attest-build-provenance` (or
       `actions/attest`, which GitHub now steers new implementations toward — either satisfies
       FR-018a). Permissions: `id-token: write`, `attestations: write`, `contents: write`.

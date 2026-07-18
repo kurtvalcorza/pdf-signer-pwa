@@ -18,7 +18,8 @@
 The signing application currently reaches users as an installable web app. This feature adds a
 second, parallel distribution: a **single-file, run-anywhere desktop application** for Windows and
 Linux that never contacts a network and keeps everything it writes in **one folder beside itself** —
-delete the artifact and that folder, and no application or user data remains.
+delete the artifact and that folder, and **no user content remains** (SC-005; bounded
+non-user-content residue such as engine cache or extracted program files is disclosed there).
 
 > **This is the product's top-level claim, so it is scoped precisely** (Principle IV): it covers
 > **application and user data**. It does **not** claim zero footprint. A bundled engine writes
@@ -32,11 +33,12 @@ delete the artifact and that folder, and no application or user data remains.
 The value is not new signing capability — it is **reach and provability**. A user who cannot or will
 not trust a URL (an air-gapped machine, a locked-down workstation, a reviewer who wants to inspect
 what they are running) can copy one file onto the machine, run it, sign a document, and then remove
-it **along with the one data folder it creates beside itself** — leaving no application or user data
-behind.
+it **along with the one data folder it creates beside itself** — leaving **no user content** behind
+(SC-005 discloses the bounded non-user-content residue).
 
-> **Scope of the "no trace" claim** (Principle IV): it covers **data the application writes**, which
-> all lives in one folder beside the artifact (SC-005). It does **not** and cannot cover
+> **Scope of the "no trace" claim** (Principle IV): it covers **user content the application writes**,
+> which all lives in one folder beside the artifact (SC-005) — the bounded non-user-content residue
+> (engine cache, extracted program files) is disclosed there too. It does **not** and cannot cover
 > OS-controlled traces of having run an executable at all — prefetch, execution history, antivirus
 > records, shell MRU. This is a privacy tool, **not an anti-forensics tool**, and no surface may
 > imply otherwise.
@@ -121,16 +123,17 @@ requirements rather than merely this feature's good intentions.
 A user copies a single `.exe` onto a Windows machine — one with no internet connection, or one where
 they lack rights to install software. They double-click it, the signing app opens in its own window,
 and they complete the full existing flow: open a PDF, place a signature image, sign with a `.p12`,
-and save the signed file. Everything the app wrote lives in **one folder beside the `.exe`**; they
-delete the `.exe` and that folder, and **no application or user data remains on the machine**.
+and save the signed file. The user content the app wrote lives in **one folder beside the `.exe`**;
+they delete the `.exe` and that folder, and **no user content remains on the machine** (SC-005).
 
 > *(Amended 2026-07-17, twice, both by Codex review on PR #7. It first said deleting the `.exe` alone
 > left "no evidence" — false, since a bundled engine writes cache files into its data folder every
 > launch. The corrected version still claimed the machine "retains no evidence the app ever ran" —
 > also false, and not ours to promise: running any executable can leave OS-controlled traces
 > (execution history, prefetch, Defender records, shell recent-file entries) that no application can
-> reach or erase. The guarantee is scoped to what the app writes: **no application or user data
-> residue**. It is not an anti-forensics tool and must never imply it is.)*
+> reach or erase. The guarantee is scoped to **user content**: no document, certificate, or signature
+> residue (bounded non-user-content residue — engine cache, extracted program files — is disclosed in
+> SC-005). It is not an anti-forensics tool and must never imply it is.)*
 
 **Why this priority**: This is the feature. Windows is the platform where "I can't install things"
 and "this machine is offline" most commonly co-occur, and it is the author's own platform, so it is
@@ -154,9 +157,11 @@ Delivers complete standalone value even if the Linux build never ships.
    signs with a valid `.p12` and password, **Then** the resulting file is structurally equivalent to
    one produced by the web app for the same inputs, and passes the automated signature validator.
 3. **Given** the user has signed a document and closed the app, **When** the user deletes the binary
-   **and its adjacent data folder** and inspects the machine, **Then** no application data remains
+   **and its adjacent data folder** and inspects the machine, **Then** no **user content** remains
    anywhere on the system — in particular nothing in `%APPDATA%` — except files the user explicitly
-   saved. *(Amended 2026-07-17: deleting the binary alone is not sufficient, and the app must say so
+   saved. (Bounded non-user-content residue — engine cache, extracted program files, especially after
+   a crash or on read-only media — is disclosed in SC-005 and is never a document, certificate, or
+   signature.) *(Amended 2026-07-17: deleting the binary alone is not sufficient, and the app must say so
    — a bundled engine writes cache files beside itself on every launch. See SC-005.)*
 4. **Given** the application is running, **When** any attempt is made to reach the network, **Then**
    it fails — the app functions identically whether or not a connection exists.
@@ -200,8 +205,9 @@ disabled, complete a sign, validate with pyHanko.
 2. **Given** the AppImage is running offline, **When** the user completes the signing flow, **Then**
    the output passes the automated signature validator.
 3. **Given** the user deletes the AppImage **and its adjacent data folder**, **When** the machine is
-   inspected, **Then** no application data remains except files the user explicitly saved (see
-   SC-005).
+   inspected, **Then** no **user content** remains except files the user explicitly saved — bounded
+   non-user-content residue (engine cache, or program files extracted by `--appimage-extract-and-run`)
+   may persist and is disclosed in SC-005.
 
 ---
 
