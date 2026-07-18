@@ -296,22 +296,24 @@ export function reserveExistingObjectNumbers(signedPdf: Uint8Array, probe: PDFDo
   const ctx = probe.context;
   let floor = ctx.largestObjectNumber;
   const text = Buffer.from(signedPdf).toString('latin1');
-  // An indirect-object header is `objNum genNum obj`. PDF whitespace between the tokens
-  // INCLUDES `%` comments, and pdf-lib parses a header written `9 0 %c\nobj` — so the
-  // separator must swallow comments too, or the highest ObjStm/XRef container could be
-  // missed and then clobbered. `\bobj\b` avoids matching `/Type /ObjStm`; over-broad
-  // matches are harmless — they can only raise the floor, never lower it.
-  const WS = '(?:\\s|%[^\\r\\n]*)'; // one unit of PDF whitespace: a space char OR a comment
+  // An indirect-object header is `objNum genNum obj`. Its separators are PDF whitespace,
+  // which is a SUPERSET of JS `\s` — it also includes NUL (0x00) — and `%` comments count
+  // as whitespace too. Missing any of these could skip the highest ObjStm/XRef container
+  // header and let the clobber recur, so the separator matches all of them. `\bobj\b`
+  // avoids matching `/Type /ObjStm`; over-broad matches are harmless — they can only raise
+  // the floor, never lower it.
+  const WS = '(?:[\\s\\x00]|%[^\\r\\n]*)'; // a PDF-whitespace char (incl. NUL) OR a comment
   const header = new RegExp(`(\\d+)${WS}+\\d+${WS}+obj\\b`, 'g');
-  // A real object's number cannot exceed the file's byte length — every in-use object
-  // needs at least its own cross-reference entry — so a larger match is incidental
-  // stream/comment bytes and is rejected. This cap also keeps `floor` far below
-  // MAX_SAFE_INTEGER, where `nextRef()`'s `+= 1` stops advancing and would hand two new
-  // objects the same number.
-  const maxPlausible = signedPdf.length;
+  // Object numbers are identifiers, not byte offsets: a valid file may number an object
+  // sparsely, far above its object count (PDF xref sections need no entry for every lower
+  // number), so they are NOT bounded by file length. The only bound needed is headroom
+  // below MAX_SAFE_INTEGER — past it, `nextRef()`'s `+= 1` stops advancing and would hand
+  // two new objects the same number. No real producer numbers objects anywhere near that,
+  // so this rejects only crafted stream/comment bytes, never a legitimate sparse number.
+  const MAX_OBJ = Number.MAX_SAFE_INTEGER - 1024; // 1024 ≫ the handful of objects we add
   for (const m of text.matchAll(header)) {
     const n = Number(m[1]);
-    if (Number.isSafeInteger(n) && n <= maxPlausible && n > floor) floor = n;
+    if (n <= MAX_OBJ && n > floor) floor = n;
   }
   ctx.largestObjectNumber = floor;
 }

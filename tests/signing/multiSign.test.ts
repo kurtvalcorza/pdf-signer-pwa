@@ -560,16 +560,37 @@ describe('reserveExistingObjectNumbers (untrusted-bytes hardening)', () => {
     expect(probe.context.largestObjectNumber).toBe(target);
   });
 
-  it('rejects an implausible object number that would exhaust safe integers', async () => {
+  it('counts a header whose tokens are separated by NUL bytes (PDF whitespace)', async () => {
+    const probe = await base();
+    const start = probe.context.largestObjectNumber;
+    const target = start + 6;
+    // pdf-lib accepts NUL (0x00) as whitespace in a header; JS `\s` does not, so the scan
+    // must match it explicitly or miss a container written this way.
+    reserveExistingObjectNumbers(bytesOf(`%PDF-1.7\n${target}\x00 0\x00 obj\n<< >>\nendobj\n`, 300), probe);
+    expect(probe.context.largestObjectNumber).toBe(target);
+  });
+
+  it('counts a legally SPARSE object number that exceeds the file byte length', async () => {
+    const probe = await base();
+    // A valid file may number a container far above its object count. Object 1001 in a
+    // ~40-byte file is legal (sparse xref); rejecting it as "> file length" would leave the
+    // floor too low and let the next new object reuse the container's number (Codex, PR #9).
+    const doc = bytesOf(`%PDF-1.7\n1001 0 obj\n<< >>\nendobj\n`);
+    expect(doc.length).toBeLessThan(1001);
+    reserveExistingObjectNumbers(doc, probe);
+    expect(probe.context.largestObjectNumber).toBe(1001);
+  });
+
+  it('rejects an object number without safe-integer headroom (nextRef would saturate)', async () => {
     const probe = await base();
     const start = probe.context.largestObjectNumber;
     const real = start + 7;
-    // A crafted MAX_SAFE_INTEGER header passes Number.isSafeInteger but must be dropped:
-    // taking it as the floor would saturate nextRef()'s `+= 1` and duplicate object numbers.
+    // A crafted MAX_SAFE_INTEGER header must be dropped: taking it as the floor would
+    // saturate nextRef()'s `+= 1` and duplicate object numbers. The bound is headroom
+    // below MAX_SAFE_INTEGER, NOT the file length (that would drop sparse numbers, above).
     const doc = bytesOf(`%PDF-1.7\n9007199254740991 0 obj\n<< >>\nendobj\n${real} 0 obj\n<< >>\nendobj\n`, 300);
     reserveExistingObjectNumbers(doc, probe);
-    // The huge number (> file length) is ignored; the plausible one sets the floor.
     expect(probe.context.largestObjectNumber).toBe(real);
-    expect(probe.context.largestObjectNumber).toBeLessThan(Number.MAX_SAFE_INTEGER);
+    expect(probe.context.largestObjectNumber).toBeLessThan(Number.MAX_SAFE_INTEGER - 1024);
   });
 });
