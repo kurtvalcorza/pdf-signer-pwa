@@ -19,7 +19,9 @@ permissions:
 jobs:
   build:
     strategy:
-      fail-fast: true # a red platform must stop the whole release
+      # false so BOTH platforms build/gate to completion and surface their own failures — publish is
+      # gated by `needs: build` (every leg must succeed), so a red platform still blocks the release.
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -88,26 +90,42 @@ jobs:
           sudo ip netns add appns
           sudo ip netns exec appns ip link set lo up
           # a routable-but-black-hole default so egress ATTEMPTS are emitted (and captured), not merely
-          # refused for lack of a route (which would record nothing — the offline-run trap).
+          # refused for lack of a route (which would record nothing — the offline-run trap). Disable
+          # IPv6 on the dummy so bringing it up doesn't itself emit ND/router-solicitation multicast.
+          sudo ip netns exec appns sysctl -w net.ipv6.conf.default.disable_ipv6=1
+          sudo ip netns exec appns sysctl -w net.ipv6.conf.all.disable_ipv6=1
           sudo ip netns exec appns ip link add dummy0 type dummy
           sudo ip netns exec appns ip addr add 10.99.0.1/24 dev dummy0
           sudo ip netns exec appns ip link set dummy0 up
           sudo ip netns exec appns ip route add default dev dummy0
           # -U = write each packet immediately (unbuffered); without it libpcap can hold captured
           # packets in its stdio buffer past our read window and report a false COUNT=0.
-          sudo ip netns exec appns tcpdump -i any -n -U -w /tmp/egress.pcap 'not (host 127.0.0.1 or host ::1)' &
+          sudo ip netns exec appns tcpdump -i any -nn -U -w /tmp/egress.pcap 'not (host 127.0.0.1 or host ::1)' &
           sleep 2
           # Same APPIMAGE data-location branch as the signing gate above, for consistency.
           APPIMAGE_PATH=$(ls release/*.AppImage | head -1)
+          # Skip pyHanko here: this run's job is egress monitoring, and pyHanko validation (a) needs a
+          # network and (b) could itself emit traffic and pollute the capture. The artifact's signature
+          # is validated in the step above, with the network available.
           sudo ip netns exec appns su "$USER" -c \
-            "PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE='$APPIMAGE_PATH' ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs"
+            "PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE='$APPIMAGE_PATH' PDFSIGNER_SKIP_VALIDATE=1 ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs"
           sleep 2
           # Stop the capture cleanly (SIGINT makes tcpdump flush + exit) BEFORE reading the pcap.
           sudo pkill -INT -f 'tcpdump.*egress.pcap' || true
           sleep 1
-          COUNT=$(sudo tcpdump -r /tmp/egress.pcap 2>/dev/null | wc -l || echo 0)
-          echo "captured $COUNT non-loopback packets from the app process tree"
-          test "$COUNT" -eq 0
+          echo "=== everything captured (for evidence/diagnosis) ==="
+          sudo tcpdump -nn -r /tmp/egress.pcap 2>/dev/null || true
+          # FAIL on real egress = any UNICAST packet to a non-loopback host. Multicast/broadcast
+          # (ND, mDNS, IGMP) is stack noise from configuring the interface, not the app phoning home.
+          # Write to a file then count (a piped `wc -l` under pipefail + `|| echo 0` can yield a
+          # non-integer that breaks the numeric test).
+          sudo tcpdump -nn -r /tmp/egress.pcap 'not multicast and not broadcast' 2>/dev/null > /tmp/egress-unicast.txt || true
+          COUNT=$(wc -l < /tmp/egress-unicast.txt | tr -d '[:space:]')
+          echo "unicast egress packets from the app process tree: ${COUNT:-unknown}"
+          if [ "${COUNT:-1}" != "0" ]; then
+            echo "::error::EGRESS DETECTED — the app made a network request (see capture above)."
+            exit 1
+          fi
 
       # --- Checksums + provenance for the shipped artifact ---
       # PER-PLATFORM name so the two matrix legs don't both upload a file literally named SHA256SUMS
@@ -117,7 +135,10 @@ jobs:
         shell: bash
         run: |
           cd release
-          FILE=$(ls *.exe *.AppImage 2>/dev/null | head -1)
+          # `ls *.exe *.AppImage` fails (set -e) because one glob never matches per platform. List all,
+          # then filter — so the present artifact is found on either OS.
+          FILE=$(ls | grep -E '\.(exe|AppImage)$' | head -1)
+          echo "checksumming: $FILE"
           sha256sum "$FILE" > "SHA256SUMS-${{ runner.os }}"
       - name: Provenance attestation (FR-018a — record in GitHub attestations API, not a release asset)
         uses: actions/attest-build-provenance@v1
