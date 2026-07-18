@@ -115,9 +115,15 @@ jobs:
           sudo tcpdump -nn -r /tmp/egress.pcap 2>/dev/null || true
           # FAIL on real egress = any UNICAST packet to a non-loopback host. Multicast/broadcast
           # (ND, mDNS, IGMP) is stack noise from configuring the interface, not the app phoning home.
-          COUNT=$(sudo tcpdump -nn -r /tmp/egress.pcap 'not multicast and not broadcast' 2>/dev/null | wc -l || echo 0)
-          echo "unicast egress packets from the app process tree: $COUNT"
-          test "$COUNT" -eq 0
+          # Write to a file then count (a piped `wc -l` under pipefail + `|| echo 0` can yield a
+          # non-integer that breaks the numeric test).
+          sudo tcpdump -nn -r /tmp/egress.pcap 'not multicast and not broadcast' 2>/dev/null > /tmp/egress-unicast.txt || true
+          COUNT=$(wc -l < /tmp/egress-unicast.txt | tr -d '[:space:]')
+          echo "unicast egress packets from the app process tree: ${COUNT:-unknown}"
+          if [ "${COUNT:-1}" != "0" ]; then
+            echo "::error::EGRESS DETECTED — the app made a network request (see capture above)."
+            exit 1
+          fi
 
       # --- Checksums + provenance for the shipped artifact ---
       # PER-PLATFORM name so the two matrix legs don't both upload a file literally named SHA256SUMS
