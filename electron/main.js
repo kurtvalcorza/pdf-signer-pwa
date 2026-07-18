@@ -10,8 +10,16 @@ const { resolvePortableData, acquireDirLock } = require('./paths');
 
 const DIST = path.join(__dirname, '..', 'dist'); // repo dist/ in dev; app.asar/dist when packaged
 
-// Layer 5 (network-policy.md): we NEVER call crashReporter.start() — a dump could contain in-memory
-// key material (FR-012) or phone home. Its absence is the guarantee; there is no flag to misconfigure.
+// Layer 5 (network-policy.md): no phone-home. Two parts, both before `ready`:
+//  1. We NEVER call crashReporter.start() — a dump could contain in-memory key material (FR-012).
+//  2. Disable Chromium's background networking / metrics / component + domain-reliability services
+//     via command-line switches (these would otherwise initialise their own network paths that
+//     `webRequest` does not govern). Layer 6 (the monitored gate) is the proof; these are the switches
+//     the contract requires be SET, not merely relied upon by absence. *(Codex, PR #13.)*
+app.commandLine.appendSwitch('disable-background-networking');
+app.commandLine.appendSwitch('disable-component-update');
+app.commandLine.appendSwitch('disable-domain-reliability');
+app.commandLine.appendSwitch('disable-breakpad'); // no crash-dump uploader armed at all
 
 // --- Runs synchronously at load, before `ready` ---
 registerAppScheme();

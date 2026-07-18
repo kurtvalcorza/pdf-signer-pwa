@@ -40,6 +40,8 @@ jobs:
           python-version: '3.12'
       - run: pip install pyhanko
       - run: npm ci
+      - name: Lint (blocks the release on a layer-3 network-import violation)
+        run: npm run lint
       - name: Install Linux headless deps
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb
@@ -65,8 +67,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -e
+          APPIMAGE_PATH=$(ls release/*.AppImage | head -1)
           ( cd release && chmod +x *.AppImage && ./*.AppImage --appimage-extract >/dev/null )
-          PKG_EXE=release/squashfs-root/pdf-signer-pwa xvfb-run -a node electron/verify-packaged.mjs
+          # PKG_APPIMAGE drives the real Linux APPIMAGE data-location branch (dirname(APPIMAGE)), not
+          # the Windows PORTABLE_EXECUTABLE_DIR path — so an AppImage-specific persistence regression
+          # is exercised.
+          PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE="$APPIMAGE_PATH" \
+            xvfb-run -a node electron/verify-packaged.mjs
       # SC-004 no-egress gate (network-namespace method, contracts/release-artifacts.md § Verification):
       # run the packaged app with a monitored dummy default route and NO real network, capturing on the
       # namespace's interface. Fail on ANY captured packet over the whole app process tree.
@@ -86,11 +93,16 @@ jobs:
           sudo ip netns exec appns ip addr add 10.99.0.1/24 dev dummy0
           sudo ip netns exec appns ip link set dummy0 up
           sudo ip netns exec appns ip route add default dev dummy0
-          sudo ip netns exec appns timeout 40 tcpdump -i any -n -w /tmp/egress.pcap 'not (host 127.0.0.1 or host ::1)' &
+          # -U = write each packet immediately (unbuffered); without it libpcap can hold captured
+          # packets in its stdio buffer past our read window and report a false COUNT=0.
+          sudo ip netns exec appns tcpdump -i any -n -U -w /tmp/egress.pcap 'not (host 127.0.0.1 or host ::1)' &
           sleep 2
           sudo ip netns exec appns su "$USER" -c \
             'PKG_EXE=release/squashfs-root/pdf-signer-pwa ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs'
           sleep 2
+          # Stop the capture cleanly (SIGINT makes tcpdump flush + exit) BEFORE reading the pcap.
+          sudo pkill -INT -f 'tcpdump.*egress.pcap' || true
+          sleep 1
           COUNT=$(sudo tcpdump -r /tmp/egress.pcap 2>/dev/null | wc -l || echo 0)
           echo "captured $COUNT non-loopback packets from the app process tree"
           test "$COUNT" -eq 0

@@ -5,7 +5,7 @@
 // bundle runs unchanged (FR-009/FR-019).
 
 const { protocol } = require('electron');
-const { readFile } = require('node:fs/promises');
+const { readFile, realpath } = require('node:fs/promises');
 const path = require('node:path');
 
 const SCHEME = 'app';
@@ -49,21 +49,28 @@ function registerAppScheme() {
  * host-file disclosure primitive. Registered inside app.whenReady().
  */
 function handleAppProtocol(distDir) {
+  const distRootReal = realpath(distDir); // resolved once; symlink-normalised dist root
   protocol.handle(SCHEME, async (request) => {
     const { pathname } = new URL(request.url);
     const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
     const resolved = path.resolve(distDir, rel === '' ? 'index.html' : rel);
     const relToDist = path.relative(distDir, resolved);
-    if (relToDist === '' || relToDist.startsWith('..') || path.isAbsolute(relToDist)) {
+    if (relToDist.startsWith('..') || path.isAbsolute(relToDist)) {
       return new Response('forbidden', { status: 403 });
     }
     try {
-      const data = await readFile(resolved);
-      const type = MIME[path.extname(resolved).toLowerCase()] || 'application/octet-stream';
+      // Lexical containment is not enough: a symlink UNDER dist/ could point outside it. Compare REAL
+      // (symlink-resolved) paths before reading, so app:// can never become a host-file disclosure.
+      const [real, root] = await Promise.all([realpath(resolved), distRootReal]);
+      const realRel = path.relative(root, real);
+      if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+        return new Response('forbidden', { status: 403 });
+      }
+      const data = await readFile(real);
+      const type = MIME[path.extname(real).toLowerCase()] || 'application/octet-stream';
       return new Response(data, { headers: { 'content-type': type } });
     } catch {
-      // SPA fallback: unknown client routes resolve to index.html (never a traversal escape —
-      // that was rejected above).
+      // Missing file → SPA fallback: unknown client routes resolve to index.html (inside dist/).
       const html = await readFile(path.join(distDir, 'index.html'));
       return new Response(html, { headers: { 'content-type': 'text/html' } });
     }

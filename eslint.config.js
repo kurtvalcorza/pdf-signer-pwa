@@ -63,6 +63,13 @@ export default tseslint.config(
           selector: "MemberExpression[property.name=/^(net|autoUpdater)$/]",
           message: 'layer 3: `electron.net` / `electron.autoUpdater` are banned (network-policy.md).',
         },
+        {
+          // …and the destructured CJS form `const { net } = require('electron')`, which the member
+          // selector above does not see.
+          selector:
+            "VariableDeclarator[init.callee.name='require'][init.arguments.0.value='electron'] ObjectPattern > Property[key.name=/^(net|autoUpdater)$/]",
+          message: 'layer 3: `net`/`autoUpdater` destructured from electron are banned (network-policy.md).',
+        },
       ],
     },
   },

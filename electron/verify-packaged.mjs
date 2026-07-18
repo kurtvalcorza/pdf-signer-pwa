@@ -31,17 +31,21 @@ execFileSync(process.execPath, [resolve(ROOT, 'scripts/make-e2e-fixtures.mjs')],
 
 const downloadDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-dl-'));
 const portableDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-portable-'));
+const env = {
+  ...process.env,
+  PDFSIGNER_HEADLESS: '1',
+  PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir,
+  PDFSIGNER_ALLOW_TEST_CAPTURE: '1', // explicit opt-in — the packaged build's hook needs this marker
+};
+// Exercise the ACTUAL data-location branch of the artifact under test: PKG_APPIMAGE drives the Linux
+// `APPIMAGE` path (dirname(APPIMAGE)); otherwise the Windows portable `PORTABLE_EXECUTABLE_DIR` path.
+if (process.env.PKG_APPIMAGE) {
+  env.APPIMAGE = resolve(ROOT, process.env.PKG_APPIMAGE);
+} else {
+  env.PORTABLE_EXECUTABLE_DIR = portableDir;
+}
 console.log(`[pkg] launching packaged (asar) artifact: ${exe}`);
-const app = await electron.launch({
-  executablePath: exe,
-  env: {
-    ...process.env,
-    PDFSIGNER_HEADLESS: '1',
-    PORTABLE_EXECUTABLE_DIR: portableDir, // exercise adjacent-mode data resolution on the real build
-    PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir,
-    PDFSIGNER_ALLOW_TEST_CAPTURE: '1', // explicit opt-in — the packaged build's hook needs this marker
-  },
-});
+const app = await electron.launch({ executablePath: exe, env });
 
 let failed = null;
 try {
