@@ -62,6 +62,35 @@ test('US3: the about / no-self-update surface renders unconditionally', async ()
   }
 });
 
+test('FR-011b: read-only media disables opt-in persistence and tells the user', async () => {
+  const app = await electron.launch({
+    args: [MAIN],
+    cwd: ROOT,
+    env: { ...process.env, PDFSIGNER_HEADLESS: '1', PDFSIGNER_FORCE_EPHEMERAL: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    // The shell reports persistence unavailable…
+    const enabled = await page.evaluate(
+      () => (window as unknown as { desktopShell?: { persistenceEnabled?: boolean } }).desktopShell?.persistenceEnabled,
+    );
+    expect(enabled).toBe(false);
+    // …the user is told (FR-011b visibility)…
+    await expect(page.locator('#desktop-readonly-notice')).toBeVisible({ timeout: 10_000 });
+    // …and the signature "remember" affordance is not offered.
+    await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(resolve(ROOT, 'tests/e2e/fixtures/sample.pdf'));
+    await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 20_000 });
+    await page
+      .locator('input[type="file"][accept="image/png,image/jpeg"]')
+      .setInputFiles(resolve(ROOT, 'tests/e2e/fixtures/signature.png'));
+    await page.locator('img[alt="signature"]').waitFor({ state: 'visible', timeout: 10_000 });
+    await expect(page.getByText(/Remember this signature/)).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
 test('US3: the staleness notice appears under a stale-metadata fixture', async () => {
   // Engine older than the 180-day threshold — the passive notice must appear.
   const dir = mkdtempSync(join(tmpdir(), 'us3-stale-'));

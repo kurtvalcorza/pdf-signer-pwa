@@ -37,8 +37,9 @@ const app = await electron.launch({
   env: {
     ...process.env,
     PDFSIGNER_HEADLESS: '1',
-    PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir,
     PORTABLE_EXECUTABLE_DIR: portableDir, // exercise adjacent-mode data resolution on the real build
+    PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir,
+    PDFSIGNER_ALLOW_TEST_CAPTURE: '1', // explicit opt-in — the packaged build's hook needs this marker
   },
 });
 

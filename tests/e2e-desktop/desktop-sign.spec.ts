@@ -27,7 +27,7 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
       ...process.env,
       PDFSIGNER_HEADLESS: '1',
       PORTABLE_EXECUTABLE_DIR: portableDir, // pretend we are the portable .exe running from here
-      PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir, // test-only: capture the download without a dialog
+      PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir, // test-only capture (unpackaged → hook allowed)
     },
   });
 
@@ -88,22 +88,25 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
 
 /**
  * Layer 2 (Chromium session denial): a renderer request to a remote https origin is cancelled by
- * the webRequest lock. blob:/data:/app: remain allowed (proven by the sign+download test above).
+ * the webRequest lock — ISOLATED from CSP. A renderer `fetch('https://…')` is the wrong probe: the
+ * page's `connect-src 'none'` blocks it first, so the assertion passes even if `installNetworkLocks`
+ * is broken (layer 1 masking layer 2 — the exact trap from the spec, T015 step 3). Instead we issue a
+ * MAIN-process session request (`session.fetch`), which the page CSP does not govern, so only the
+ * webRequest cancellation can stop it.
  */
-test('desktop: a remote https request from the renderer is blocked (layer 2)', async () => {
+test('desktop: a remote https request is cancelled by webRequest, not CSP (layer 2)', async () => {
   const app = await electron.launch({ args: [MAIN], cwd: ROOT, env: { ...process.env, PDFSIGNER_HEADLESS: '1' } });
   try {
-    const page = await app.firstWindow();
-    await page.waitForLoadState('domcontentloaded');
-    const blocked = await page.evaluate(async () => {
+    await app.firstWindow(); // ensure whenReady ran (installNetworkLocks is installed)
+    const rejected = await app.evaluate(async ({ session }) => {
       try {
-        await fetch('https://example.com/ping', { mode: 'no-cors' });
-        return false; // reached the network — lock failed
+        await session.defaultSession.fetch('https://example.com/ping');
+        return false; // reached the network — the webRequest lock failed
       } catch {
-        return true; // request did not complete — cancelled by CSP and/or webRequest
+        return true; // cancelled by onBeforeRequest (no page CSP involved here)
       }
     });
-    expect(blocked).toBe(true);
+    expect(rejected).toBe(true);
   } finally {
     await app.close();
   }

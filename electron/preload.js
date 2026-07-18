@@ -3,9 +3,10 @@
 // construction — the web PWA cannot ship these desktop-specific claims. Vanilla DOM (no React), so
 // it never touches the app's own tree.
 
+const { contextBridge } = require('electron');
 const { loadBuildMetadata } = require('./buildmeta');
 
-// Data location (mode + path) passed from main via additionalArguments.
+// Data location (mode + path + persistenceEnabled) passed from main via additionalArguments.
 function readDataLocation() {
   const arg = process.argv.find((a) => a.startsWith('--pdfsigner-data='));
   if (!arg) return null;
@@ -15,6 +16,16 @@ function readDataLocation() {
     return null;
   }
 }
+
+// Expose the shell's persistence availability to the web app so it can DISABLE opt-in "remember"
+// affordances in ephemeral (read-only media) mode — FR-011b: memory-only enforced by not writing,
+// not by hoping a write fails. `persistenceEnabled === false` only on read-only media; undefined on
+// the web (where the app's own storage-failure handling applies).
+const dataLocation = readDataLocation();
+contextBridge.exposeInMainWorld('desktopShell', {
+  persistenceEnabled: dataLocation ? dataLocation.persistenceEnabled !== false : true,
+  mode: dataLocation ? dataLocation.mode : null,
+});
 
 function el(tag, props = {}, style = '') {
   const node = document.createElement(tag);
@@ -48,6 +59,19 @@ function mount() {
     close.addEventListener('click', () => banner.remove());
     banner.appendChild(close);
     document.body.appendChild(banner);
+  }
+
+  // --- Read-only-media notice (FR-011b): the user is TOLD, visibly, that persistence is unavailable.
+  if (data && data.persistenceEnabled === false) {
+    const notice = el(
+      'div',
+      { id: 'desktop-readonly-notice', role: 'status' },
+      'position:fixed;bottom:10px;right:10px;z-index:2147483646;max-width:320px;background:#78350f;' +
+        'color:#fff;font:12px system-ui,sans-serif;padding:8px 12px;border-radius:6px;',
+    );
+    notice.textContent =
+      'Running from read-only media — your certificate and signature will not be remembered this session.';
+    document.body.appendChild(notice);
   }
 
   // --- About / info surface (version, engine + engine date, commit, distribution, no-self-update,

@@ -83,7 +83,14 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': [
         'error',
-        { paths: [{ name: 'electron', message: 'src/ must not import from electron/ (FR-009).' }] },
+        {
+          paths: [{ name: 'electron', message: 'src/ must not import from electron/ (FR-009).' }],
+          // Also block a relative path INTO the shell (e.g. `../electron/paths.js`), which would pull
+          // CommonJS/Node-only desktop code into the web bundle.
+          patterns: [
+            { group: ['**/electron/*', '**/electron/**'], message: 'src/ must not import from electron/ (FR-009).' },
+          ],
+        },
       ],
     },
   },

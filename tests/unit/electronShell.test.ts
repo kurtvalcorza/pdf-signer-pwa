@@ -110,3 +110,46 @@ describe('electron shell — staleness (US3): isStale derives from engineDate, n
     expect(loadBuildMetadata()).toBeNull();
   });
 });
+
+describe('electron shell — data-directory single-instance lock', () => {
+  it('acquires a fresh lock and releases it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    try {
+      const a = paths.acquireDirLock(dir);
+      expect(a.ok).toBe(true);
+      a.release();
+      const b = paths.acquireDirLock(dir); // released → re-acquirable
+      expect(b.ok).toBe(true);
+      b.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reclaims a STALE lock left by a dead process', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-stale-'));
+    try {
+      // A PID that is essentially certain to be dead.
+      writeFileSync(join(dir, '.instance-lock'), '999999');
+      const a = paths.acquireDirLock(dir);
+      expect(a.ok).toBe(true); // stale → reclaimed
+      a.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('defers when a LIVE other process holds the lock', async () => {
+    const { spawn } = await import('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'lock-live-'));
+    const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });
+    try {
+      writeFileSync(join(dir, '.instance-lock'), String(sleeper.pid)); // held by a live process
+      const a = paths.acquireDirLock(dir);
+      expect(a.ok).toBe(false); // another live instance owns the folder → defer
+    } finally {
+      sleeper.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

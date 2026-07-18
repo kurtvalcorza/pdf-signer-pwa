@@ -67,8 +67,11 @@ sha256sum -c SHA256SUMS
 # 2. Build provenance (proves the exact source commit + that this repo's workflow built it)
 gh attestation verify "PDF Signer <version>.exe" \
   --repo kurtvalcorza/pdf-signer-pwa \
-  --signer-workflow kurtvalcorza/pdf-signer-pwa/.github/workflows/release-desktop.yml
+  --signer-workflow kurtvalcorza/pdf-signer-pwa/.github/workflows/release-desktop.yml \
+  --source-digest <expected-commit-sha>
 ```
 
 The attestation is a record in GitHub's attestations API (not a release asset). `--repo` alone is not
-enough — pin `--signer-workflow` so only this repo's release workflow satisfies it.
+enough — it only proves *some* workflow in this repo built it. Pin **`--signer-workflow`** (which
+workflow) **and `--source-digest`** (which commit), or a build from an unexpected ref/commit would
+still satisfy the check.

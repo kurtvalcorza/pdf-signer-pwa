@@ -12,20 +12,37 @@ const read = (p) => JSON.parse(readFileSync(resolve(ROOT, p), 'utf8'));
 const pkg = read('package.json');
 const electronVersion = read('node_modules/electron/package.json').version; // e.g. 43.1.1
 
-// engineDate = the bundled Chromium/Electron's release date. Derived from the resolved Electron
-// MAJOR — the staleness nudge only needs approximate age. Add new majors here as they are adopted;
-// an unknown major FAILS the build rather than guessing (a wrong date mutes or fakes the warning).
-const ELECTRON_MAJOR_RELEASE = {
-  43: '2025-05-27', // Electron 43.0.0 (Chromium 136)
+// engineDate = the ACTUAL publish date of the resolved Electron version, read from the npm registry
+// at BUILD time (the build may use the network; the app never does). This is accurate and
+// self-updating — no hand-maintained map to go stale and falsely mark a fresh engine as ageing.
+// A hardcoded fallback (kept current) covers an offline build.
+const ELECTRON_MAJOR_FALLBACK = {
+  43: '2026-05-13', // Electron 43.0.0 (Chromium 150), ~mid-2026
 };
-const major = Number(electronVersion.split('.')[0]);
-const engineDate = ELECTRON_MAJOR_RELEASE[major];
+let engineDate;
+try {
+  // `time --json` gives the whole publish-time map; index by the exact version. (A `time.<version>`
+  // field query mis-parses the version's dots as nested keys and returns nothing.)
+  const json = execFileSync('npm', ['view', `electron@${electronVersion}`, 'time', '--json'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    shell: process.platform === 'win32', // npm is npm.cmd on Windows
+  });
+  const iso = JSON.parse(json)[electronVersion];
+  if (iso && !Number.isNaN(Date.parse(iso))) engineDate = new Date(iso).toISOString();
+} catch {
+  /* offline — fall through to the map */
+}
 if (!engineDate) {
-  console.error(
-    `gen-build-info: no engineDate for Electron major ${major} (${electronVersion}). ` +
-      `Add it to ELECTRON_MAJOR_RELEASE in scripts/gen-build-info.mjs — do not guess.`,
-  );
-  process.exit(1);
+  const major = Number(electronVersion.split('.')[0]);
+  engineDate = ELECTRON_MAJOR_FALLBACK[major];
+  if (!engineDate) {
+    console.error(
+      `gen-build-info: could not resolve engineDate for Electron ${electronVersion} (npm view failed ` +
+        `and no offline fallback for major ${major}). Add it to ELECTRON_MAJOR_FALLBACK — do not guess.`,
+    );
+    process.exit(1);
+  }
 }
 
 let commit = 'unknown';

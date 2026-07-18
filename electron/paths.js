@@ -55,6 +55,13 @@ function isWritable(dir) {
 function resolvePortableData() {
   const { mode, adjacentDir } = resolveAdjacentDir();
 
+  // Test-only: force read-only-media (ephemeral) mode, since making a dir truly non-writable is not
+  // portable across CI OSes. Never set in a shipped build.
+  if (process.env.PDFSIGNER_FORCE_EPHEMERAL === '1') {
+    const ephemeral = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-signer-ephemeral-'));
+    return { mode: 'ephemeral', userData: ephemeral, persistenceEnabled: false, adjacentDir };
+  }
+
   if (mode === 'default') {
     return { mode: 'default', userData: null, persistenceEnabled: true, adjacentDir: null };
   }
@@ -70,4 +77,58 @@ function resolvePortableData() {
   return { mode: 'ephemeral', userData: ephemeral, persistenceEnabled: false, adjacentDir };
 }
 
-module.exports = { resolvePortableData, resolveAdjacentDir, isWritable, DATA_DIR_NAME };
+/**
+ * Data-directory-scoped single-instance lock (spec § Edge Cases): a second copy launched from the
+ * SAME folder must defer, while copies in DIFFERENT folders run independently — so the lock lives in
+ * the data dir, NOT keyed by appId (Electron's global lock would make all copies defer). A stale lock
+ * from a crashed instance is reclaimed, never fatal.
+ *
+ * Returns `{ ok, release }`. `ok:false` means another LIVE instance owns this folder. Pure fs (no
+ * Electron), so it is unit-testable.
+ */
+function acquireDirLock(dir) {
+  if (!dir) return { ok: true, release: () => {} };
+  const lockPath = path.join(dir, '.instance-lock');
+  const release = () => {
+    try {
+      if (fs.readFileSync(lockPath, 'utf8').trim() === String(process.pid)) fs.rmSync(lockPath, { force: true });
+    } catch {
+      /* already gone */
+    }
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const fd = fs.openSync(lockPath, 'wx'); // exclusive create — fails if the lock exists
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return { ok: true, release };
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      let holder = 0;
+      try {
+        holder = Number(fs.readFileSync(lockPath, 'utf8').trim());
+      } catch {
+        /* race — retry */
+      }
+      if (holder && holder !== process.pid && isAlive(holder)) return { ok: false, release: () => {} };
+      try {
+        fs.rmSync(lockPath, { force: true }); // stale (crashed holder) — reclaim and retry
+      } catch {
+        /* retry */
+      }
+    }
+  }
+  return { ok: false, release: () => {} };
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM'; // exists but not signalable
+  }
+}
+
+module.exports = { resolvePortableData, resolveAdjacentDir, isWritable, acquireDirLock, DATA_DIR_NAME };

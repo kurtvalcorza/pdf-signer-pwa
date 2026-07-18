@@ -58,9 +58,38 @@ jobs:
       - name: Packaged artifact signs a pyHanko-valid PDF [Windows]
         if: runner.os == 'Windows'
         run: node electron/verify-packaged.mjs
-      - name: Packaged artifact signs a pyHanko-valid PDF [Linux, xvfb]
+      # Gate the ACTUAL AppImage, not linux-unpacked: extract it (the extract-and-run fallback path,
+      # FR-002a) and drive the extracted binary, so a broken wrapper / APPIMAGE data-location regression
+      # is caught before publish.
+      - name: Packaged AppImage signs a pyHanko-valid PDF [Linux, extract-and-run, xvfb]
         if: runner.os == 'Linux'
-        run: xvfb-run -a node electron/verify-packaged.mjs
+        run: |
+          set -e
+          ( cd release && chmod +x *.AppImage && ./*.AppImage --appimage-extract >/dev/null )
+          PKG_EXE=release/squashfs-root/pdf-signer-pwa xvfb-run -a node electron/verify-packaged.mjs
+      # SC-004 no-egress gate (network-namespace method, contracts/release-artifacts.md § Verification):
+      # run the packaged app with a monitored dummy default route and NO real network, capturing on the
+      # namespace's interface. Fail on ANY captured packet over the whole app process tree.
+      - name: No-egress gate — packet capture over the app process tree (SC-004) [Linux]
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo ip netns add appns
+          sudo ip netns exec appns ip link set lo up
+          # a routable-but-black-hole default so egress ATTEMPTS are emitted (and captured), not merely
+          # refused for lack of a route (which would record nothing — the offline-run trap).
+          sudo ip netns exec appns ip link add dummy0 type dummy
+          sudo ip netns exec appns ip addr add 10.99.0.1/24 dev dummy0
+          sudo ip netns exec appns ip link set dummy0 up
+          sudo ip netns exec appns ip route add default dev dummy0
+          sudo ip netns exec appns timeout 40 tcpdump -i any -n -w /tmp/egress.pcap 'not (host 127.0.0.1 or host ::1)' &
+          sleep 2
+          sudo ip netns exec appns su "$USER" -c \
+            'PKG_EXE=release/squashfs-root/pdf-signer-pwa ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs'
+          sleep 2
+          COUNT=$(sudo tcpdump -r /tmp/egress.pcap 2>/dev/null | wc -l || echo 0)
+          echo "captured $COUNT non-loopback packets from the app process tree"
+          test "$COUNT" -eq 0
 
       # --- Checksums + provenance for the shipped artifact ---
       - name: SHA256SUMS
@@ -68,7 +97,8 @@ jobs:
         run: |
           cd release
           FILE=$(ls *.exe *.AppImage 2>/dev/null | head -1)
-          sha256sum "$FILE" > "$FILE.sha256"
+          # Named exactly as docs/desktop.md tells users to verify: `sha256sum -c SHA256SUMS`.
+          sha256sum "$FILE" > SHA256SUMS
       - name: Provenance attestation (FR-018a — record in GitHub attestations API, not a release asset)
         uses: actions/attest-build-provenance@v1
         with:
@@ -78,7 +108,7 @@ jobs:
           name: desktop-${{ runner.os }}
           path: |
             ${{ matrix.artifact }}
-            release/*.sha256
+            release/SHA256SUMS
           if-no-files-found: error
 
   publish:

@@ -1,12 +1,12 @@
 // Desktop shell entry — the offline Electron wrapper around the unchanged web build (FR-009/FR-019).
 // Order matters: scheme registration and userData relocation MUST happen before app.whenReady().
 
-const { app, BrowserWindow, session } = require('electron');
+const { app, BrowserWindow, Menu, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { registerAppScheme, handleAppProtocol, appURL } = require('./protocol');
 const { installNetworkLocks, lockWindow } = require('./network');
-const { resolvePortableData } = require('./paths');
+const { resolvePortableData, acquireDirLock } = require('./paths');
 
 const DIST = path.join(__dirname, '..', 'dist'); // repo dist/ in dev; app.asar/dist when packaged
 
@@ -16,10 +16,18 @@ const DIST = path.join(__dirname, '..', 'dist'); // repo dist/ in dev; app.asar/
 // --- Runs synchronously at load, before `ready` ---
 registerAppScheme();
 
+// Remove Electron's DEFAULT application menu: its Help item calls shell.openExternal('electronjs.org'),
+// which would bypass the exact-REPO_URL carve-out (network-policy.md § Carve-out). No menu is needed.
+Menu.setApplicationMenu(null);
+
 const dataLocation = resolvePortableData();
 if (dataLocation.userData) {
   app.setPath('userData', dataLocation.userData); // relocate BEFORE whenReady so IndexedDB follows
 }
+
+// Data-directory-scoped single-instance lock: a second copy launched from the SAME folder defers to
+// the running one (spec § Edge Cases); different folders run independently.
+const instanceLock = acquireDirLock(dataLocation.mode === 'adjacent' ? dataLocation.userData : null);
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -34,10 +42,15 @@ function createWindow() {
       // vanilla DOM chrome and never exposes Node to the page.
       sandbox: false,
       preload: path.join(__dirname, 'preload.js'),
-      // Hand the resolved data location to the preload's about surface (FR-013 disclosure).
+      // Hand the resolved data location + persistence flag to the preload (FR-013 disclosure, and
+      // FR-011b: the renderer must DISABLE opt-in persistence when it is unavailable).
       additionalArguments: [
         '--pdfsigner-data=' +
-          JSON.stringify({ mode: dataLocation.mode, path: dataLocation.userData }),
+          JSON.stringify({
+            mode: dataLocation.mode,
+            path: dataLocation.userData,
+            persistenceEnabled: dataLocation.persistenceEnabled,
+          }),
       ],
     },
   });
@@ -47,14 +60,23 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Another live instance owns this data folder — defer to it (spec § Edge Cases).
+  if (!instanceLock.ok) {
+    app.quit();
+    return;
+  }
+
   handleAppProtocol(DIST);
   installNetworkLocks(session.defaultSession);
 
-  // Production keeps Electron's default download handling (the OS save dialog — R10, no code change).
-  // A TEST-ONLY hook auto-saves to a directory so the desktop E2E can capture the signed PDF without
-  // driving a native dialog. Off unless the env var is set; never active in a shipped build.
+  // Production keeps Electron's DEFAULT download handling (the OS save dialog — R10). A test-only hook
+  // auto-saves the signed PDF so the E2E can capture it (Playwright cannot intercept Electron's blob
+  // download). It is DOUBLY gated so a shipped build cannot be tricked into redirecting a user's
+  // documents by an inherited env var: it needs `!app.isPackaged` OR an explicit `PDFSIGNER_ALLOW_TEST_
+  // CAPTURE=1` marker — a normal user environment has neither. *(Codex, PR #13.)*
   const testDir = process.env.PDFSIGNER_E2E_DOWNLOAD_DIR;
-  if (testDir) {
+  const testAllowed = !app.isPackaged || process.env.PDFSIGNER_ALLOW_TEST_CAPTURE === '1';
+  if (testDir && testAllowed) {
     session.defaultSession.on('will-download', (_e, item) => {
       const out = path.join(testDir, item.getFilename());
       item.setSavePath(out);
