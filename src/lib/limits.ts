@@ -13,6 +13,8 @@ export const LIMITS = {
   certificateBytes: 1 * MB,
   /** One rendered page, in canvas pixels: width is capped, so only an extreme aspect ratio reaches this. */
   canvasPixels: 64_000_000,
+  /** Parsing the document for display, and then drawing one page, each get their own budget. */
+  loadMs: 60_000,
   renderMs: 30_000,
 } as const;
 

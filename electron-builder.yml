@@ -10,6 +10,14 @@ files:
   - package.json
 # publish: null — FR-007 is satisfied by the ABSENCE of an update feed, not a flag.
 publish: null
+# Fuses are burned into the shipped binary. enableNodeCliInspectArguments stays on because the
+# packaged gate (verify-packaged.mjs) attaches through the inspector. --no-sandbox has no fuse.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+  grantFileProtocolExtraPrivileges: false
 icon: public/icons/icon-512.png
 directories:
   output: release

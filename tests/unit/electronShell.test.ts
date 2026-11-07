@@ -88,6 +88,18 @@ describe('deployment headers (SEC-11)', () => {
   });
 });
 
+describe('build metadata override', () => {
+  it('ignores PDFSIGNER_BUILD_INFO unless the shell allows test hooks', () => {
+    process.env.PDFSIGNER_BUILD_INFO = writeBuildInfo(365);
+    try {
+      expect(loadBuildMetadata({ allowOverride: true }).engineAgeInDays).toBe(365);
+      expect(loadBuildMetadata()?.engineAgeInDays).not.toBe(365);
+    } finally {
+      delete process.env.PDFSIGNER_BUILD_INFO;
+    }
+  });
+});
+
 describe('renderer sandbox (SEC-03)', () => {
   const source = (f: string) => readFileSync(new URL(`../../electron/${f}`, import.meta.url), 'utf8');
 
@@ -180,22 +192,22 @@ describe('electron shell — portable data resolution (traps #2)', () => {
 describe('electron shell — staleness (US3): isStale derives from engineDate, not buildDate', () => {
   it('is stale when the engine is older than the 180-day threshold', () => {
     process.env.PDFSIGNER_BUILD_INFO = writeBuildInfo(200);
-    expect(loadBuildMetadata().isStale).toBe(true);
+    expect(loadBuildMetadata({ allowOverride: true }).isStale).toBe(true);
   });
   it('is NOT stale when the engine is fresh', () => {
     process.env.PDFSIGNER_BUILD_INFO = writeBuildInfo(10);
-    expect(loadBuildMetadata().isStale).toBe(false);
+    expect(loadBuildMetadata({ allowOverride: true }).isStale).toBe(false);
   });
   it('a fresh buildDate does NOT silence a stale engine (regression guard, FR-015a)', () => {
     process.env.PDFSIGNER_BUILD_INFO = writeBuildInfo(365, 0); // old engine, brand-new rebuild
-    const m = loadBuildMetadata();
+    const m = loadBuildMetadata({ allowOverride: true });
     expect(m.isStale).toBe(true);
     expect(m.buildAgeInDays).toBeLessThan(2); // build IS fresh…
     expect(m.engineAgeInDays).toBeGreaterThan(300); // …but the engine is not
   });
   it('returns null when no build-info exists (dev run) rather than crashing', () => {
     process.env.PDFSIGNER_BUILD_INFO = join(tmpdir(), 'does-not-exist-build-info.json');
-    expect(loadBuildMetadata()).toBeNull();
+    expect(loadBuildMetadata({ allowOverride: true })).toBeNull();
   });
 });
 

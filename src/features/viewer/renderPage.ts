@@ -41,6 +41,7 @@ export function renderPage(
   let task: { cancel(): void } | null = null;
   let cancelled = false;
   let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   const cancel = () => {
     cancelled = true;
@@ -48,9 +49,18 @@ export function renderPage(
     void loading.destroy();
   };
 
+  const limitTo = (ms: number) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      cancel();
+    }, ms);
+  };
+
   const draw = async (): Promise<RenderedPage> => {
     const doc = await loading.promise;
     const page = await doc.getPage(pageIndex + 1);
+    limitTo(LIMITS.renderMs);
     const base = page.getViewport({ scale: 1 });
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     const viewport = page.getViewport({ scale: (cssWidth / base.width) * dpr });
@@ -87,14 +97,11 @@ export function renderPage(
     };
   };
 
-  const timer = setTimeout(() => {
-    timedOut = true;
-    cancel();
-  }, LIMITS.renderMs);
+  limitTo(LIMITS.loadMs);
 
   const promise = draw()
     .catch((e: unknown) => {
-      if (timedOut) throw new InputLimitError('This page took too long to display.');
+      if (timedOut) throw new InputLimitError('This page took too long to display. Open the PDF again to retry.');
       if (cancelled) throw new RenderCancelledError();
       throw e;
     })
