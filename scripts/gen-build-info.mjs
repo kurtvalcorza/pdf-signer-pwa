@@ -17,7 +17,7 @@ const electronVersion = read('node_modules/electron/package.json').version; // e
 // self-updating — no hand-maintained map to go stale and falsely mark a fresh engine as ageing.
 // A hardcoded fallback (kept current) covers an offline build.
 const ELECTRON_MAJOR_FALLBACK = {
-  43: '2026-05-13', // Electron 43.0.0 (Chromium 150), ~mid-2026
+  43: '2026-06-30', // Electron 43.0.0
 };
 let engineDate;
 try {
@@ -28,7 +28,9 @@ try {
     encoding: 'utf8',
     shell: process.platform === 'win32', // npm is npm.cmd on Windows
   });
-  const iso = JSON.parse(json)[electronVersion];
+  // npm prints a one-item array for a versioned query on recent releases, an object on older ones.
+  const parsed = JSON.parse(json);
+  const iso = (Array.isArray(parsed) ? parsed[0] : parsed)[electronVersion];
   if (iso && !Number.isNaN(Date.parse(iso))) engineDate = new Date(iso).toISOString();
 } catch {
   /* offline — fall through to the map */

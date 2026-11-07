@@ -18,7 +18,7 @@ test('US2: create a certificate in-app, then sign with it', async ({ page }) => 
   // Create a certificate in-app.
   await page.getByRole('button', { name: /Create one/ }).click();
   await page.getByPlaceholder(/full name/i).fill('Kurt Valcorza');
-  await page.getByPlaceholder('Certificate password').fill('my-pass');
+  await page.getByPlaceholder('Certificate password').fill('my-long-passphrase');
   await page.getByRole('button', { name: /^Create certificate$/ }).click();
   await expect(page.getByText(/Certificate created/)).toBeVisible({ timeout: 15_000 });
 

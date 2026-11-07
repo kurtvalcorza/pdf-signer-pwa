@@ -7,6 +7,15 @@ function binaryToBytes(bin: string): Uint8Array {
   return out;
 }
 
+/** Shortest password accepted for a NEW certificate. A .p12 can be attacked offline if copied. */
+export const MIN_NEW_CERT_PASSWORD = 12;
+
+/**
+ * Key-derivation rounds for a new .p12. Each round slows offline guessing, but node-forge derives in
+ * JavaScript and a signature opens the .p12 several times, so this is bounded by phone speed.
+ */
+export const P12_ITERATIONS = 20_000;
+
 export interface GeneratedCertificate {
   /** PKCS#12 (private key + cert) — the signing Digital ID. */
   p12Bytes: Uint8Array;
@@ -63,7 +72,12 @@ export function generateSelfSignedP12(
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
   const p12Der = forge.asn1
-    .toDer(forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], password, { algorithm: '3des' }))
+    .toDer(
+      forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], password, {
+        algorithm: 'aes256',
+        count: P12_ITERATIONS,
+      }),
+    )
     .getBytes();
   const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
 

@@ -122,6 +122,8 @@ would rewrite the already-signed pages and break the existing signatures — so 
   the existing signature. The app tells you when you open the file, and signing stays disabled.
 - **"This signed PDF could not be counter-signed…"** The file's structure could not take an appended
   signature without hiding the earlier one, so it was left unsigned.
+- **"…is too large."** The app works entirely in your device's memory, so it caps what it opens:
+  PDFs at 100 MB and 5,000 pages, signature images at 20 MB and 40 megapixels, certificates at 1 MB.
 - **"This PDF is password-protected…"** Remove the PDF's open password first, then sign it.
 - **My signature shows as untrusted / "validity unknown".** Expected for a self-signed Digital ID —
   it's cryptographically intact but not *trusted* until the recipient adds your public `.cer` to their
@@ -148,9 +150,11 @@ Please read this honestly:
 
 ## Your privacy
 
-- **Nothing leaves your device.** All PDF, image, and cryptographic work happens in your browser. A
-  strict security policy (`connect-src 'none'`) makes uploading your data structurally impossible —
-  the app *cannot* send it anywhere.
+- **No upload feature.** All PDF, image, and cryptographic work happens in your browser. A
+  strict security policy (`connect-src 'none'`) blocks the app's scripts from opening network
+  connections (fetch, WebSocket, beacons), and the app has no upload feature. That policy does not
+  cover page navigation, and it can't protect you from a tampered copy of the app, so you are also
+  trusting the site or build you got it from. The desktop builds add their own network locks.
 - **Minimal on-device storage.** Your content stays in memory by default. The only things that can be
   saved are an **opt-in** remembered certificate and/or signature image — **never** your PDF, your
   certificate password, or decrypted private-key material.
@@ -177,7 +181,7 @@ counter-signatures with a visible appearance) must be **intact + valid**, and a 
 be rejected:
 
 ```bash
-pip install pyhanko
+pip install --require-hashes -r scripts/requirements-verify.txt
 npm run verify:signatures   # produces signed PDFs and validates them with pyHanko
 ```
 

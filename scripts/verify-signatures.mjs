@@ -7,7 +7,7 @@
  * 3. Confirms the validator itself: real tampering and a real policy violation are each caught
  *    for the right reason, and unsigned or corrupt files do not pass as tamper detection.
  *
- * Exits non-zero on any failure. Prerequisite: `pip install -r scripts/requirements-verify.txt`.
+ * Exits non-zero on any failure. Prerequisite: `pip install --require-hashes -r scripts/requirements-verify.txt`.
  */
 import { spawnSync } from 'node:child_process';
 import { readdirSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
