@@ -4,7 +4,7 @@
 # This is socket sampling, not packet capture: a connection opened and closed between two samples can
 # be missed, and DNS lookups go through the system resolver service, so they are not attributed to the
 # app. Windows packet capture is host-wide and cannot be scoped to one process tree, so a packet-level
-# gate (WFP) remains open in issue #12. Needs no elevation.
+# gate (WFP) remains open in issue #23. Needs no elevation.
 param([string]$Exe = 'release\win-unpacked\PDF Signer.exe')
 
 $ErrorActionPreference = 'Stop'
