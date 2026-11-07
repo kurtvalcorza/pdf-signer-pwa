@@ -25,6 +25,18 @@ export class BadPasswordError extends Error {
 }
 
 /**
+ * Thrown when a .p12 is structurally unusable: not valid PKCS#12, no password-integrity
+ * MAC, a forbidden iteration count, or no private key + certificate. Kept distinct from
+ * BadPasswordError so a hostile or corrupt file is never reported as a mistyped password.
+ */
+export class MalformedCertificateError extends Error {
+  constructor(message = 'This certificate file is damaged or not a usable .p12 / .pfx.') {
+    super(message);
+    this.name = 'MalformedCertificateError';
+  }
+}
+
+/**
  * Thrown when the loaded PDF carries a certification (DocMDP) signature whose policy
  * disallows any further changes — appending even an incremental signature would be a
  * disallowed modification, so compliant validators would flag the certification as

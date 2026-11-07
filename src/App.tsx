@@ -14,6 +14,7 @@ import { signIncremental } from './features/signing/signIncremental';
 import {
   BadPasswordError,
   CertificationLockedError,
+  MalformedCertificateError,
   type PlacementInput,
 } from './features/signing/types';
 import { CertSheet, type SignRequest } from './components/CertSheet';
@@ -262,7 +263,13 @@ export default function App() {
               date: req.showDate,
             });
           } catch (e) {
-            if (e instanceof BadPasswordError || e instanceof CertificationLockedError) throw e;
+            if (
+              e instanceof BadPasswordError ||
+              e instanceof MalformedCertificateError ||
+              e instanceof CertificationLockedError
+            ) {
+              throw e;
+            }
             // Fail honestly rather than silently falling back to a path that would
             // invalidate the existing signatures.
             throw new Error(

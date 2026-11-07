@@ -1,5 +1,5 @@
 import forge from 'node-forge';
-import { BadPasswordError } from './types';
+import { BadPasswordError, MalformedCertificateError } from './types';
 
 function toBinary(bytes: Uint8Array): string {
   let s = '';
@@ -7,24 +7,61 @@ function toBinary(bytes: Uint8Array): string {
   return s;
 }
 
-/** Parse a PKCS#12; throws if the password is wrong (FR-015). In-memory only. */
+const WRONG_PASSWORD = /MAC could not be verified|Invalid password/i;
+
+/**
+ * Parse a PKCS#12 in memory (FR-015). Throws BadPasswordError when the MAC does not verify
+ * and MalformedCertificateError for anything else unusable.
+ *
+ * The MAC is REQUIRED: forge accepts a PFX without macData, and such a file would "unlock"
+ * under any password. Forge >= 1.4.1 rejects zero-iteration MACs and key derivations
+ * (GHSA-jc66-7q78-782g); tests/signing/p12Malformed.test.ts holds that in place.
+ */
 export function loadP12(p12Bytes: Uint8Array, password: string): forge.pkcs12.Pkcs12Pfx {
+  let asn1: forge.asn1.Asn1;
   try {
-    const asn1 = forge.asn1.fromDer(forge.util.createBuffer(toBinary(p12Bytes)));
-    return forge.pkcs12.pkcs12FromAsn1(asn1, password);
+    asn1 = forge.asn1.fromDer(forge.util.createBuffer(toBinary(p12Bytes)));
   } catch {
-    // node-forge throws "MAC could not be verified" on a bad password.
-    throw new BadPasswordError();
+    throw new MalformedCertificateError();
   }
+  if (!Array.isArray(asn1.value) || asn1.value.length < 3) {
+    throw new MalformedCertificateError(
+      'This certificate has no password-integrity check, so it was not used.',
+    );
+  }
+
+  let p12: forge.pkcs12.Pkcs12Pfx;
+  try {
+    p12 = forge.pkcs12.pkcs12FromAsn1(asn1, password);
+  } catch (e) {
+    if (e instanceof Error && WRONG_PASSWORD.test(e.message)) throw new BadPasswordError();
+    throw new MalformedCertificateError();
+  }
+
+  const { keyBag, pkcs8ShroudedKeyBag, certBag } = forge.pki.oids;
+  const hasKey =
+    (p12.getBags({ bagType: keyBag })[keyBag]?.length ?? 0) > 0 ||
+    (p12.getBags({ bagType: pkcs8ShroudedKeyBag })[pkcs8ShroudedKeyBag]?.length ?? 0) > 0;
+  const hasCert = (p12.getBags({ bagType: certBag })[certBag]?.length ?? 0) > 0;
+  if (!hasKey || !hasCert) {
+    throw new MalformedCertificateError(
+      'This .p12 does not contain both a private key and a certificate.',
+    );
+  }
+  return p12;
 }
 
-/** True iff the password unlocks the certificate (used before signing, FR-015). */
+/**
+ * True iff the password unlocks the certificate (used before signing, FR-015). A malformed
+ * file is not a wrong password, so MalformedCertificateError propagates to the caller.
+ */
 export function verifyCertPassword(p12Bytes: Uint8Array, password: string): boolean {
   try {
     loadP12(p12Bytes, password);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    if (e instanceof BadPasswordError) return false;
+    throw e;
   }
 }
 
