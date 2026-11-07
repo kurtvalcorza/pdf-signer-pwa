@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const { registerAppScheme, handleAppProtocol, appURL } = require('./protocol');
 const { installNetworkLocks, lockWindow } = require('./network');
 const { resolvePortableData, acquireDirLock } = require('./paths');
+const { loadBuildMetadata } = require('./buildmeta');
 
 const DIST = path.join(__dirname, '..', 'dist'); // repo dist/ in dev; app.asar/dist when packaged
 
@@ -45,10 +46,9 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      // sandbox off so the preload can require the shell's buildmeta module (US3 surfaces). The
-      // renderer stays isolated (contextIsolation) with no Node integration; the preload injects only
-      // vanilla DOM chrome and never exposes Node to the page.
-      sandbox: false,
+      // A sandboxed preload can require only 'electron', so anything it needs from the filesystem is
+      // read here and passed in additionalArguments. Keep the preload free of Node imports.
+      sandbox: true,
       preload: path.join(__dirname, 'preload.js'),
       // Hand the resolved data location + persistence flag to the preload (FR-013 disclosure, and
       // FR-011b: the renderer must DISABLE opt-in persistence when it is unavailable).
@@ -59,6 +59,7 @@ function createWindow() {
             path: dataLocation.userData,
             persistenceEnabled: dataLocation.persistenceEnabled,
           }),
+        '--pdfsigner-build=' + JSON.stringify(loadBuildMetadata()),
       ],
     },
   });

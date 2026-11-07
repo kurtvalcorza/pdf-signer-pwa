@@ -12,7 +12,21 @@ const { APP_SCHEME_PRIVILEGES, resolveWithinDist } = require('../../electron/pro
 const { ALLOWED_SCHEMES, REPO_URL } = require('../../electron/network.js');
 const paths = require('../../electron/paths.js');
 const { loadBuildMetadata } = require('../../electron/buildmeta.js');
-import { writeFileSync, mkdtempSync as _mkdtemp } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync as _mkdtemp } from 'node:fs';
+
+describe('renderer sandbox (SEC-03)', () => {
+  const source = (f: string) => readFileSync(new URL(`../../electron/${f}`, import.meta.url), 'utf8');
+
+  it('keeps the sandbox on', () => {
+    expect(source('main.js')).toMatch(/^\s*sandbox: true,/m);
+    expect(source('main.js')).not.toMatch(/sandbox: false/);
+  });
+
+  it('requires nothing but electron from the preload, which is all a sandbox allows', () => {
+    const required = [...source('preload.js').matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
+    expect(required).toEqual(['electron']);
+  });
+});
 
 function writeBuildInfo(engineDaysOld: number, buildDaysOld = 0): string {
   const dir = _mkdtemp(join(tmpdir(), 'buildinfo-'));

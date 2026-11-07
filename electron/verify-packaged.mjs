@@ -53,6 +53,20 @@ try {
   await page.waitForLoadState('domcontentloaded');
   console.log('[pkg] window title:', await page.title());
 
+  // Assert the PACKAGED renderer is sandboxed with no Node in page script. The no-egress run sets
+  // ELECTRON_DISABLE_SANDBOX for its network namespace, so this check is not meaningful there.
+  if (!process.env.ELECTRON_DISABLE_SANDBOX) {
+    const seen = await page.evaluate(() => ({
+      sandboxed: globalThis.desktopShell?.sandboxed,
+      require: typeof globalThis.require,
+      process: typeof globalThis.process,
+    }));
+    if (seen.sandboxed !== true || seen.require !== 'undefined' || seen.process !== 'undefined') {
+      throw new Error('renderer is not sandboxed: ' + JSON.stringify(seen));
+    }
+    console.log('[pkg] renderer sandbox enabled; no Node in page script.');
+  }
+
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(resolve(FIX, 'sample.pdf'));
   await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 25_000 });
   await page
