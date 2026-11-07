@@ -2,8 +2,9 @@
 # of its whole process tree, and fail on anything reaching beyond loopback.
 #
 # This is socket sampling, not packet capture: a connection opened and closed between two samples can
-# be missed. Windows packet capture is host-wide and cannot be scoped to one process tree, so a
-# packet-level gate (WFP) remains open in issue #12. Needs no elevation.
+# be missed, and DNS lookups go through the system resolver service, so they are not attributed to the
+# app. Windows packet capture is host-wide and cannot be scoped to one process tree, so a packet-level
+# gate (WFP) remains open in issue #12. Needs no elevation.
 param([string]$Exe = 'release\win-unpacked\PDF Signer.exe')
 
 $ErrorActionPreference = 'Stop'
@@ -11,9 +12,11 @@ $minimumSamples = 5
 $name = [IO.Path]::GetFileNameWithoutExtension($Exe)
 
 function Get-ExternalSockets([int[]]$Ids) {
-  $loopback = '^(127\.|::1$|0\.0\.0\.0$|::$)'
+  $loopback = '^(127\.|::1$)'
+  # A TCP socket with a wildcard remote is listening, not connected. A UDP socket has no remote, so a
+  # wildcard local bind counts: it can send anywhere.
   @(Get-NetTCPConnection -ErrorAction SilentlyContinue |
-    Where-Object { $Ids -contains $_.OwningProcess -and $_.RemoteAddress -notmatch $loopback } |
+    Where-Object { $Ids -contains $_.OwningProcess -and $_.RemoteAddress -notmatch '^(127\.|::1$|0\.0\.0\.0$|::$)' } |
     ForEach-Object { "TCP $($_.RemoteAddress):$($_.RemotePort)" }) +
   @(Get-NetUDPEndpoint -ErrorAction SilentlyContinue |
     Where-Object { $Ids -contains $_.OwningProcess -and $_.LocalAddress -notmatch $loopback } |

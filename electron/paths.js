@@ -78,8 +78,9 @@ function resolvePortableData() {
   return { mode: 'ephemeral', userData: ephemeral, persistenceEnabled: false, adjacentDir };
 }
 
-const LOCK_HEARTBEAT_MS = 30_000; // the holder refreshes the lock's mtime this often
-const LOCK_STALE_MS = 120_000; // no refresh for this long: the holder is gone, whatever the PID says
+const LOCK_HEARTBEAT_MS = 5_000; // the holder refreshes the lock's mtime this often
+const LOCK_STALE_MS = 30_000; // no refresh for this long: worth checking whether the holder is gone
+const LOCK_CONFIRM_MS = 7_000; // longer than a heartbeat, so a live holder always shows up in it
 const LOCK_GRACE_MS = 5_000; // an unreadable lock this new is being written, or its reclaim is live
 const LOCK_ATTEMPTS = 40;
 const LOCK_RETRY_MS = 25;
@@ -88,7 +89,8 @@ const LOCK_RETRY_MS = 25;
 function readLock(lockPath) {
   try {
     const raw = fs.readFileSync(lockPath, 'utf8');
-    const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+    const { mtimeMs } = fs.statSync(lockPath);
+    const ageMs = Date.now() - mtimeMs;
     let fields = null;
     try {
       fields = JSON.parse(raw);
@@ -100,6 +102,7 @@ function readLock(lockPath) {
       pid: Number(fields?.pid ?? raw.trim()) || 0,
       nonce: fields?.nonce ?? null,
       ageMs,
+      mtimeMs,
     };
   } catch {
     return null;
@@ -108,13 +111,18 @@ function readLock(lockPath) {
 
 /**
  * A PID alone cannot prove ownership: PIDs are reused, so a dead instance can look alive. The
- * heartbeat settles that case. An unparseable lock is usually a racing writer, so it gets a grace
- * period instead of being taken as stale.
+ * heartbeat settles that case, but an old mtime alone proves nothing either: a laptop that slept or a
+ * clock that disagrees looks the same. So an old lock with a live PID is watched for one heartbeat,
+ * comparing mtimes rather than clocks. An unparseable lock is usually a racing writer, so it gets a
+ * grace period. A v0.1.0 lock has no heartbeat, so its live PID is taken at its word.
  */
-function isStale(lock) {
+function isStale(lock, lockPath) {
   if (!lock.pid) return lock.ageMs > LOCK_GRACE_MS;
   if (lock.pid === process.pid) return true;
-  return !isAlive(lock.pid) || lock.ageMs > LOCK_STALE_MS;
+  if (!isAlive(lock.pid)) return true;
+  if (lock.nonce === null || lock.ageMs <= LOCK_STALE_MS) return false;
+  sleepSync(LOCK_CONFIRM_MS);
+  return readLock(lockPath)?.mtimeMs === lock.mtimeMs;
 }
 
 /**
@@ -139,7 +147,15 @@ function reclaimStale(lockPath, observedRaw) {
   try {
     if (readLock(lockPath)?.raw === observedRaw) fs.rmSync(lockPath, { force: true });
   } finally {
+    releaseReclaimMutex(mutex);
+  }
+}
+
+function releaseReclaimMutex(mutex) {
+  try {
     fs.rmdirSync(mutex);
+  } catch {
+    /* a peer judged it abandoned and cleared it */
   }
 }
 
@@ -153,8 +169,9 @@ function sleepSync(ms) {
  * the data dir, NOT keyed by appId (Electron's global lock would make all copies defer). A stale lock
  * from a crashed instance is reclaimed, never fatal.
  *
- * Returns `{ ok, release }`. `ok:false` means another LIVE instance owns this folder. Pure fs (no
- * Electron), so it is unit-testable.
+ * Returns `{ ok, blocked, release }`. `ok:false` means another LIVE instance owns this folder, or
+ * with `blocked:true` that the lock could not be read or replaced at all. Pure fs (no Electron), so
+ * it is unit-testable.
  */
 function acquireDirLock(dir) {
   if (!dir) return { ok: true, release: () => {} };
@@ -172,11 +189,11 @@ function acquireDirLock(dir) {
       if (e.code !== 'EEXIST') throw e;
     }
     const lock = readLock(lockPath);
-    if (lock && !isStale(lock)) return { ok: false, release: () => {} };
+    if (lock && !isStale(lock, lockPath)) return { ok: false, blocked: false, release: () => {} };
     if (lock) reclaimStale(lockPath, lock.raw);
     sleepSync(LOCK_RETRY_MS);
   }
-  return { ok: false, release: () => {} };
+  return { ok: false, blocked: true, release: () => {} };
 }
 
 /** Keep the lock fresh while we own it; returns the release that removes only OUR lock. */
@@ -209,4 +226,11 @@ function isAlive(pid) {
   }
 }
 
-module.exports = { resolvePortableData, resolveAdjacentDir, isWritable, acquireDirLock, DATA_DIR_NAME };
+module.exports = {
+  resolvePortableData,
+  resolveAdjacentDir,
+  isWritable,
+  acquireDirLock,
+  releaseReclaimMutex,
+  DATA_DIR_NAME,
+};

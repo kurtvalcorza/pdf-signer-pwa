@@ -150,7 +150,7 @@ Please read this honestly:
 
 ## Your privacy
 
-- **Nothing leaves your device.** All PDF, image, and cryptographic work happens in your browser. A
+- **No upload feature.** All PDF, image, and cryptographic work happens in your browser. A
   strict security policy (`connect-src 'none'`) blocks the app's scripts from opening network
   connections (fetch, WebSocket, beacons), and the app has no upload feature. That policy does not
   cover page navigation, and it can't protect you from a tampered copy of the app, so you are also
@@ -181,7 +181,7 @@ counter-signatures with a visible appearance) must be **intact + valid**, and a 
 be rejected:
 
 ```bash
-pip install -r scripts/requirements-verify.txt
+pip install --require-hashes -r scripts/requirements-verify.txt
 npm run verify:signatures   # produces signed PDFs and validates them with pyHanko
 ```
 

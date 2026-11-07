@@ -9,8 +9,9 @@
       Strict CSP (research R9): connect-src 'none' blocks fetch, XHR, WebSocket and beacon
       requests. It does not stop top-level navigation, and it cannot protect against a modified
       build, so it is a strong restriction and not a guarantee of no exfiltration.
-      vercel.json sends this policy as a header too, with frame-ancestors, which a meta tag
-      cannot carry; keep the two in step.
+      vercel.json sends this policy as a header on documents too, with frame-ancestors, which a
+      meta tag cannot carry; keep the two in step. It must stay off sw.js and worker scripts: a
+      header there would govern them, stopping precaching and worker WASM.
     -->
     <meta
       http-equiv="Content-Security-Policy"

@@ -546,7 +546,7 @@ export default function App() {
                   checked={rememberSig}
                   onChange={(e) => toggleRememberSignature(e.target.checked, selectedAsset)}
                 />
-                Remember this signature on this device (image only, never leaves your phone)
+                Remember this signature on this device (image only, kept in this browser)
               </label>
             )}
 
@@ -587,7 +587,7 @@ export default function App() {
             </button>
 
             <p className="px-1 text-xs text-white/40">
-              Private &amp; on-device — nothing leaves your phone. A certificate-backed digital
+              Private &amp; on-device — the app has no upload feature. A certificate-backed digital
               signature, not a legally-binding e-signature service.
             </p>
           </div>

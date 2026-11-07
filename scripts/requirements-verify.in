@@ -1,0 +1,5 @@
+# Direct requirements of the signature gate. requirements-verify.txt is generated from this:
+#   uv pip compile scripts/requirements-verify.in --universal --python-version 3.11 --generate-hashes -o scripts/requirements-verify.txt
+# A verifier that changes underneath the gate changes what "passes" means, so upgrades are deliberate.
+pyHanko==0.36.2
+pyhanko-certvalidator==0.31.4

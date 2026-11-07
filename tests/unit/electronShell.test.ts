@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { rmSync, mkdtempSync, utimesSync } from 'node:fs';
+import { mkdirSync, rmSync, mkdtempSync, utimesSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -29,6 +29,39 @@ describe('instance lock ownership (SEC-10)', () => {
     expect(lock.ok).toBe(true);
     lock.release();
     rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('keeps the folder with a live holder that only looks quiet (sleep, clock skew)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const holder = spawn(process.execPath, [
+      '-e',
+      `const lock = require(${JSON.stringify(PATHS)}).acquireDirLock(${JSON.stringify(dir)});
+       console.log(lock.ok); setTimeout(() => {}, 12000);`,
+    ]);
+    await new Promise((done) => holder.stdout.once('data', done));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: false });
+    holder.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('takes a v0.1.0 lock with a live PID at its word, however old', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    writeFileSync(lockIn(dir), String(process.ppid));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: false });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports a lock it can neither read nor replace, rather than deferring silently', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    mkdirSync(lockIn(dir));
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('survives a peer clearing the reclaim mutex underneath it', () => {
+    expect(paths.releaseReclaimMutex(join(tmpdir(), 'no-such-mutex'))).toBeUndefined();
   });
 
   it('defers to a fresh lock it cannot parse: its writer may be mid-write', () => {
@@ -81,10 +114,15 @@ describe('deployment headers (SEC-11)', () => {
   it('sends the same CSP as the page, plus framing protection a meta tag cannot carry', () => {
     const root = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
     const meta = /Content-Security-Policy"\s+content="([^"]+)"/.exec(root('index.html'))![1];
-    const header = JSON.parse(root('vercel.json')).headers[0].headers.find(
-      (h: { key: string }) => h.key === 'Content-Security-Policy',
-    ).value;
-    expect(header).toBe(`${meta}; frame-ancestors 'none'`);
+    const rule = JSON.parse(root('vercel.json')).headers.find((r: { headers: { key: string }[] }) =>
+      r.headers.some((h) => h.key === 'Content-Security-Policy'),
+    );
+    const header = rule.headers.find((h: { key: string }) => h.key === 'Content-Security-Policy');
+    expect(header.value).toBe(`${meta}; frame-ancestors 'none'`);
+
+    const covers = (path: string) => new RegExp(`^${rule.source}$`).test(path);
+    expect(['/', '/index.html'].every(covers)).toBe(true);
+    expect(['/sw.js', '/workbox-9c191d2f.js', '/assets/pdf.worker.min.js'].some(covers)).toBe(false);
   });
 });
 
