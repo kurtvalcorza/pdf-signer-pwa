@@ -2,6 +2,7 @@
 // through a real .p12 sign and validate with pyHanko. This exercises asar packing and the real
 // portable-path resolution the unpackaged E2E cannot. Usage: node electron/verify-packaged.mjs
 import { _electron as electron } from 'playwright';
+import fuses from '@electron/fuses';
 import { execFileSync } from 'node:child_process';
 import { existsSync, statSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
@@ -28,6 +29,25 @@ if (!existsSync(exe)) {
   process.exit(1);
 }
 execFileSync(process.execPath, [resolve(ROOT, 'scripts/make-e2e-fixtures.mjs')], { stdio: 'inherit' });
+
+// The fuses must be burned into this binary, not merely configured.
+const { FuseV1Options, getCurrentFuseWire } = fuses;
+const wire = await getCurrentFuseWire(exe);
+const [DISABLED, ENABLED] = [48, 49]; // the fuse wire stores ASCII '0' and '1'
+const expected = {
+  RunAsNode: DISABLED,
+  EnableNodeOptionsEnvironmentVariable: DISABLED,
+  OnlyLoadAppFromAsar: ENABLED,
+  EnableEmbeddedAsarIntegrityValidation: ENABLED,
+  GrantFileProtocolExtraPrivileges: DISABLED,
+};
+for (const [name, state] of Object.entries(expected)) {
+  if (wire[FuseV1Options[name]] !== state) {
+    console.error(`[pkg] fuse ${name} is not burned as expected`);
+    process.exit(1);
+  }
+}
+console.log('[pkg] fuses burned as configured.');
 
 const downloadDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-dl-'));
 const portableDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-portable-'));

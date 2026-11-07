@@ -64,6 +64,13 @@ the app never updates itself, a fix reaches you only when you download a newer b
 notice tracks the age of the bundled engine, not whether a known vulnerability affects it, so a build
 can need replacing well before the notice appears. Check the releases page if that matters to you.
 
+## Hardening
+
+The binary has Electron fuses burned in: it will not run as plain Node, ignores `NODE_OPTIONS`, loads
+the app only from its checked archive, and gives `file:` no extra privileges. The renderer sandbox can
+still be turned off by whoever launches the app (`--no-sandbox`); Electron has no fuse for that, and
+that person already controls your session.
+
 ## Verifying a download
 
 Do not trust the release page's contents — verify independently:
