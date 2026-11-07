@@ -150,9 +150,11 @@ Please read this honestly:
 
 ## Your privacy
 
-- **Nothing leaves your device.** All PDF, image, and cryptographic work happens in your browser. A
-  strict security policy (`connect-src 'none'`) makes uploading your data structurally impossible —
-  the app *cannot* send it anywhere.
+- **No upload feature.** All PDF, image, and cryptographic work happens in your browser. A
+  strict security policy (`connect-src 'none'`) blocks the app's scripts from opening network
+  connections (fetch, WebSocket, beacons), and the app has no upload feature. That policy does not
+  cover page navigation, and it can't protect you from a tampered copy of the app, so you are also
+  trusting the site or build you got it from. The desktop builds add their own network locks.
 - **Minimal on-device storage.** Your content stays in memory by default. The only things that can be
   saved are an **opt-in** remembered certificate and/or signature image — **never** your PDF, your
   certificate password, or decrypted private-key material.
@@ -179,7 +181,7 @@ counter-signatures with a visible appearance) must be **intact + valid**, and a 
 be rejected:
 
 ```bash
-pip install pyhanko
+pip install --require-hashes -r scripts/requirements-verify.txt
 npm run verify:signatures   # produces signed PDFs and validates them with pyHanko
 ```
 

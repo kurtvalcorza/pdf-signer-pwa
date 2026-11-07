@@ -101,7 +101,7 @@ launch
 ```
 
 **⚠ Note on the existing code — it does NOT already survive this.** `certStore.ts:16–24` swallows
-storage failures and degrades to memory-only silently, but that path **only runs when a write
+storage failures and reports them to the user, but that path **only runs when a write
 fails**. In `ephemeral` mode Electron is deliberately pointed at a writable temp `userData`, so
 IndexedDB writes **succeed** and the failure path never fires — the user's `.p12` lands in temp until
 cleanup, violating the memory-only promise. The required work is therefore **disabling opt-in

@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { rmSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, rmSync, mkdtempSync, utimesSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -13,6 +15,155 @@ const { ALLOWED_SCHEMES, REPO_URL } = require('../../electron/network.js');
 const paths = require('../../electron/paths.js');
 const { loadBuildMetadata } = require('../../electron/buildmeta.js');
 import { readFileSync, writeFileSync, mkdtempSync as _mkdtemp } from 'node:fs';
+
+describe('instance lock ownership (SEC-10)', () => {
+  const PATHS = fileURLToPath(new URL('../../electron/paths.js', import.meta.url));
+  const lockIn = (dir: string) => join(dir, '.instance-lock');
+  const hoursAgo = new Date(Date.now() - 3_600_000);
+
+  it('reclaims a lock whose PID is alive but whose heartbeat stopped (PID reuse)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    writeFileSync(lockIn(dir), JSON.stringify({ pid: process.ppid, nonce: 'gone' }));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    const lock = paths.acquireDirLock(dir);
+    expect(lock.ok).toBe(true);
+    lock.release();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('keeps the folder with a live holder that only looks quiet (sleep, clock skew)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const holder = spawn(process.execPath, [
+      '-e',
+      `const lock = require(${JSON.stringify(PATHS)}).acquireDirLock(${JSON.stringify(dir)});
+       console.log(lock.ok); setTimeout(() => {}, 12000);`,
+    ]);
+    await new Promise((done) => holder.stdout.once('data', done));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: false });
+    holder.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('keeps the folder where setting a file time fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const holder = spawn(process.execPath, [
+      '-e',
+      `require('node:fs').utimesSync = () => { throw new Error('EPERM'); };
+       const lock = require(${JSON.stringify(PATHS)}).acquireDirLock(${JSON.stringify(dir)});
+       console.log(lock.ok); setTimeout(() => {}, 12000);`,
+    ]);
+    await new Promise((done) => holder.stdout.once('data', done));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: false });
+    holder.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('takes the folder if the holder quits during the confirm wait', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const holder = spawn(process.execPath, [
+      '-e',
+      `const lock = require(${JSON.stringify(PATHS)}).acquireDirLock(${JSON.stringify(dir)});
+       console.log(lock.ok); setTimeout(() => lock.release(), 2000); setTimeout(() => {}, 12000);`,
+    ]);
+    await new Promise((done) => holder.stdout.once('data', done));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    const lock = paths.acquireDirLock(dir);
+    expect(lock.ok).toBe(true);
+    lock.release();
+    holder.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('reports a data folder it cannot create, rather than crashing startup', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const file = join(dir, 'a-file');
+    writeFileSync(file, '');
+    expect(paths.acquireDirLock(join(file, 'child'))).toMatchObject({ ok: false, blocked: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('takes a v0.1.0 lock with a live PID at its word, however old', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    writeFileSync(lockIn(dir), String(process.ppid));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: false });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports a lock it can neither read nor replace, rather than deferring silently', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    mkdirSync(lockIn(dir));
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('survives a peer clearing the reclaim mutex underneath it', () => {
+    expect(paths.releaseReclaimMutex(join(tmpdir(), 'no-such-mutex'))).toBeUndefined();
+  });
+
+  it('defers to a fresh lock it cannot parse: its writer may be mid-write', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    writeFileSync(lockIn(dir), '');
+    expect(paths.acquireDirLock(dir).ok).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('release leaves a lock it no longer owns in place', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const lock = paths.acquireDirLock(dir);
+    const theirs = JSON.stringify({ pid: process.ppid, nonce: 'someone-else' });
+    writeFileSync(lockIn(dir), theirs);
+    lock.release();
+    expect(readFileSync(lockIn(dir), 'utf8')).toBe(theirs);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('gives a stale lock to exactly one of many simultaneous launches', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    writeFileSync(lockIn(dir), JSON.stringify({ pid: 999999, nonce: 'dead' }));
+    const startAt = Date.now() + 700; // all children spin until this instant, then race
+    const child = `
+      const { acquireDirLock } = require(${JSON.stringify(PATHS)});
+      while (Date.now() < ${startAt});
+      const lock = acquireDirLock(${JSON.stringify(dir)});
+      console.log(lock.ok ? 'WON' : 'LOST');
+      setTimeout(() => {}, 2000);
+    `;
+    const outcomes = await Promise.all(
+      Array.from({ length: 8 }, () => {
+        return new Promise<string>((done) => {
+          const p = spawn(process.execPath, ['-e', child]);
+          let out = '';
+          p.stdout.on('data', (d) => {
+            out += d;
+            if (out.includes('\n')) done(out.trim());
+          });
+          p.stderr.on('data', (d) => done(`ERROR ${d}`));
+          p.on('exit', () => done(out.trim() || 'NO OUTPUT'));
+        });
+      }),
+    );
+    expect(outcomes.sort()).toEqual(['LOST', 'LOST', 'LOST', 'LOST', 'LOST', 'LOST', 'LOST', 'WON']);
+  }, 15000);
+});
+
+describe('deployment headers (SEC-11)', () => {
+  it('sends the same CSP as the page, plus framing protection a meta tag cannot carry', () => {
+    const root = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
+    const meta = /Content-Security-Policy"\s+content="([^"]+)"/.exec(root('index.html'))![1];
+    const rule = JSON.parse(root('vercel.json')).headers.find((r: { headers: { key: string }[] }) =>
+      r.headers.some((h) => h.key === 'Content-Security-Policy'),
+    );
+    const header = rule.headers.find((h: { key: string }) => h.key === 'Content-Security-Policy');
+    expect(header.value).toBe(`${meta}; frame-ancestors 'none'`);
+
+    const covers = (path: string) => new RegExp(`^${rule.source}$`).test(path);
+    expect(['/', '/index.html'].every(covers)).toBe(true);
+    expect(['/sw.js', '/workbox-9c191d2f.js', '/assets/pdf.worker.min.js'].some(covers)).toBe(false);
+  });
+});
 
 describe('build metadata override', () => {
   it('ignores PDFSIGNER_BUILD_INFO unless the shell allows test hooks', () => {

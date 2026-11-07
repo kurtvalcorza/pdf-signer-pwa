@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DisclosureBanner } from './DisclosureBanner';
 import { loadCertificate, clearCertificate } from '../features/persistence/certStore';
-import { generateSelfSignedP12 } from '../features/signing/generateCert';
+import { generateSelfSignedP12, MIN_NEW_CERT_PASSWORD } from '../features/signing/generateCert';
 import { downloadBytes } from '../features/signing/export';
 import { persistenceAvailable } from '../lib/desktopPersistence';
 import { assertFileSize, LIMITS } from '../lib/limits';
@@ -129,7 +129,11 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   }
 
   const ready = !!p12Bytes && password.length > 0 && canSign && !busy;
-  const canCreate = creating && fullName.trim().length > 0 && password.length > 0 && !certDer;
+  const canCreate =
+    creating &&
+    fullName.trim().length > 0 &&
+    password.length >= MIN_NEW_CERT_PASSWORD &&
+    !certDer;
 
   return (
     <div className="flex flex-col gap-3">
@@ -202,7 +206,8 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
             className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
           />
           <p className="text-xs text-white/40">
-            The password below protects the new certificate. Choose one you’ll remember.
+            The password below protects the new certificate. Use at least {MIN_NEW_CERT_PASSWORD}{' '}
+            characters: anyone who copies the file can try passwords offline, and it can’t be reset.
           </p>
           {genError && <p className="text-xs text-amber-200">{genError}</p>}
           {!certDer ? (

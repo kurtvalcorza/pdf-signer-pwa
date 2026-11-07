@@ -1,7 +1,7 @@
 // Desktop shell entry — the offline Electron wrapper around the unchanged web build (FR-009/FR-019).
 // Order matters: scheme registration and userData relocation MUST happen before app.whenReady().
 
-const { app, BrowserWindow, Menu, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { registerAppScheme, handleAppProtocol, appURL } = require('./protocol');
@@ -75,6 +75,12 @@ function createWindow() {
 app.whenReady().then(() => {
   // Another live instance owns this data folder — defer to it (spec § Edge Cases).
   if (!instanceLock.ok) {
+    if (instanceLock.blocked) {
+      dialog.showErrorBox(
+        'PDF Signer could not start',
+        `The data folder could not be locked for use:\n${dataLocation.userData}`,
+      );
+    }
     app.quit();
     return;
   }
