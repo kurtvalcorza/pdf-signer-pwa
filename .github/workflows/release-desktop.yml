@@ -191,9 +191,18 @@ jobs:
         run: |
           set -e
           mkdir -p out
-          cat dist-artifacts/**/SHA256SUMS-* > out/SHA256SUMS
-          find dist-artifacts -type f \( -name '*.exe' -o -name '*.AppImage' \) -exec cp {} out/ \;
+          # GitHub renames release assets, turning spaces into dots, so use those names here. Otherwise
+          # the published SHA256SUMS lists files that do not exist and `sha256sum -c` fails.
+          cat dist-artifacts/**/SHA256SUMS-* |
+            awk '{ hash = $1; sub(/^[0-9a-f]+ +\*?/, ""); gsub(/ /, "."); print hash "  " $0 }' > out/SHA256SUMS
+          find dist-artifacts -type f \( -name '*.exe' -o -name '*.AppImage' \) -print0 |
+            while IFS= read -r -d '' file; do
+              name=$(basename "$file")
+              cp "$file" "out/${name// /.}"
+            done
           echo "--- SHA256SUMS ---"; cat out/SHA256SUMS
+          # The published checksums must verify against the files actually being uploaded.
+          ( cd out && sha256sum -c SHA256SUMS )
       - name: Publish release with artifacts + checksums
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
