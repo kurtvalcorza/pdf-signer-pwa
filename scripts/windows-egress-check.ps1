@@ -1,0 +1,56 @@
+# Windows no-egress gate (SC-004): run the packaged app through a real sign while sampling the sockets
+# of its whole process tree, and fail on anything reaching beyond loopback.
+#
+# This is socket sampling, not packet capture: a connection opened and closed between two samples can
+# be missed. Windows packet capture is host-wide and cannot be scoped to one process tree, so a
+# packet-level gate (WFP) remains open in issue #12. Needs no elevation.
+param([string]$Exe = 'release\win-unpacked\PDF Signer.exe')
+
+$ErrorActionPreference = 'Stop'
+$minimumSamples = 5
+$name = [IO.Path]::GetFileNameWithoutExtension($Exe)
+
+function Get-ExternalSockets([int[]]$Ids) {
+  $loopback = '^(127\.|::1$|0\.0\.0\.0$|::$)'
+  @(Get-NetTCPConnection -ErrorAction SilentlyContinue |
+    Where-Object { $Ids -contains $_.OwningProcess -and $_.RemoteAddress -notmatch $loopback } |
+    ForEach-Object { "TCP $($_.RemoteAddress):$($_.RemotePort)" }) +
+  @(Get-NetUDPEndpoint -ErrorAction SilentlyContinue |
+    Where-Object { $Ids -contains $_.OwningProcess -and $_.LocalAddress -notmatch $loopback } |
+    ForEach-Object { "UDP bound $($_.LocalAddress):$($_.LocalPort)" })
+}
+
+# Positive control: the sampler must see a real connection, or a pass would mean nothing.
+$localIp = (Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } | Select-Object -First 1).IPAddress
+$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse($localIp), 0)
+$listener.Start()
+$client = [Net.Sockets.TcpClient]::new($localIp, $listener.LocalEndpoint.Port)
+$control = Get-ExternalSockets @($PID)
+$client.Dispose()
+$listener.Stop()
+if ($control.Count -eq 0) { throw 'Control failed: the sampler did not see a live connection.' }
+
+$env:PDFSIGNER_SKIP_VALIDATE = '1'
+$run = Start-Process node -ArgumentList 'electron/verify-packaged.mjs' -PassThru -NoNewWindow
+$null = $run.Handle # keeps ExitCode readable after the process ends
+
+$samples = 0
+$found = [Collections.Generic.HashSet[string]]::new()
+while (-not $run.HasExited) {
+  $ids = @(Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object Id)
+  if ($ids.Count -gt 0) {
+    $samples++
+    foreach ($socket in (Get-ExternalSockets $ids)) { [void]$found.Add($socket) }
+  }
+}
+$run.WaitForExit()
+
+Write-Host "samples with the app running: $samples"
+if ($run.ExitCode -ne 0) { throw "The packaged sign failed (exit $($run.ExitCode))." }
+if ($samples -lt $minimumSamples) { throw "Only $samples samples: too few to mean anything." }
+if ($found.Count -gt 0) {
+  $found | ForEach-Object { Write-Host "::error::$_" }
+  throw 'EGRESS DETECTED: the app opened a non-loopback socket.'
+}
+Write-Host 'no non-loopback sockets seen'

@@ -10,6 +10,14 @@ function parseCert(der: Uint8Array): forge.pki.Certificate {
 }
 
 describe('generateSelfSignedP12', () => {
+  it('protects the private key with AES-256 rather than legacy 3DES (SEC-13)', () => {
+    const { p12Bytes } = generateSelfSignedP12({ commonName: 'Crypto' }, 'secret');
+    const der = Buffer.from(p12Bytes);
+    const oid = (name: string) => Buffer.from(forge.asn1.oidToDer(forge.pki.oids[name]).getBytes(), 'binary');
+    expect(der.includes(oid('aes256-CBC'))).toBe(true);
+    expect(der.includes(oid('pbeWithSHAAnd3-KeyTripleDES-CBC'))).toBe(false);
+  });
+
   it('creates a usable .p12 whose password unlocks and whose CN matches', () => {
     const { p12Bytes, certDer } = generateSelfSignedP12({ commonName: 'Kurt Valcorza' }, 'secret', 2);
     expect(p12Bytes.length).toBeGreaterThan(500);

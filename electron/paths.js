@@ -8,6 +8,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { randomUUID } = require('node:crypto');
 
 const DATA_DIR_NAME = 'pdf-signer-data';
 
@@ -77,6 +78,75 @@ function resolvePortableData() {
   return { mode: 'ephemeral', userData: ephemeral, persistenceEnabled: false, adjacentDir };
 }
 
+const LOCK_HEARTBEAT_MS = 30_000; // the holder refreshes the lock's mtime this often
+const LOCK_STALE_MS = 120_000; // no refresh for this long: the holder is gone, whatever the PID says
+const LOCK_GRACE_MS = 5_000; // an unreadable lock this new is being written, or its reclaim is live
+const LOCK_ATTEMPTS = 40;
+const LOCK_RETRY_MS = 25;
+
+/** The lock's contents and age, or null if it is gone. Also reads a v0.1.0 bare-PID lock. */
+function readLock(lockPath) {
+  try {
+    const raw = fs.readFileSync(lockPath, 'utf8');
+    const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+    let fields = null;
+    try {
+      fields = JSON.parse(raw);
+    } catch {
+      /* empty or partly written */
+    }
+    return {
+      raw,
+      pid: Number(fields?.pid ?? raw.trim()) || 0,
+      nonce: fields?.nonce ?? null,
+      ageMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A PID alone cannot prove ownership: PIDs are reused, so a dead instance can look alive. The
+ * heartbeat settles that case. An unparseable lock is usually a racing writer, so it gets a grace
+ * period instead of being taken as stale.
+ */
+function isStale(lock) {
+  if (!lock.pid) return lock.ageMs > LOCK_GRACE_MS;
+  if (lock.pid === process.pid) return true;
+  return !isAlive(lock.pid) || lock.ageMs > LOCK_STALE_MS;
+}
+
+/**
+ * Remove a lock judged stale. An exclusive mkdir is the mutex (atomic, and unlike hard links it works
+ * on the FAT media portable builds run from). The lock is re-read inside it, and it can only be
+ * replaced by being removed first, which only the mutex holder does, so a fresh owner's lock can
+ * never be deleted by a process that judged the old one stale.
+ */
+function reclaimStale(lockPath, observedRaw) {
+  const mutex = `${lockPath}.reclaim`;
+  try {
+    fs.mkdirSync(mutex);
+  } catch {
+    try {
+      // Left behind by a crash mid-reclaim. Only clears it; this attempt still backs off.
+      if (Date.now() - fs.statSync(mutex).mtimeMs > LOCK_GRACE_MS) fs.rmdirSync(mutex);
+    } catch {
+      /* another process got there first */
+    }
+    return;
+  }
+  try {
+    if (readLock(lockPath)?.raw === observedRaw) fs.rmSync(lockPath, { force: true });
+  } finally {
+    fs.rmdirSync(mutex);
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 /**
  * Data-directory-scoped single-instance lock (spec § Edge Cases): a second copy launched from the
  * SAME folder must defer, while copies in DIFFERENT folders run independently — so the lock lives in
@@ -89,37 +159,45 @@ function resolvePortableData() {
 function acquireDirLock(dir) {
   if (!dir) return { ok: true, release: () => {} };
   const lockPath = path.join(dir, '.instance-lock');
-  const release = () => {
+  const nonce = randomUUID();
+  fs.mkdirSync(dir, { recursive: true });
+
+  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
     try {
-      if (fs.readFileSync(lockPath, 'utf8').trim() === String(process.pid)) fs.rmSync(lockPath, { force: true });
+      const fd = fs.openSync(lockPath, 'wx'); // exclusive create — fails if the lock exists
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, nonce }));
+      fs.closeSync(fd);
+      return { ok: true, release: holdLock(lockPath, nonce) };
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    const lock = readLock(lockPath);
+    if (lock && !isStale(lock)) return { ok: false, release: () => {} };
+    if (lock) reclaimStale(lockPath, lock.raw);
+    sleepSync(LOCK_RETRY_MS);
+  }
+  return { ok: false, release: () => {} };
+}
+
+/** Keep the lock fresh while we own it; returns the release that removes only OUR lock. */
+function holdLock(lockPath, nonce) {
+  const owned = () => readLock(lockPath)?.nonce === nonce;
+  const beat = setInterval(() => {
+    try {
+      if (owned()) fs.utimesSync(lockPath, new Date(), new Date());
+    } catch {
+      /* the next beat retries; a long failure lets another instance reclaim, which is safe */
+    }
+  }, LOCK_HEARTBEAT_MS);
+  beat.unref();
+  return () => {
+    clearInterval(beat);
+    try {
+      if (owned()) fs.rmSync(lockPath, { force: true });
     } catch {
       /* already gone */
     }
   };
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      const fd = fs.openSync(lockPath, 'wx'); // exclusive create — fails if the lock exists
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
-      return { ok: true, release };
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      let holder = 0;
-      try {
-        holder = Number(fs.readFileSync(lockPath, 'utf8').trim());
-      } catch {
-        /* race — retry */
-      }
-      if (holder && holder !== process.pid && isAlive(holder)) return { ok: false, release: () => {} };
-      try {
-        fs.rmSync(lockPath, { force: true }); // stale (crashed holder) — reclaim and retry
-      } catch {
-        /* retry */
-      }
-    }
-  }
-  return { ok: false, release: () => {} };
 }
 
 function isAlive(pid) {
