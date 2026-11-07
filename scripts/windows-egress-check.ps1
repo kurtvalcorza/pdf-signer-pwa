@@ -15,24 +15,28 @@ function Get-ExternalSockets([int[]]$Ids) {
   $loopback = '^(127\.|::1$)'
   # A TCP socket with a wildcard remote is listening, not connected. A UDP socket has no remote, so a
   # wildcard local bind counts: it can send anywhere.
-  @(Get-NetTCPConnection -ErrorAction SilentlyContinue |
+  @(Get-NetTCPConnection |
     Where-Object { $Ids -contains $_.OwningProcess -and $_.RemoteAddress -notmatch '^(127\.|::1$|0\.0\.0\.0$|::$)' } |
     ForEach-Object { "TCP $($_.RemoteAddress):$($_.RemotePort)" }) +
-  @(Get-NetUDPEndpoint -ErrorAction SilentlyContinue |
+  @(Get-NetUDPEndpoint |
     Where-Object { $Ids -contains $_.OwningProcess -and $_.LocalAddress -notmatch $loopback } |
     ForEach-Object { "UDP bound $($_.LocalAddress):$($_.LocalPort)" })
 }
 
-# Positive control: the sampler must see a real connection, or a pass would mean nothing.
+# Positive control: the sampler must see a real TCP connection and a real UDP socket, or a pass would
+# mean nothing for that half.
 $localIp = (Get-NetIPAddress -AddressFamily IPv4 |
   Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } | Select-Object -First 1).IPAddress
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse($localIp), 0)
 $listener.Start()
 $client = [Net.Sockets.TcpClient]::new($localIp, $listener.LocalEndpoint.Port)
+$udp = [Net.Sockets.UdpClient]::new(0)
 $control = Get-ExternalSockets @($PID)
+$udp.Dispose()
 $client.Dispose()
 $listener.Stop()
-if ($control.Count -eq 0) { throw 'Control failed: the sampler did not see a live connection.' }
+if (-not ($control -match '^TCP')) { throw 'Control failed: the sampler did not see a TCP connection.' }
+if (-not ($control -match '^UDP')) { throw 'Control failed: the sampler did not see a UDP socket.' }
 
 $env:PDFSIGNER_SKIP_VALIDATE = '1'
 $run = Start-Process node -ArgumentList 'electron/verify-packaged.mjs' -PassThru -NoNewWindow

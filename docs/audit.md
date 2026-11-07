@@ -9,10 +9,10 @@ inherited from the review.
 | :--- | :--- | :--- |
 | SEC-01, 06 | Forge 1.4.3 on `main`. The v0.1.0 binaries still carry 1.4.0 until a new release replaces them. | Zero-iteration fixture accepted by 1.4.0 under any password, rejected now (`p12Malformed.test.ts`). |
 | SEC-02 | Fixed. Every certified PDF is refused, because appending a field breaks certification at every /P. | pyHanko fixtures and `validate_pdf.py`. |
-| SEC-03, 07 | Sandbox on; Electron 43.8.7; fuses burned. | Desktop E2E on every CI run, and `verify-packaged.mjs` on the binary. `--no-sandbox` has no fuse. |
+| SEC-03, 07 | Sandbox on; Electron 43.8.7; fuses burned. | Desktop E2E on Windows and Linux in CI, and `verify-packaged.mjs` on the Windows binary. `--no-sandbox` has no fuse, and the archive integrity fuse has no effect on Linux. |
 | SEC-04, 05 | Fixed. | `us2-remember-cert.spec.ts`, with the consent test shown to fail without the fix. |
 | SEC-08, 09 | Limits and cancellable, atomic rendering. | `sec-limits-render.spec.ts`. Main-thread parsing of an accepted file cannot be cancelled. |
-| SEC-10 | Heartbeat, nonce and a reclaim mutex; an old lock with a live PID is watched for one heartbeat. | Eight simultaneous launches on a stale lock produce one winner, and a live holder keeps the folder. |
+| SEC-10 | Heartbeat written into the lock, nonce and a reclaim mutex; an old lock with a live PID is watched for one beat. | Eight simultaneous launches on a stale lock produce one winner, and a live holder keeps the folder. |
 | SEC-11 | Claims corrected; `vercel.json` sends CSP and frame protections on documents only. | `tests/e2e-pwa/deploy-headers.spec.ts` applies those rules to the real build. Not yet observed on a deployment. |
 | SEC-12 | Actions pinned, permissions scoped per job. | Runs on the next release. Tag protection is a repository setting. |
 | SEC-13 | New certificates use AES-256 with 12-character passwords. | Opened with OpenSSL-backed `cryptography`. Acrobat import needs a manual check. |

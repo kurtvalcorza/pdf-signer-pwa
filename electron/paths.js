@@ -89,8 +89,7 @@ const LOCK_RETRY_MS = 25;
 function readLock(lockPath) {
   try {
     const raw = fs.readFileSync(lockPath, 'utf8');
-    const { mtimeMs } = fs.statSync(lockPath);
-    const ageMs = Date.now() - mtimeMs;
+    const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
     let fields = null;
     try {
       fields = JSON.parse(raw);
@@ -102,7 +101,6 @@ function readLock(lockPath) {
       pid: Number(fields?.pid ?? raw.trim()) || 0,
       nonce: fields?.nonce ?? null,
       ageMs,
-      mtimeMs,
     };
   } catch {
     return null;
@@ -113,8 +111,9 @@ function readLock(lockPath) {
  * A PID alone cannot prove ownership: PIDs are reused, so a dead instance can look alive. The
  * heartbeat settles that case, but an old mtime alone proves nothing either: a laptop that slept or a
  * clock that disagrees looks the same. So an old lock with a live PID is watched for one heartbeat,
- * comparing mtimes rather than clocks. An unparseable lock is usually a racing writer, so it gets a
- * grace period. A v0.1.0 lock has no heartbeat, so its live PID is taken at its word.
+ * and only the holder's beat counter changing counts, not a clock. If the lock disappears meanwhile,
+ * the folder is free. An unparseable lock is usually a racing writer, so it gets a grace period. A
+ * v0.1.0 lock has no heartbeat, so its live PID is taken at its word.
  */
 function isStale(lock, lockPath) {
   if (!lock.pid) return lock.ageMs > LOCK_GRACE_MS;
@@ -122,7 +121,8 @@ function isStale(lock, lockPath) {
   if (!isAlive(lock.pid)) return true;
   if (lock.nonce === null || lock.ageMs <= LOCK_STALE_MS) return false;
   sleepSync(LOCK_CONFIRM_MS);
-  return readLock(lockPath)?.mtimeMs === lock.mtimeMs;
+  const now = readLock(lockPath);
+  return now === null || now.raw === lock.raw;
 }
 
 /**
@@ -159,6 +159,8 @@ function releaseReclaimMutex(mutex) {
   }
 }
 
+const lockContent = (nonce, beats) => JSON.stringify({ pid: process.pid, nonce, beats });
+
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -175,6 +177,14 @@ function sleepSync(ms) {
  */
 function acquireDirLock(dir) {
   if (!dir) return { ok: true, release: () => {} };
+  try {
+    return tryAcquireDirLock(dir);
+  } catch {
+    return { ok: false, blocked: true, release: () => {} }; // reported by the shell, never a crash
+  }
+}
+
+function tryAcquireDirLock(dir) {
   const lockPath = path.join(dir, '.instance-lock');
   const nonce = randomUUID();
   fs.mkdirSync(dir, { recursive: true });
@@ -182,7 +192,7 @@ function acquireDirLock(dir) {
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
     try {
       const fd = fs.openSync(lockPath, 'wx'); // exclusive create — fails if the lock exists
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, nonce }));
+      fs.writeSync(fd, lockContent(nonce, 0));
       fs.closeSync(fd);
       return { ok: true, release: holdLock(lockPath, nonce) };
     } catch (e) {
@@ -199,11 +209,15 @@ function acquireDirLock(dir) {
 /** Keep the lock fresh while we own it; returns the release that removes only OUR lock. */
 function holdLock(lockPath, nonce) {
   const owned = () => readLock(lockPath)?.nonce === nonce;
+  let beats = 0;
+  // A write, not utimes: portable media and network shares may ignore or refuse setting a time. 'r+'
+  // does not truncate, and the content only grows, so a reader never sees an empty lock.
   const beat = setInterval(() => {
     try {
-      if (owned()) fs.utimesSync(lockPath, new Date(), new Date());
+      beats += 1;
+      if (owned()) fs.writeFileSync(lockPath, lockContent(nonce, beats), { flag: 'r+' });
     } catch {
-      /* the next beat retries; a long failure lets another instance reclaim, which is safe */
+      /* the next beat retries */
     }
   }, LOCK_HEARTBEAT_MS);
   beat.unref();

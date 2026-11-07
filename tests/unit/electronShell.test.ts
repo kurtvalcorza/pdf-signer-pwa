@@ -45,6 +45,45 @@ describe('instance lock ownership (SEC-10)', () => {
     rmSync(dir, { recursive: true, force: true });
   }, 15000);
 
+  it('keeps the folder where setting a file time fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const holder = spawn(process.execPath, [
+      '-e',
+      `require('node:fs').utimesSync = () => { throw new Error('EPERM'); };
+       const lock = require(${JSON.stringify(PATHS)}).acquireDirLock(${JSON.stringify(dir)});
+       console.log(lock.ok); setTimeout(() => {}, 12000);`,
+    ]);
+    await new Promise((done) => holder.stdout.once('data', done));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    expect(paths.acquireDirLock(dir)).toMatchObject({ ok: false, blocked: false });
+    holder.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('takes the folder if the holder quits during the confirm wait', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const holder = spawn(process.execPath, [
+      '-e',
+      `const lock = require(${JSON.stringify(PATHS)}).acquireDirLock(${JSON.stringify(dir)});
+       console.log(lock.ok); setTimeout(() => lock.release(), 2000); setTimeout(() => {}, 12000);`,
+    ]);
+    await new Promise((done) => holder.stdout.once('data', done));
+    utimesSync(lockIn(dir), hoursAgo, hoursAgo);
+    const lock = paths.acquireDirLock(dir);
+    expect(lock.ok).toBe(true);
+    lock.release();
+    holder.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('reports a data folder it cannot create, rather than crashing startup', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const file = join(dir, 'a-file');
+    writeFileSync(file, '');
+    expect(paths.acquireDirLock(join(file, 'child'))).toMatchObject({ ok: false, blocked: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('takes a v0.1.0 lock with a live PID at its word, however old', () => {
     const dir = mkdtempSync(join(tmpdir(), 'lock-'));
     writeFileSync(lockIn(dir), String(process.ppid));
