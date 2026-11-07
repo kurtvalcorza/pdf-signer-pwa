@@ -119,6 +119,39 @@ test('unticking remember on the stored certificate removes it after signing', as
   await expect(page.getByRole('button', { name: /Choose certificate/ })).toBeVisible();
 });
 
+test('opening and closing the create panel leaves the stored certificate alone', async ({ page }) => {
+  await openCertSheet(page);
+  await pickAndSign(page, CERT_A, true);
+  await expect.poll(() => storedLabel(page)).toBe('cert-a.p12');
+
+  await openCertSheet(page);
+  await expect(rememberBox(page)).toBeChecked();
+  await page.getByRole('button', { name: /Create one/ }).click();
+  await page.getByRole('button', { name: /Use an existing certificate/ }).click();
+  await expect(rememberBox(page)).toBeChecked();
+
+  await pickAndSign(page, null, false);
+  expect(await storedLabel(page)).toBe('cert-a.p12');
+});
+
+test('a certificate created while another is stored needs its own opt-in', async ({ page }) => {
+  await openCertSheet(page);
+  await pickAndSign(page, CERT_A, true);
+  await expect.poll(() => storedLabel(page)).toBe('cert-a.p12');
+
+  await openCertSheet(page);
+  await page.getByRole('button', { name: /Create one/ }).click();
+  await page.getByPlaceholder(/full name/i).fill('New Signer');
+  await page.getByPlaceholder('Certificate password').fill('a-long-enough-password');
+  await page.getByRole('button', { name: 'Create certificate' }).click();
+  await expect(page.getByText(/Certificate created/)).toBeVisible();
+  await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: /Sign & Download/ }).click(),
+  ]);
+  expect(await storedLabel(page)).toBe('cert-a.p12');
+});
+
 test('the stored certificate stays forgettable after choosing another', async ({ page }) => {
   await openCertSheet(page);
   await pickAndSign(page, CERT_A, true);
