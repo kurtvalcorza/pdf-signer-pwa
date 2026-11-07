@@ -122,6 +122,8 @@ would rewrite the already-signed pages and break the existing signatures — so 
   the existing signature. The app tells you when you open the file, and signing stays disabled.
 - **"This signed PDF could not be counter-signed…"** The file's structure could not take an appended
   signature without hiding the earlier one, so it was left unsigned.
+- **"…is too large."** The app works entirely in your device's memory, so it caps what it opens:
+  PDFs at 100 MB and 5,000 pages, signature images at 20 MB and 40 megapixels, certificates at 1 MB.
 - **"This PDF is password-protected…"** Remove the PDF's open password first, then sign it.
 - **My signature shows as untrusted / "validity unknown".** Expected for a self-signed Digital ID —
   it's cryptographically intact but not *trusted* until the recipient adds your public `.cer` to their

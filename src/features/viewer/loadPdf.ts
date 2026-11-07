@@ -1,5 +1,6 @@
 import { PDFDocument, PDFName, PDFDict, PDFArray } from 'pdf-lib';
 import { signingPolicyBlock } from '../signing/signingPolicy';
+import { assertPageCount } from '../../lib/limits';
 
 export interface LoadedPdf {
   bytes: Uint8Array;
@@ -24,6 +25,8 @@ export async function loadPdf(bytes: Uint8Array): Promise<LoadedPdf> {
     }
     throw new Error('This file could not be read as a PDF.');
   }
+
+  assertPageCount(doc.getPageCount());
 
   return {
     bytes,
