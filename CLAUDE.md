@@ -12,7 +12,11 @@ digital signature). Installable on Android, deployed static on Vercel.
 - **Design notes (technical origin)**: [DESIGN.md](DESIGN.md) — the original technical design doc; the formal, technology-agnostic spec is `specs/001-pdf-signer/spec.md`.
 
 <!-- SPECKIT START -->
-## Active feature: 003-android-packaging (planned; spike next, then stop for review)
+## Active feature: 003-android-packaging (spike passed; tasks ready, implementation not started)
+
+- **Tasks: [specs/003-android-packaging/tasks.md](specs/003-android-packaging/tasks.md)**: 49 tasks,
+  MVP = Phases 1–3 (US1); T036, T039 and T040 are Kurt's ([OWNER]). `spike-android/` is
+  git-excluded reference code, deleted by T049.
 
 Native Android APK: a Kotlin shell hosting the UNCHANGED `dist/` in a WebView on
 `https://appassets.androidplatform.net`, no network permission, signed in CI from a GitHub
