@@ -88,7 +88,7 @@ jobs:
       #
       # ⚠ KNOWN GAP (explicit, not implicit): this packet capture runs on LINUX only. The Windows leg
       # below samples the app's sockets instead: per-process, but a very short-lived connection can
-      # fall between samples. A packet-level Windows gate (WFP/pktmon) remains open in issue #12.
+      # fall between samples. A packet-level Windows gate (WFP/pktmon) remains open in issue #23.
       - name: No-egress gate — packet capture over the app process tree (SC-004) [Linux]
         if: runner.os == 'Linux'
         run: |

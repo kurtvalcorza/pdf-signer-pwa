@@ -3,10 +3,32 @@
 The desktop builds are the **exact same app** as the web PWA, wrapped in a minimal Electron shell so
 it runs as a single portable file with **no install and no network** (FR-009/FR-019). The signing
 engine is unchanged and shared — a desktop signature is produced by the same code the web build's
-83 unit tests and pyHanko gate already validate.
+unit tests and pyHanko gate already validate.
 
 - **Windows**: `PDF Signer <version>.exe` — a portable single file, no installer, no registry.
 - **Linux**: `PDF Signer-<version>.AppImage` — a single file; `chmod +x` then run.
+
+## v0.1.1: security release, replaces v0.1.0
+
+**Stop using v0.1.0 and download this release.** v0.1.0 ships node-forge 1.4.0, which accepts a crafted
+`.p12` under any password (GHSA-jc66-7q78-782g). That flaw does not reveal your password or private key.
+
+What changes for you:
+
+- **Certified PDFs can no longer be signed.** v0.1.0 let you counter-sign some of them and said earlier
+  signatures stayed valid, but the certification would actually break. The app now explains this when
+  you open the file. PDFs signed without certification still work.
+- **Renderer sandbox on**, Electron updated to 43.8.7, and fuses burned into the binary.
+- **A remembered certificate follows your choices.** Picking another certificate no longer inherits
+  the opt-in, and a failed Forget tells you so.
+- **Input limits:** PDFs 100 MB and 5,000 pages, images 20 MB and 40 megapixels, certificates 1 MB.
+- **Stricter certificates:** a `.p12` must hold a password-protected RSA key with its certificate.
+  New certificates use AES-256 and a password of at least 12 characters.
+
+Quit v0.1.0 before starting this version from the same folder, because the two do not share the
+single-instance lock correctly.
+
+Full details are in `docs/audit.md`, and issue #16 records the review.
 
 ## First run
 
