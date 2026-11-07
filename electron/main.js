@@ -11,6 +11,10 @@ const { loadBuildMetadata } = require('./buildmeta');
 
 const DIST = path.join(__dirname, '..', 'dist'); // repo dist/ in dev; app.asar/dist when packaged
 
+// Test hooks are DOUBLY gated so a shipped build cannot be redirected by an inherited env var: they
+// need `!app.isPackaged` OR an explicit PDFSIGNER_ALLOW_TEST_CAPTURE=1 marker. *(Codex, PR #13.)*
+const testHooksAllowed = !app.isPackaged || process.env.PDFSIGNER_ALLOW_TEST_CAPTURE === '1';
+
 // Layer 5 (network-policy.md): no phone-home. Two parts, both before `ready`:
 //  1. We NEVER call crashReporter.start() — a dump could contain in-memory key material (FR-012).
 //  2. Disable Chromium's background networking / metrics / component + domain-reliability services
@@ -59,7 +63,7 @@ function createWindow() {
             path: dataLocation.userData,
             persistenceEnabled: dataLocation.persistenceEnabled,
           }),
-        '--pdfsigner-build=' + JSON.stringify(loadBuildMetadata()),
+        '--pdfsigner-build=' + JSON.stringify(loadBuildMetadata({ allowOverride: testHooksAllowed })),
       ],
     },
   });
@@ -80,12 +84,9 @@ app.whenReady().then(() => {
 
   // Production keeps Electron's DEFAULT download handling (the OS save dialog — R10). A test-only hook
   // auto-saves the signed PDF so the E2E can capture it (Playwright cannot intercept Electron's blob
-  // download). It is DOUBLY gated so a shipped build cannot be tricked into redirecting a user's
-  // documents by an inherited env var: it needs `!app.isPackaged` OR an explicit `PDFSIGNER_ALLOW_TEST_
-  // CAPTURE=1` marker — a normal user environment has neither. *(Codex, PR #13.)*
+  // download). See testHooksAllowed.
   const testDir = process.env.PDFSIGNER_E2E_DOWNLOAD_DIR;
-  const testAllowed = !app.isPackaged || process.env.PDFSIGNER_ALLOW_TEST_CAPTURE === '1';
-  if (testDir && testAllowed) {
+  if (testDir && testHooksAllowed) {
     session.defaultSession.on('will-download', (_e, item) => {
       const out = path.join(testDir, item.getFilename());
       item.setSavePath(out);

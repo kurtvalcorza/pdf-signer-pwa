@@ -19,7 +19,7 @@ import {
 } from './features/signing/types';
 import { CertSheet, type SignRequest } from './components/CertSheet';
 import { CleanupSheet } from './components/CleanupSheet';
-import { saveCertificate } from './features/persistence/certStore';
+import { clearCertificate, saveCertificate } from './features/persistence/certStore';
 import {
   saveSignature,
   loadSignature,
@@ -319,15 +319,22 @@ export default function App() {
           });
         }
 
-        if (req.remember && canPersist) {
+        let warning: string | null = null;
+        if (req.forget) {
+          if (!(await clearCertificate())) {
+            warning =
+              'Signed, but the certificate could not be removed from this device and may still ' +
+              'be stored.';
+          }
+        } else if (req.remember && canPersist) {
           const saved = await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
           if (!saved) {
-            const warning =
+            warning =
               'Signed, but this certificate could not be remembered on this device. Any ' +
               'certificate remembered earlier is unchanged.';
-            note = note ? `${note} ${warning}` : warning;
           }
         }
+        if (warning) note = note ? `${note} ${warning}` : warning;
         downloadPdf(signed, doc.name.replace(/\.pdf$/i, '') + '-signed.pdf');
         setMode('stamp');
         if (note) setError(note);

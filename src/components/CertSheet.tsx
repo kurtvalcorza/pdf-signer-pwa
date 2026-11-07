@@ -13,6 +13,8 @@ export interface SignRequest {
   p12Bytes: Uint8Array;
   password: string;
   remember: boolean;
+  /** The user unticked "remember" on the stored certificate: remove it once signed. */
+  forget: boolean;
   label?: string;
   /** Show "Digitally signed by {name}" in the appearance. */
   showLabel: boolean;
@@ -32,7 +34,10 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [certLabel, setCertLabel] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
+  /** True while the active certificate IS the stored one. */
   const [remembered, setRemembered] = useState(false);
+  /** A certificate is stored on this device, whichever one is active. */
+  const [hasStored, setHasStored] = useState(false);
   const [showLabel, setShowLabel] = useState(true);
   const [showDate, setShowDate] = useState(true);
   const [certError, setCertError] = useState<string | null>(null);
@@ -51,8 +56,10 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   useEffect(() => {
     if (!canPersist) return; // read-only media: don't load a remembered cert
     loadCertificate().then((c) => {
+      if (!c) return;
+      setHasStored(true);
       // A slow read must not replace a certificate the user has already chosen.
-      if (c && !chosenRef.current) {
+      if (!chosenRef.current) {
         setP12Bytes(c.p12Bytes);
         setCertLabel(c.label);
         setRemembered(true);
@@ -94,6 +101,8 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
       );
       return;
     }
+    setHasStored(false);
+    if (!remembered) return; // another certificate is active; only the stored record goes
     setP12Bytes(null);
     setCertLabel(null);
     setRemember(false);
@@ -154,9 +163,9 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
           >
             {certLabel ? `📄 ${certLabel}` : 'Choose certificate (.p12 / .pfx)'}
           </button>
-          {remembered && (
+          {hasStored && (
             <button type="button" onClick={forget} className="text-xs text-white/50 hover:text-white">
-              Forget
+              {remembered ? 'Forget' : 'Forget saved certificate'}
             </button>
           )}
         </div>
@@ -264,6 +273,9 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
           Remember this certificate on this device (never the password)
         </label>
       )}
+      {remembered && !remember && (
+        <p className="text-xs text-white/50">Signing will remove it from this device.</p>
+      )}
 
       <div className="flex flex-col gap-1 rounded-lg bg-white/5 p-3">
         <span className="text-xs font-medium text-white/70">Signature appearance</span>
@@ -285,7 +297,15 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         disabled={!ready}
         onClick={() =>
           p12Bytes &&
-          onSign({ p12Bytes, password, remember, label: certLabel ?? 'certificate', showLabel, showDate })
+          onSign({
+            p12Bytes,
+            password,
+            remember,
+            forget: remembered && !remember,
+            label: certLabel ?? 'certificate',
+            showLabel,
+            showDate,
+          })
         }
         className="rounded-lg bg-blue-500 px-4 py-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
       >

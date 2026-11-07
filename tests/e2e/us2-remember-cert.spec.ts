@@ -103,6 +103,38 @@ test('SEC-04: a failed removal is shown and never reported as forgotten', async 
   expect(await storedLabel(page)).toBe('cert-a.p12');
 });
 
+test('unticking remember on the stored certificate removes it after signing', async ({ page }) => {
+  await openCertSheet(page);
+  await pickAndSign(page, CERT_A, true);
+  await expect.poll(() => storedLabel(page)).toBe('cert-a.p12');
+
+  await openCertSheet(page);
+  await expect(rememberBox(page)).toBeChecked();
+  await rememberBox(page).uncheck();
+  await expect(page.getByText('Signing will remove it from this device.')).toBeVisible();
+  await pickAndSign(page, null, false);
+  await expect.poll(() => storedLabel(page)).toBeNull();
+
+  await openCertSheet(page);
+  await expect(page.getByRole('button', { name: /Choose certificate/ })).toBeVisible();
+});
+
+test('the stored certificate stays forgettable after choosing another', async ({ page }) => {
+  await openCertSheet(page);
+  await pickAndSign(page, CERT_A, true);
+  await expect.poll(() => storedLabel(page)).toBe('cert-a.p12');
+
+  await openCertSheet(page);
+  await expect(page.getByRole('button', { name: /cert-a\.p12/ })).toBeVisible();
+  await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(CERT_B);
+  await expect(page.getByRole('button', { name: /cert-b\.p12/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Forget saved certificate' }).click();
+  await expect.poll(() => storedLabel(page)).toBeNull();
+  await expect(page.getByRole('button', { name: /cert-b\.p12/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Forget/ })).toHaveCount(0);
+});
+
 test('SEC-04: a working Forget really removes the record', async ({ page }) => {
   await openCertSheet(page);
   await pickAndSign(page, CERT_A, true);

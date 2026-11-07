@@ -37,6 +37,8 @@ hasRememberedSignature(): Promise<boolean>
   signature" action, not placed automatically.
 - Consent to remember belongs to one certificate. Any change of certificate (file pick, generation)
   withdraws it; a new certificate is saved only after a fresh opt-in for that certificate.
+- Unticking "remember" on the stored certificate and signing removes it. Forget stays available
+  while any certificate is stored, including when a different one is active.
 - `clearCertificate` / `clearSignature` remove the entry and return true only once it is confirmed
   gone; the UI exposes both controls. A failed certificate removal is shown to the user and never
   reported as success.
