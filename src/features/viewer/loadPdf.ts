@@ -1,9 +1,13 @@
 import { PDFDocument, PDFName, PDFDict, PDFArray } from 'pdf-lib';
+import { signingPolicyBlock } from '../signing/signingPolicy';
+import { assertPageCount } from '../../lib/limits';
 
 export interface LoadedPdf {
   bytes: Uint8Array;
   pageCount: number;
   hasExistingSignature: boolean;
+  /** Why a signature cannot be added without breaking an existing policy, else null. */
+  signingBlock: string | null;
 }
 
 /**
@@ -22,11 +26,23 @@ export async function loadPdf(bytes: Uint8Array): Promise<LoadedPdf> {
     throw new Error('This file could not be read as a PDF.');
   }
 
+  assertPageCount(doc.getPageCount());
+
   return {
     bytes,
     pageCount: doc.getPageCount(),
     hasExistingSignature: detectSignature(doc, bytes),
+    signingBlock: policyBlock(doc),
   };
+}
+
+/** A structure that cannot be walked cannot be shown to permit signing, so it blocks. */
+function policyBlock(doc: PDFDocument): string | null {
+  try {
+    return signingPolicyBlock(doc);
+  } catch {
+    return 'This PDF’s signature policy could not be read, so it cannot be signed here.';
+  }
 }
 
 /**

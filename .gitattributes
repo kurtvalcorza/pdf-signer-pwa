@@ -1,0 +1,5 @@
+# Signed fixtures are byte-exact: a line-ending conversion breaks every /ByteRange in them.
+*.pdf binary
+*.p12 binary
+*.pfx binary
+*.png binary

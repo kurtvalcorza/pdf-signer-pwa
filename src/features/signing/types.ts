@@ -37,10 +37,9 @@ export class MalformedCertificateError extends Error {
 }
 
 /**
- * Thrown when the loaded PDF carries a certification (DocMDP) signature whose policy
- * disallows any further changes — appending even an incremental signature would be a
- * disallowed modification, so compliant validators would flag the certification as
- * broken. The document is left untouched.
+ * Thrown when an existing signature's policy does not permit appending a signature
+ * field (signingPolicy.ts), so compliant validators would flag it as broken. The
+ * document is left untouched.
  */
 export class CertificationLockedError extends Error {
   constructor(

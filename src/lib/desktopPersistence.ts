@@ -5,6 +5,7 @@
 interface DesktopShell {
   persistenceEnabled: boolean;
   mode: string | null;
+  sandboxed: boolean;
 }
 
 declare global {

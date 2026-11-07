@@ -35,6 +35,13 @@ hasRememberedSignature(): Promise<boolean>
 - On load, the app pre-fills the certificate but STILL requires the password to be entered before
   any signing (FR-015/022). A remembered signature is offered via an explicit "Use saved
   signature" action, not placed automatically.
-- `clearCertificate` / `clearSignature` fully remove the entry; the UI exposes both controls.
-- Storage-unavailable (private mode / denied / quota): degrade to memory-only silently; the app
-  remains fully functional (edge case).
+- Consent to remember belongs to one certificate. Any change of certificate (file pick, generation)
+  withdraws it; a new certificate is saved only after a fresh opt-in for that certificate.
+- Unticking "remember" on the stored certificate and signing removes it. Forget stays available
+  while any certificate is stored, including when a different one is active.
+- `clearCertificate` / `clearSignature` remove the entry and return true only once it is confirmed
+  gone; the UI exposes both controls. A failed certificate removal is shown to the user and never
+  reported as success.
+- `saveCertificate` returns true only if the write landed, and refuses on desktop read-only media
+  (FR-011b). A failed save is shown to the user; signing itself still completes.
+- Storage-unavailable (private mode / denied / quota): the app remains fully functional in memory.
