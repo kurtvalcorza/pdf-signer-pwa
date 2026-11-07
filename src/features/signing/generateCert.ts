@@ -1,5 +1,5 @@
 import forge from 'node-forge';
-import { loadP12 } from './cert';
+import { loadP12, signingCertificate } from './cert';
 
 function binaryToBytes(bin: string): Uint8Array {
   const out = new Uint8Array(bin.length);
@@ -72,8 +72,7 @@ export function generateSelfSignedP12(
 
 /** Extract the DER public certificate from a .p12 (to export as a .cer for trust). */
 export function extractPublicCertDer(p12Bytes: Uint8Array, password: string): Uint8Array {
-  const p12 = loadP12(p12Bytes, password);
-  const bag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]?.[0];
-  if (!bag?.cert) throw new Error('No certificate found in the .p12.');
-  return binaryToBytes(forge.asn1.toDer(forge.pki.certificateToAsn1(bag.cert)).getBytes());
+  const cert = signingCertificate(loadP12(p12Bytes, password));
+  if (!cert) throw new Error('No certificate found in the .p12.');
+  return binaryToBytes(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes());
 }
