@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import forge from 'node-forge';
+import { P12Signer } from '@signpdf/signer-p12';
 import { generateSelfSignedP12 } from '../../src/features/signing/generateCert';
 import { loadP12, verifyCertPassword } from '../../src/features/signing/cert';
 import { BadPasswordError, MalformedCertificateError } from '../../src/features/signing/types';
@@ -27,6 +28,10 @@ function keyAndCert() {
  * unencrypted PFX whose MAC uses that key: forge <= 1.4.0 accepts it under ANY password.
  */
 function pfxWithZeroIterationMac(): Uint8Array {
+  return unencryptedPfxWithMac('\x03'.repeat(20), '\x00');
+}
+
+function unencryptedPfxWithMac(macKey: string, iterations: string): Uint8Array {
   const { privateKey, cert } = keyAndCert();
   const pfx = forge.pkcs12.toPkcs12Asn1(privateKey, [cert], null as unknown as string, {
     useMac: false,
@@ -34,7 +39,7 @@ function pfxWithZeroIterationMac(): Uint8Array {
   const authSafe = (pfx.value as forge.asn1.Asn1[])[1];
   const content = ((authSafe.value as forge.asn1.Asn1[])[1].value as forge.asn1.Asn1[])[0];
   const hmac = forge.hmac.create();
-  hmac.start('sha1', '\x03'.repeat(20));
+  hmac.start('sha1', macKey);
   hmac.update(content.value as string);
 
   const { Class, Type, create } = forge.asn1;
@@ -48,7 +53,7 @@ function pfxWithZeroIterationMac(): Uint8Array {
       create(Class.UNIVERSAL, Type.OCTETSTRING, false, hmac.digest().getBytes()),
     ]),
     create(Class.UNIVERSAL, Type.OCTETSTRING, false, 'saltsalt'),
-    create(Class.UNIVERSAL, Type.INTEGER, false, '\x00'),
+    create(Class.UNIVERSAL, Type.INTEGER, false, iterations),
   ]);
   (pfx.value as forge.asn1.Asn1[]).push(macData);
   return toDerBytes(pfx);
@@ -69,6 +74,26 @@ describe('malformed PKCS#12 inputs (SEC-01)', () => {
       forge.pkcs12.toPkcs12Asn1(privateKey, [cert], null as unknown as string, { useMac: false }),
     );
     expect(() => loadP12(p12, 'anything')).toThrow(MalformedCertificateError);
+  });
+
+  it('rejects an unencrypted private key even with a valid MAC: the signer could not use it', () => {
+    const macKey = forge.pkcs12
+      .generateKey('pw', forge.util.createBuffer('saltsalt'), 3, 1, 20)
+      .getBytes();
+    const p12 = unencryptedPfxWithMac(macKey, '\x01');
+    expect(() => loadP12(p12, 'pw')).toThrow(/password-protected private key/);
+  });
+
+  it('accepts an encrypted key with no MAC: the password still gates it', () => {
+    const { privateKey, cert } = keyAndCert();
+    const p12 = toDerBytes(
+      forge.pkcs12.toPkcs12Asn1(privateKey, [cert], 'right', { useMac: false, algorithm: '3des' }),
+    );
+    expect(verifyCertPassword(p12, 'right')).toBe(true);
+    expect(() => loadP12(p12, 'wrong')).toThrow(BadPasswordError);
+    expect(verifyCertPassword(p12, 'wrong')).toBe(false);
+    const signer = new P12Signer(Buffer.from(p12), { passphrase: 'right' });
+    return expect(signer.sign(Buffer.from('data'))).resolves.toBeTruthy();
   });
 
   it('rejects bytes that are not DER', () => {
