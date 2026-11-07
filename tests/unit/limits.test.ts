@@ -68,6 +68,12 @@ describe('input limits (SEC-08)', () => {
     expect(imageDimensions(png(header, chunk('fcTL', new Uint8Array(26))), 'png')).toBeNull();
   });
 
+  it('refuses a chunk that claims to run past the end of the file', () => {
+    const overrun = chunk('IDAT', new Uint8Array(4));
+    new DataView(overrun.buffer).setUint32(0, 0xfffffff0);
+    expect(imageDimensions(png(chunk('IHDR', dims(4, 4)), overrun), 'png')).toBeNull();
+  });
+
   it('keeps reading a normal PNG past its metadata chunks', () => {
     const file = png(
       chunk('IHDR', dims(800, 600)),

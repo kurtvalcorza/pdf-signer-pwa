@@ -18,12 +18,14 @@ const ANIMATION_CHUNKS = new Set(['acTL', 'fcTL', 'fdAT']);
 
 /**
  * The size pdf-lib's decoder will actually use. It honours the real IHDR wherever it sits and decodes
- * every APNG frame, so the whole file is walked: IHDR must come first and be the only one, and an
- * animated PNG is refused, since its decoded size is not its header size.
+ * every APNG frame, so the whole file is walked: IHDR must come first and be the only one, an animated
+ * PNG is refused, since its decoded size is not its header size, and so is a chunk that overruns the
+ * file, which would send the decoder through a huge length byte by byte on the main thread.
  */
 function pngDimensions(bytes: Uint8Array, view: DataView): { width: number; height: number } | null {
   let size: { width: number; height: number } | null = null;
   for (let i = 8; i + 8 <= bytes.length; i += 12 + view.getUint32(i)) {
+    if (i + 12 + view.getUint32(i) > bytes.length) return null;
     const type = String.fromCharCode(...bytes.subarray(i + 4, i + 8));
     if (ANIMATION_CHUNKS.has(type)) return null;
     if ((type === 'IHDR') !== (i === 8)) return null;
