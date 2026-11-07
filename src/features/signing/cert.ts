@@ -7,14 +7,16 @@ function toBinary(bytes: Uint8Array): string {
   return s;
 }
 
-const WRONG_PASSWORD = /MAC could not be verified|Invalid password/i;
+const WRONG_PASSWORD = /MAC could not be verified|wrong password|Invalid password/i;
 
 /**
- * Parse a PKCS#12 in memory (FR-015). Throws BadPasswordError when the MAC does not verify
+ * Parse a PKCS#12 in memory (FR-015). Throws BadPasswordError when the password does not unlock it
  * and MalformedCertificateError for anything else unusable.
  *
- * The MAC is REQUIRED: forge accepts a PFX without macData, and such a file would "unlock"
- * under any password. Forge >= 1.4.1 rejects zero-iteration MACs and key derivations
+ * What makes a password check real is either a MAC or an encrypted private key, and the signer needs
+ * the encrypted form regardless: P12Signer reads only pkcs8ShroudedKeyBag. So the key must be
+ * shrouded, and a file with no MAC is accepted only on that basis, since it then still cannot be read
+ * without the password. Forge >= 1.4.1 rejects zero-iteration MACs and key derivations
  * (GHSA-jc66-7q78-782g); tests/signing/p12Malformed.test.ts holds that in place.
  */
 export function loadP12(p12Bytes: Uint8Array, password: string): forge.pkcs12.Pkcs12Pfx {
@@ -24,28 +26,26 @@ export function loadP12(p12Bytes: Uint8Array, password: string): forge.pkcs12.Pk
   } catch {
     throw new MalformedCertificateError();
   }
-  if (!Array.isArray(asn1.value) || asn1.value.length < 3) {
-    throw new MalformedCertificateError(
-      'This certificate has no password-integrity check, so it was not used.',
-    );
-  }
+  if (!Array.isArray(asn1.value) || asn1.value.length < 2) throw new MalformedCertificateError();
+  const hasMac = asn1.value.length > 2;
 
   let p12: forge.pkcs12.Pkcs12Pfx;
   try {
     p12 = forge.pkcs12.pkcs12FromAsn1(asn1, password);
   } catch (e) {
-    if (e instanceof Error && WRONG_PASSWORD.test(e.message)) throw new BadPasswordError();
+    // With no MAC, a wrong password shows up as undecryptable content in any number of ways.
+    if (!hasMac || (e instanceof Error && WRONG_PASSWORD.test(e.message))) {
+      throw new BadPasswordError();
+    }
     throw new MalformedCertificateError();
   }
 
-  const { keyBag, pkcs8ShroudedKeyBag, certBag } = forge.pki.oids;
-  const hasKey =
-    (p12.getBags({ bagType: keyBag })[keyBag]?.length ?? 0) > 0 ||
-    (p12.getBags({ bagType: pkcs8ShroudedKeyBag })[pkcs8ShroudedKeyBag]?.length ?? 0) > 0;
+  const { pkcs8ShroudedKeyBag, certBag } = forge.pki.oids;
+  const hasKey = (p12.getBags({ bagType: pkcs8ShroudedKeyBag })[pkcs8ShroudedKeyBag]?.length ?? 0) > 0;
   const hasCert = (p12.getBags({ bagType: certBag })[certBag]?.length ?? 0) > 0;
   if (!hasKey || !hasCert) {
     throw new MalformedCertificateError(
-      'This .p12 does not contain both a private key and a certificate.',
+      'This .p12 needs a password-protected private key and a certificate, so it was not used.',
     );
   }
   return p12;
