@@ -56,6 +56,22 @@ feed to misconfigure — the guarantee is the *absence* of one. A build past ~18
 offline notice that its bundled browser engine is ageing and a newer build should be fetched
 manually; it makes **zero** network requests to do so.
 
+## Security updates
+
+Web and desktop share one release train: every release is cut from one commit. Rebuilds of the
+desktop builds are **best-effort**; there is no promised turnaround after a security fix, and because
+the app never updates itself, a fix reaches you only when you download a newer build. The ~180-day
+notice tracks the age of the bundled engine, not whether a known vulnerability affects it, so a build
+can need replacing well before the notice appears. Check the releases page if that matters to you.
+
+## Hardening
+
+The binary has Electron fuses burned in: it will not run as plain Node, ignores `NODE_OPTIONS`, loads
+the app only from its archive, and gives `file:` no extra privileges. On Windows that archive's
+integrity is also checked at startup; Electron has no such check on Linux. The renderer sandbox can
+still be turned off by whoever launches the app (`--no-sandbox`); Electron has no fuse for that, and
+that person already controls your session.
+
 ## Verifying a download
 
 Do not trust the release page's contents — verify independently:

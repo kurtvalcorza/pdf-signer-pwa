@@ -137,7 +137,7 @@ test('US3: the staleness notice appears under a stale-metadata fixture', async (
     await page.waitForLoadState('domcontentloaded');
     const notice = page.locator('#desktop-staleness-notice');
     await expect(notice).toBeVisible({ timeout: 10_000 });
-    await expect(notice).toContainText(/no longer\s+receives security updates/);
+    await expect(notice).toContainText(/may be missing\s+security fixes/);
     // A fresh buildDate must not have silenced it — proves isStale derives from engineDate.
   } finally {
     await app.close();

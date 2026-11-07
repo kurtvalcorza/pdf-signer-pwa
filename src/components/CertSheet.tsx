@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { DisclosureBanner } from './DisclosureBanner';
 import { loadCertificate, clearCertificate } from '../features/persistence/certStore';
-import { generateSelfSignedP12 } from '../features/signing/generateCert';
+import { generateSelfSignedP12, MIN_NEW_CERT_PASSWORD } from '../features/signing/generateCert';
 import { downloadBytes } from '../features/signing/export';
 import { persistenceAvailable } from '../lib/desktopPersistence';
+import { assertFileSize, LIMITS } from '../lib/limits';
 
 // Read-only desktop media (FR-011b): no opt-in cert persistence — never offered, never loaded.
 const canPersist = persistenceAvailable();
@@ -12,6 +13,8 @@ export interface SignRequest {
   p12Bytes: Uint8Array;
   password: string;
   remember: boolean;
+  /** The user unticked "remember" on the stored certificate: remove it once signed. */
+  forget: boolean;
   label?: string;
   /** Show "Digitally signed by {name}" in the appearance. */
   showLabel: boolean;
@@ -31,10 +34,15 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [certLabel, setCertLabel] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
+  /** True while the active certificate IS the stored one. */
   const [remembered, setRemembered] = useState(false);
+  /** A certificate is stored on this device, whichever one is active. */
+  const [hasStored, setHasStored] = useState(false);
   const [showLabel, setShowLabel] = useState(true);
   const [showDate, setShowDate] = useState(true);
+  const [certError, setCertError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const chosenRef = useRef(false);
 
   // Create-a-certificate state.
   const [creating, setCreating] = useState(false);
@@ -48,7 +56,10 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   useEffect(() => {
     if (!canPersist) return; // read-only media: don't load a remembered cert
     loadCertificate().then((c) => {
-      if (c) {
+      if (!c) return;
+      setHasStored(true);
+      // A slow read must not replace a certificate the user has already chosen.
+      if (!chosenRef.current) {
         setP12Bytes(c.p12Bytes);
         setCertLabel(c.label);
         setRemembered(true);
@@ -57,15 +68,41 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
     });
   }, []);
 
-  async function pickCert(file: File) {
-    setP12Bytes(new Uint8Array(await file.arrayBuffer()));
-    setCertLabel(file.name);
+  // Consent to remember belongs to one certificate. Every change of certificate withdraws it, so a
+  // box ticked for A can never persist B (SEC-05).
+  function changeCertificate(bytes: Uint8Array, label: string) {
+    chosenRef.current = true;
+    setP12Bytes(bytes);
+    setCertLabel(label);
     setRemembered(false);
+    setRemember(false);
+    setCertError(null);
+  }
+
+  async function pickCert(file: File) {
+    setCertError(null);
+    try {
+      assertFileSize(file, LIMITS.certificateBytes, 'certificate');
+    } catch (e) {
+      setCertError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    changeCertificate(new Uint8Array(await file.arrayBuffer()), file.name);
     setCertDer(null);
   }
 
   async function forget() {
-    await clearCertificate();
+    setCertError(null);
+    if (!(await clearCertificate())) {
+      // The record may still be on this device: keep showing it, and say so.
+      setCertError(
+        'The certificate could not be removed from this device and may still be stored. ' +
+          'Clear this site’s data in your browser settings to remove it.',
+      );
+      return;
+    }
+    setHasStored(false);
+    if (!remembered) return; // another certificate is active; only the stored record goes
     setP12Bytes(null);
     setCertLabel(null);
     setRemember(false);
@@ -84,17 +121,19 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         },
         password,
       );
-      setP12Bytes(p12);
+      changeCertificate(p12, `${fullName.trim()}.p12`);
       setCertDer(der);
-      setCertLabel(`${fullName.trim()}.p12`);
-      setRemembered(false);
     } catch (e) {
       setGenError(e instanceof Error ? e.message : String(e));
     }
   }
 
   const ready = !!p12Bytes && password.length > 0 && canSign && !busy;
-  const canCreate = creating && fullName.trim().length > 0 && password.length > 0 && !certDer;
+  const canCreate =
+    creating &&
+    fullName.trim().length > 0 &&
+    password.length >= MIN_NEW_CERT_PASSWORD &&
+    !certDer;
 
   return (
     <div className="flex flex-col gap-3">
@@ -113,6 +152,12 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         onChange={(e) => e.target.files?.[0] && pickCert(e.target.files[0])}
       />
 
+      {certError && (
+        <p role="alert" className="text-xs text-amber-200">
+          {certError}
+        </p>
+      )}
+
       {!creating ? (
         <div className="flex items-center gap-2">
           <button
@@ -122,9 +167,9 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
           >
             {certLabel ? `📄 ${certLabel}` : 'Choose certificate (.p12 / .pfx)'}
           </button>
-          {remembered && (
+          {hasStored && (
             <button type="button" onClick={forget} className="text-xs text-white/50 hover:text-white">
-              Forget
+              {remembered ? 'Forget' : 'Forget saved certificate'}
             </button>
           )}
         </div>
@@ -161,7 +206,8 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
             className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
           />
           <p className="text-xs text-white/40">
-            The password below protects the new certificate. Choose one you’ll remember.
+            The password below protects the new certificate. Use at least {MIN_NEW_CERT_PASSWORD}{' '}
+            characters: anyone who copies the file can try passwords offline, and it can’t be reset.
           </p>
           {genError && <p className="text-xs text-amber-200">{genError}</p>}
           {!certDer ? (
@@ -205,11 +251,6 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         onClick={() => {
           const enteringCreate = !creating;
           setCreating(enteringCreate);
-          // The "remember" checkbox is hidden while creating; clear it so a freshly
-          // generated cert isn't silently persisted (and doesn't overwrite a previously
-          // remembered one) with a value inherited from that flow. Computed here, not in
-          // the setCreating updater, so the updater stays pure (StrictMode-safe).
-          if (enteringCreate) setRemember(false);
           setCertDer(null);
         }}
         className="self-start text-xs text-blue-300 hover:text-blue-200"
@@ -232,6 +273,9 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
           Remember this certificate on this device (never the password)
         </label>
       )}
+      {remembered && !remember && (
+        <p className="text-xs text-white/50">Signing will remove it from this device.</p>
+      )}
 
       <div className="flex flex-col gap-1 rounded-lg bg-white/5 p-3">
         <span className="text-xs font-medium text-white/70">Signature appearance</span>
@@ -253,7 +297,15 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         disabled={!ready}
         onClick={() =>
           p12Bytes &&
-          onSign({ p12Bytes, password, remember, label: certLabel ?? 'certificate', showLabel, showDate })
+          onSign({
+            p12Bytes,
+            password,
+            remember,
+            forget: remembered && !remember,
+            label: certLabel ?? 'certificate',
+            showLabel,
+            showDate,
+          })
         }
         className="rounded-lg bg-blue-500 px-4 py-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
       >

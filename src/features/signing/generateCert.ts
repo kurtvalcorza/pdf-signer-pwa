@@ -1,11 +1,20 @@
 import forge from 'node-forge';
-import { loadP12 } from './cert';
+import { loadP12, signingCertificate } from './cert';
 
 function binaryToBytes(bin: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
   return out;
 }
+
+/** Shortest password accepted for a NEW certificate. A .p12 can be attacked offline if copied. */
+export const MIN_NEW_CERT_PASSWORD = 12;
+
+/**
+ * Key-derivation rounds for a new .p12. Each round slows offline guessing, but node-forge derives in
+ * JavaScript and a signature opens the .p12 several times, so this is bounded by phone speed.
+ */
+export const P12_ITERATIONS = 20_000;
 
 export interface GeneratedCertificate {
   /** PKCS#12 (private key + cert) — the signing Digital ID. */
@@ -63,7 +72,12 @@ export function generateSelfSignedP12(
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
   const p12Der = forge.asn1
-    .toDer(forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], password, { algorithm: '3des' }))
+    .toDer(
+      forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], password, {
+        algorithm: 'aes256',
+        count: P12_ITERATIONS,
+      }),
+    )
     .getBytes();
   const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
 
@@ -72,8 +86,7 @@ export function generateSelfSignedP12(
 
 /** Extract the DER public certificate from a .p12 (to export as a .cer for trust). */
 export function extractPublicCertDer(p12Bytes: Uint8Array, password: string): Uint8Array {
-  const p12 = loadP12(p12Bytes, password);
-  const bag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]?.[0];
-  if (!bag?.cert) throw new Error('No certificate found in the .p12.');
-  return binaryToBytes(forge.asn1.toDer(forge.pki.certificateToAsn1(bag.cert)).getBytes());
+  const cert = signingCertificate(loadP12(p12Bytes, password));
+  if (!cert) throw new Error('No certificate found in the .p12.');
+  return binaryToBytes(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes());
 }
