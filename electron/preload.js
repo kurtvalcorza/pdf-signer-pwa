@@ -3,19 +3,23 @@
 // construction — the web PWA cannot ship these desktop-specific claims. Vanilla DOM (no React), so
 // it never touches the app's own tree.
 
+// Runs in the renderer sandbox: 'electron' is the only module this file may require. Everything else
+// arrives from main through additionalArguments.
 const { contextBridge } = require('electron');
-const { loadBuildMetadata } = require('./buildmeta');
 
-// Data location (mode + path + persistenceEnabled) passed from main via additionalArguments.
-function readDataLocation() {
-  const arg = process.argv.find((a) => a.startsWith('--pdfsigner-data='));
+function readArgument(name) {
+  const prefix = `--${name}=`;
+  const arg = process.argv.find((a) => a.startsWith(prefix));
   if (!arg) return null;
   try {
-    return JSON.parse(arg.slice('--pdfsigner-data='.length));
+    return JSON.parse(arg.slice(prefix.length));
   } catch {
     return null;
   }
 }
+
+// Data location (mode + path + persistenceEnabled).
+const readDataLocation = () => readArgument('pdfsigner-data');
 
 // Expose the shell's persistence availability to the web app so it can DISABLE opt-in "remember"
 // affordances in ephemeral (read-only media) mode — FR-011b: memory-only enforced by not writing,
@@ -25,6 +29,7 @@ const dataLocation = readDataLocation();
 contextBridge.exposeInMainWorld('desktopShell', {
   persistenceEnabled: dataLocation ? dataLocation.persistenceEnabled !== false : true,
   mode: dataLocation ? dataLocation.mode : null,
+  sandboxed: process.sandboxed === true, // read-only status, asserted by the desktop gates
 });
 
 function el(tag, props = {}, style = '') {
@@ -35,7 +40,7 @@ function el(tag, props = {}, style = '') {
 }
 
 function mount() {
-  const meta = loadBuildMetadata();
+  const meta = readArgument('pdfsigner-build');
   const data = readDataLocation();
 
   // --- Staleness notice (passive, non-blocking) — only when the ENGINE is past threshold. A fresh
@@ -49,8 +54,8 @@ function mount() {
         'font:13px system-ui,sans-serif;padding:8px 40px 8px 12px;text-align:center;',
     );
     banner.textContent =
-      `This build's bundled browser engine is ~${meta.engineAgeInDays} days old and no longer ` +
-      `receives security updates. Please download a newer build. (This app never checks for updates.)`;
+      `This build's bundled browser engine is ~${meta.engineAgeInDays} days old and may be missing ` +
+      `security fixes. Please download a newer build. (This app never checks for updates.)`;
     const close = el(
       'button',
       { id: 'desktop-staleness-dismiss', textContent: '×', title: 'Dismiss' },

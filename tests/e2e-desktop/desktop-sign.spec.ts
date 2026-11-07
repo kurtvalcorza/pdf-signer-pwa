@@ -94,6 +94,32 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
  * MAIN-process session request (`session.fetch`), which the page CSP does not govern, so only the
  * webRequest cancellation can stop it.
  */
+test('desktop: the renderer is sandboxed and page script has no Node', async () => {
+  const app = await electron.launch({
+    args: [MAIN],
+    cwd: ROOT,
+    env: { ...process.env, PDFSIGNER_HEADLESS: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    const seen = await page.evaluate(() => ({
+      sandboxed: (window as unknown as { desktopShell: { sandboxed: boolean } }).desktopShell.sandboxed,
+      bridgeKeys: Object.keys((window as unknown as { desktopShell: object }).desktopShell).sort(),
+      require: typeof (window as unknown as { require?: unknown }).require,
+      process: typeof (window as unknown as { process?: unknown }).process,
+    }));
+    expect(seen).toEqual({
+      sandboxed: true,
+      bridgeKeys: ['mode', 'persistenceEnabled', 'sandboxed'],
+      require: 'undefined',
+      process: 'undefined',
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test('desktop: layer-5 no-phone-home switches are set (not just crashReporter absent)', async () => {
   const app = await electron.launch({ args: [MAIN], cwd: ROOT, env: { ...process.env, PDFSIGNER_HEADLESS: '1' } });
   try {
