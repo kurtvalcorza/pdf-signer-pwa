@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { resolve, dirname, join } from 'node:path';
+import { basename, resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,7 +28,11 @@ async function openCertSheet(page: Page) {
 const rememberBox = (page: Page) => page.getByRole('checkbox', { name: /Remember this certificate/ });
 
 async function pickAndSign(page: Page, file: string | null, remember: boolean) {
-  if (file) await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(file);
+  if (file) {
+    await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(file);
+    // Picking is async and withdraws consent when it lands, so wait for it before ticking the box.
+    await expect(page.getByRole('button', { name: basename(file) })).toBeVisible();
+  }
   if (remember) await rememberBox(page).check();
   await page.getByPlaceholder('Certificate password').fill(PASSWORD);
   await Promise.all([
