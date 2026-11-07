@@ -109,7 +109,7 @@ forbids.
 worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none';
 form-action 'none'`.
 **Rationale**: The app never fetches user data; files arrive via `<input>`, everything else is
-precached. `connect-src 'none'` makes outbound data exfiltration structurally impossible
+precached. `connect-src 'none'` blocks connection APIs (fetch, XHR, WebSocket, beacon), though not navigation
 (Principle I).
 **SPIKE**: confirm Workbox precaching coexists with `connect-src 'none'` (service-worker fetch of
 same-origin assets runs in the SW context, governed by the SW response's own CSP, not the page's

@@ -4,7 +4,7 @@ import { GitHubLink } from './components/GitHubLink';
 import { BottomSheet } from './components/BottomSheet';
 import { SignatureOverlay } from './components/SignatureOverlay';
 import { loadPdf } from './features/viewer/loadPdf';
-import { renderPage } from './features/viewer/renderPage';
+import { renderPage, RenderCancelledError } from './features/viewer/renderPage';
 import { readImageFile } from './features/ingest/imageInput';
 import { createPlacement, type Placement } from './features/placement/placement';
 import { downloadPdf } from './features/signing/export';
@@ -27,6 +27,7 @@ import {
   hasRememberedSignature,
 } from './features/persistence/signatureStore';
 import { persistenceAvailable } from './lib/desktopPersistence';
+import { assertFileSize, LIMITS } from './lib/limits';
 
 // Opt-in persistence is unavailable on desktop read-only media (FR-011b) — the "remember" affordances
 // are then not offered and nothing is written. Evaluated once at load (the shell sets it at startup).
@@ -46,6 +47,8 @@ const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
 };
 
 interface Doc {
+  /** Distinguishes this load from every other, including a re-open of the same file. */
+  id: number;
   bytes: Uint8Array;
   pageCount: number;
   name: string;
@@ -76,6 +79,11 @@ export default function App() {
   const imgInput = useRef<HTMLInputElement>(null);
   const camInput = useRef<HTMLInputElement>(null);
   const imageSeq = useRef(0);
+  const docSeq = useRef(0);
+  // The document + page the canvas currently shows. Placement and signing wait for this to match
+  // what the app considers current, so nobody places or signs against a stale page (SEC-09).
+  const [renderedKey, setRenderedKey] = useState<string | null>(null);
+  const pageReady = !!doc && renderedKey === `${doc.id}:${pageIndex}`;
 
   // Free any image asset no longer referenced by a placement (removed, or cleared on
   // opening a new PDF). Revokes its object URL so blobs don't leak for the session.
@@ -108,25 +116,34 @@ export default function App() {
   // Render the current page whenever the doc or page changes.
   useEffect(() => {
     if (!doc || !canvasRef.current) return;
-    let cancelled = false;
+    let current = true;
     const cssWidth = Math.min((stageRef.current?.clientWidth ?? 360) - 32, 700);
-    renderPage(doc.bytes, pageIndex, canvasRef.current, cssWidth)
+    const render = renderPage(doc.bytes, pageIndex, canvasRef.current, cssWidth);
+    render.promise
       .then(() => {
-        if (cancelled || !canvasRef.current) return;
+        if (!current || !canvasRef.current) return;
         const rect = canvasRef.current.getBoundingClientRect();
         setPageSize({ w: rect.width, h: rect.height });
+        setRenderedKey(`${doc.id}:${pageIndex}`);
       })
-      .catch((e) => !cancelled && setError(String(e?.message ?? e)));
+      .catch((e) => {
+        if (current && !(e instanceof RenderCancelledError)) setError(String(e?.message ?? e));
+      });
     return () => {
-      cancelled = true;
+      current = false;
+      render.cancel();
     };
   }, [doc, pageIndex]);
 
   const openPdf = useCallback(async (file: File) => {
     setError(null);
+    // Only the newest open may take effect: a slow earlier file must not replace a later one.
+    const id = ++docSeq.current;
     try {
+      assertFileSize(file, LIMITS.pdfBytes, 'PDF');
       const bytes = new Uint8Array(await file.arrayBuffer());
       const info = await loadPdf(bytes);
+      if (id !== docSeq.current) return;
       if (info.signingBlock) {
         setError(info.signingBlock);
       } else if (info.hasExistingSignature) {
@@ -137,6 +154,7 @@ export default function App() {
         );
       }
       setDoc({
+        id,
         bytes,
         pageCount: info.pageCount,
         name: file.name,
@@ -147,7 +165,7 @@ export default function App() {
       setSelectedId(null);
       setPageIndex(0);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (id === docSeq.current) setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -383,11 +401,13 @@ export default function App() {
           <div className="relative" style={{ width: pageSize.w || undefined }}>
             <canvas
               ref={canvasRef}
-              className="block rounded shadow-lg"
+              className={`block rounded shadow-lg ${pageReady ? '' : 'opacity-50'}`}
+              aria-busy={!pageReady}
               role="img"
               aria-label={`Page ${pageIndex + 1}${doc ? ` of ${doc.pageCount}` : ''} of ${doc?.name ?? 'the document'}`}
             />
-            {pageSize.w > 0 &&
+            {pageReady &&
+              pageSize.w > 0 &&
               pagePlacements.map((p) => (
                 <SignatureOverlay
                   key={p.id}
@@ -449,7 +469,7 @@ export default function App() {
 
         {mode === 'cert' ? (
           <CertSheet
-            canSign={!!doc && placements.length > 0 && !doc.signingBlock}
+            canSign={pageReady && placements.length > 0 && !doc.signingBlock}
             busy={busy}
             onSign={signWithCert}
             onCancel={() => setMode('stamp')}
@@ -472,7 +492,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                disabled={!doc}
+                disabled={!pageReady}
                 onClick={() => imgInput.current?.click()}
                 className="flex-1 rounded-lg bg-white/10 px-4 py-3 font-medium hover:bg-white/15 disabled:opacity-40"
               >
@@ -483,7 +503,7 @@ export default function App() {
             <div className="flex gap-2">
               <button
                 type="button"
-                disabled={!doc}
+                disabled={!pageReady}
                 onClick={() => camInput.current?.click()}
                 className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
               >
@@ -503,7 +523,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={!doc}
+                  disabled={!pageReady}
                   onClick={useSavedSignature}
                   className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
                 >
@@ -526,7 +546,7 @@ export default function App() {
                   checked={rememberSig}
                   onChange={(e) => toggleRememberSignature(e.target.checked, selectedAsset)}
                 />
-                Remember this signature on this device (image only, never leaves your phone)
+                Remember this signature on this device (image only, kept in this browser)
               </label>
             )}
 
@@ -556,7 +576,7 @@ export default function App() {
 
             <button
               type="button"
-              disabled={!doc || placements.length === 0 || busy}
+              disabled={!pageReady || placements.length === 0 || busy}
               onClick={() => setMode('cert')}
               className="rounded-lg bg-blue-500 px-4 pb-1 pt-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
             >
@@ -567,7 +587,7 @@ export default function App() {
             </button>
 
             <p className="px-1 text-xs text-white/40">
-              Private &amp; on-device — nothing leaves your phone. A certificate-backed digital
+              Private &amp; on-device — the app has no upload feature. A certificate-backed digital
               signature, not a legally-binding e-signature service.
             </p>
           </div>

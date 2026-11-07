@@ -17,9 +17,11 @@ function distribution() {
  * simply shows no staleness/about disclosure rather than crashing — the packaged build always has it
  * (gen-build-info runs in build:desktop and fails on a placeholder).
  */
-function loadBuildMetadata() {
-  // Test override: point at a fixture to exercise the stale path (T026a) without rebuilding.
-  const file = process.env.PDFSIGNER_BUILD_INFO || path.join(__dirname, 'build-info.json');
+function loadBuildMetadata({ allowOverride = false } = {}) {
+  // Test override: point at a fixture to exercise the stale path (T026a) without rebuilding. Off
+  // unless the caller allows it, so an inherited env var cannot change what a shipped build discloses.
+  const override = allowOverride ? process.env.PDFSIGNER_BUILD_INFO : undefined;
+  const file = override || path.join(__dirname, 'build-info.json');
   let raw;
   try {
     raw = JSON.parse(readFileSync(file, 'utf8'));

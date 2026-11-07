@@ -2,6 +2,7 @@
 // through a real .p12 sign and validate with pyHanko. This exercises asar packing and the real
 // portable-path resolution the unpackaged E2E cannot. Usage: node electron/verify-packaged.mjs
 import { _electron as electron } from 'playwright';
+import fuses from '@electron/fuses';
 import { execFileSync } from 'node:child_process';
 import { existsSync, statSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
@@ -29,6 +30,25 @@ if (!existsSync(exe)) {
 }
 execFileSync(process.execPath, [resolve(ROOT, 'scripts/make-e2e-fixtures.mjs')], { stdio: 'inherit' });
 
+// The fuses must be burned into this binary, not merely configured.
+const { FuseV1Options, getCurrentFuseWire } = fuses;
+const wire = await getCurrentFuseWire(exe);
+const [DISABLED, ENABLED] = [48, 49]; // the fuse wire stores ASCII '0' and '1'
+const expected = {
+  RunAsNode: DISABLED,
+  EnableNodeOptionsEnvironmentVariable: DISABLED,
+  OnlyLoadAppFromAsar: ENABLED,
+  EnableEmbeddedAsarIntegrityValidation: ENABLED,
+  GrantFileProtocolExtraPrivileges: DISABLED,
+};
+for (const [name, state] of Object.entries(expected)) {
+  if (wire[FuseV1Options[name]] !== state) {
+    console.error(`[pkg] fuse ${name} is not burned as expected`);
+    process.exit(1);
+  }
+}
+console.log('[pkg] fuses burned as configured.');
+
 const downloadDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-dl-'));
 const portableDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-portable-'));
 const env = {
@@ -52,6 +72,20 @@ try {
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   console.log('[pkg] window title:', await page.title());
+
+  // Assert the PACKAGED renderer is sandboxed with no Node in page script. The no-egress run sets
+  // ELECTRON_DISABLE_SANDBOX for its network namespace, so this check is not meaningful there.
+  if (!process.env.ELECTRON_DISABLE_SANDBOX) {
+    const seen = await page.evaluate(() => ({
+      sandboxed: globalThis.desktopShell?.sandboxed,
+      require: typeof globalThis.require,
+      process: typeof globalThis.process,
+    }));
+    if (seen.sandboxed !== true || seen.require !== 'undefined' || seen.process !== 'undefined') {
+      throw new Error('renderer is not sandboxed: ' + JSON.stringify(seen));
+    }
+    console.log('[pkg] renderer sandbox enabled; no Node in page script.');
+  }
 
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(resolve(FIX, 'sample.pdf'));
   await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 25_000 });

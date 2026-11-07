@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { DisclosureBanner } from './DisclosureBanner';
 import { loadCertificate, clearCertificate } from '../features/persistence/certStore';
-import { generateSelfSignedP12 } from '../features/signing/generateCert';
+import { generateSelfSignedP12, MIN_NEW_CERT_PASSWORD } from '../features/signing/generateCert';
 import { downloadBytes } from '../features/signing/export';
 import { persistenceAvailable } from '../lib/desktopPersistence';
+import { assertFileSize, LIMITS } from '../lib/limits';
 
 // Read-only desktop media (FR-011b): no opt-in cert persistence — never offered, never loaded.
 const canPersist = persistenceAvailable();
@@ -39,7 +40,7 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [hasStored, setHasStored] = useState(false);
   const [showLabel, setShowLabel] = useState(true);
   const [showDate, setShowDate] = useState(true);
-  const [forgetError, setForgetError] = useState<string | null>(null);
+  const [certError, setCertError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const chosenRef = useRef(false);
 
@@ -75,19 +76,26 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
     setCertLabel(label);
     setRemembered(false);
     setRemember(false);
-    setForgetError(null);
+    setCertError(null);
   }
 
   async function pickCert(file: File) {
+    setCertError(null);
+    try {
+      assertFileSize(file, LIMITS.certificateBytes, 'certificate');
+    } catch (e) {
+      setCertError(e instanceof Error ? e.message : String(e));
+      return;
+    }
     changeCertificate(new Uint8Array(await file.arrayBuffer()), file.name);
     setCertDer(null);
   }
 
   async function forget() {
-    setForgetError(null);
+    setCertError(null);
     if (!(await clearCertificate())) {
       // The record may still be on this device: keep showing it, and say so.
-      setForgetError(
+      setCertError(
         'The certificate could not be removed from this device and may still be stored. ' +
           'Clear this site’s data in your browser settings to remove it.',
       );
@@ -121,7 +129,11 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   }
 
   const ready = !!p12Bytes && password.length > 0 && canSign && !busy;
-  const canCreate = creating && fullName.trim().length > 0 && password.length > 0 && !certDer;
+  const canCreate =
+    creating &&
+    fullName.trim().length > 0 &&
+    password.length >= MIN_NEW_CERT_PASSWORD &&
+    !certDer;
 
   return (
     <div className="flex flex-col gap-3">
@@ -140,9 +152,9 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         onChange={(e) => e.target.files?.[0] && pickCert(e.target.files[0])}
       />
 
-      {forgetError && (
+      {certError && (
         <p role="alert" className="text-xs text-amber-200">
-          {forgetError}
+          {certError}
         </p>
       )}
 
@@ -194,7 +206,8 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
             className="rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-white/30"
           />
           <p className="text-xs text-white/40">
-            The password below protects the new certificate. Choose one you’ll remember.
+            The password below protects the new certificate. Use at least {MIN_NEW_CERT_PASSWORD}{' '}
+            characters: anyone who copies the file can try passwords offline, and it can’t be reset.
           </p>
           {genError && <p className="text-xs text-amber-200">{genError}</p>}
           {!certDer ? (
