@@ -28,7 +28,7 @@ jobs:
         run: npm ci
 
       - name: Install pyHanko (signature validator)
-        run: pip install pyhanko
+        run: pip install -r scripts/requirements-verify.txt
 
       - name: Typecheck & build
         run: npm run build

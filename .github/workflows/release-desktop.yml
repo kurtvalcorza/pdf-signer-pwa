@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyhanko
+      - run: pip install -r scripts/requirements-verify.txt
       - run: npm ci
       - name: Lint (blocks the release on a layer-3 network-import violation)
         run: npm run lint

@@ -2,7 +2,7 @@ import signpdf from '@signpdf/signpdf';
 import { P12Signer } from '@signpdf/signer-p12';
 import type { PlacementInput, Pkcs12 } from './types';
 import { verifyCertPassword } from './cert';
-import { PDFDocument, PDFArray, PDFDict, PDFName, PDFNumber, PDFRef } from 'pdf-lib';
+import { PDFDocument, PDFArray, PDFName, PDFRef } from 'pdf-lib';
 import { buildAppearance, formatDate, type SignFirstOptions } from './signFirst';
 import { getSignerCommonName } from './cert';
 import {
@@ -16,6 +16,7 @@ import {
   acroFormFieldRefs,
   reserveExistingObjectNumbers,
 } from './incrementalUpdate';
+import { signingPolicyBlock } from './signingPolicy';
 
 /**
  * Tier B — a subsequent cryptographic signature added as a BYTE-LEVEL INCREMENTAL
@@ -26,8 +27,8 @@ import {
  * (see incrementalUpdate.ts).
  *
  * Guards that keep the FR-013 claim honest rather than best-effort:
- *  - a certification (DocMDP "no changes") or FieldMDP-locked signature rejects
- *    up front (CertificationLockedError) — appending a field would break it;
+ *  - a certified or FieldMDP-locked document, or an unrecognised policy, rejects up
+ *    front (CertificationLockedError) — see signingPolicy.ts;
  *  - the produced update is re-parsed and must still enumerate every
  *    pre-existing field plus the new one, attached to the requested page —
  *    anything less would hide earlier signatures from validators, so we refuse
@@ -57,7 +58,7 @@ export async function signIncremental(
   reserveExistingObjectNumbers(signedPdf, probe);
   const originalLargestObjectNumber = probe.context.largestObjectNumber;
 
-  const lock = modificationLock(probe);
+  const lock = signingPolicyBlock(probe);
   if (lock) {
     const { CertificationLockedError } = await import('./types');
     throw new CertificationLockedError(lock);
@@ -114,74 +115,6 @@ export async function signIncremental(
   const signer = new P12Signer(cert.p12Bytes, { passphrase: cert.password });
   const signed = await signpdf.sign(withPlaceholder, signer);
   return new Uint8Array(signed);
-}
-
-/**
- * A human-readable reason if any existing signature's policy makes appending a new
- * signature field a disallowed modification, else null. Checked conservatively:
- *
- *  - DocMDP with /TransformParams /P 1 ("no changes allowed") — P of 2 (form-fill +
- *    sign) or 3 (+ annotate) permits an approval signature; missing /P defaults to 2
- *    per the PDF spec. Found via catalog /Perms or any signature's own /Reference.
- *  - FieldMDP (e.g. Acrobat's "lock fields after signing") — adding our field
- *    rewrites /Fields, a form modification the lock may disallow; we cannot prove
- *    the new field is permitted, so reject rather than risk breaking the signature.
- */
-function modificationLock(doc: PDFDocument): string | null {
-  for (const sig of allSignatureDicts(doc)) {
-    const refs = sig.lookupMaybe(PDFName.of('Reference'), PDFArray);
-    if (!refs) continue;
-    for (let i = 0; i < refs.size(); i++) {
-      const sigRef = refs.lookupMaybe(i, PDFDict);
-      const method = sigRef?.lookupMaybe(PDFName.of('TransformMethod'), PDFName);
-      if (method === PDFName.of('FieldMDP')) {
-        return (
-          'An existing signature on this PDF locks its form fields (FieldMDP). Adding a ' +
-          'signature field could break that signature, so the document was not signed.'
-        );
-      }
-      if (method === PDFName.of('DocMDP')) {
-        const params = sigRef!.lookupMaybe(PDFName.of('TransformParams'), PDFDict);
-        const p = params?.lookupMaybe(PDFName.of('P'), PDFNumber);
-        if ((p?.asNumber() ?? 2) === 1) {
-          return (
-            'This PDF is certified with a “no changes allowed” policy. Adding any ' +
-            'signature would break that certification, so it was not signed.'
-          );
-        }
-      }
-    }
-  }
-  return null;
-}
-
-/** The certification signature (catalog /Perms /DocMDP) plus every signed field's /V. */
-function* allSignatureDicts(doc: PDFDocument): Generator<PDFDict> {
-  const perms = doc.catalog.lookupMaybe(PDFName.of('Perms'), PDFDict);
-  const certSig = perms?.lookupMaybe(PDFName.of('DocMDP'), PDFDict);
-  if (certSig) yield certSig;
-
-  const acro = doc.catalog.lookupMaybe(PDFName.of('AcroForm'), PDFDict);
-  const fields = acro?.lookupMaybe(PDFName.of('Fields'), PDFArray);
-  if (!fields) return;
-  const stack: PDFDict[] = [];
-  const seen = new Set<PDFDict>();
-  const push = (arr: PDFArray) => {
-    for (let i = 0; i < arr.size(); i++) {
-      const d = arr.lookupMaybe(i, PDFDict);
-      if (d) stack.push(d);
-    }
-  };
-  push(fields);
-  while (stack.length) {
-    const field = stack.pop()!;
-    if (seen.has(field)) continue; // cyclic /Parent–/Kids guard
-    seen.add(field);
-    const value = field.lookupMaybe(PDFName.of('V'), PDFDict);
-    if (value?.lookupMaybe(PDFName.of('ByteRange'), PDFArray)) yield value;
-    const kids = field.lookupMaybe(PDFName.of('Kids'), PDFArray);
-    if (kids) push(kids);
-  }
 }
 
 /**

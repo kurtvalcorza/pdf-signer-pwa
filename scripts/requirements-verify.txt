@@ -1,0 +1,4 @@
+# Validator for the signature gate (npm run verify:signatures). Pinned: a verifier that changes
+# underneath the gate changes what "passes" means, so upgrades are deliberate.
+pyHanko==0.36.2
+pyhanko-certvalidator==0.31.4

@@ -52,6 +52,8 @@ interface Doc {
   /** True if the PDF already carries a signature — drives the invalidation warning
    * and routes certificate-signing through the incremental (non-invalidating) path. */
   hasExistingSignature: boolean;
+  /** Why a certificate signature can't be added without breaking a policy, else null. */
+  signingBlock: string | null;
 }
 
 export default function App() {
@@ -125,11 +127,13 @@ export default function App() {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const info = await loadPdf(bytes);
-      if (info.hasExistingSignature) {
+      if (info.signingBlock) {
+        setError(info.signingBlock);
+      } else if (info.hasExistingSignature) {
         setError(
           'Heads up: this PDF is already signed. Your signature will be appended as a ' +
-            'visible signature field without altering the signed pages, so the existing ' +
-            'signature(s) stay valid — extra visual-only stamps are skipped.',
+            'visible signature field without altering the signed pages, which its signing ' +
+            'policy allows — extra visual-only stamps are skipped.',
         );
       }
       setDoc({
@@ -137,6 +141,7 @@ export default function App() {
         pageCount: info.pageCount,
         name: file.name,
         hasExistingSignature: info.hasExistingSignature,
+        signingBlock: info.signingBlock,
       });
       setPlacements([]);
       setSelectedId(null);
@@ -437,7 +442,7 @@ export default function App() {
 
         {mode === 'cert' ? (
           <CertSheet
-            canSign={!!doc && placements.length > 0}
+            canSign={!!doc && placements.length > 0 && !doc.signingBlock}
             busy={busy}
             onSign={signWithCert}
             onCancel={() => setMode('stamp')}

@@ -427,12 +427,11 @@ describe('multi-signature (incremental)', () => {
     ).rejects.toThrow(CertificationLockedError);
   }, 40000);
 
-  it('counter-signs a certified PDF that permits signing (DocMDP P=2)', async () => {
-    const bytes = await makeFakeSignedPdf({ acroFormType: true, docMdpP: 2 });
-    const out = await signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS });
-    // Pure append; the pre-existing field is still enumerated alongside the new one.
-    expect(Buffer.from(out.subarray(0, bytes.length))).toEqual(Buffer.from(bytes));
-    expect(await activeFieldsRefs(out)).toHaveLength(2);
+  it.each([2, 3, 7])('rejects a certified PDF at DocMDP P=%i (appending a field breaks it)', async (p) => {
+    const bytes = await makeFakeSignedPdf({ acroFormType: true, docMdpP: p });
+    await expect(
+      signIncremental(bytes, at(0.42), { p12Bytes: p12, password: PASS }),
+    ).rejects.toThrow(CertificationLockedError);
   }, 40000);
 
   it('rejects a FieldMDP-locked PDF (e.g. "lock all fields after signing")', async () => {
@@ -531,8 +530,9 @@ describe('multi-signature (incremental)', () => {
     const base = await makeBasePdf();
     const first = await signFirst(base, at(0.62), { p12Bytes: p12, password: PASS });
     const tampered = Uint8Array.from(first);
-    // Flip a byte within the first ByteRange segment (document body) to break integrity.
-    const i = Math.floor(tampered.length * 0.2);
+    // Flip a byte INSIDE a signed content stream, never in structure. A flip in /Contents, the
+    // xref or a dictionary gives a parse error, which proves nothing about tamper detection.
+    const i = Buffer.from(first).indexOf('stream') + 'stream\n'.length + 2;
     tampered[i] = tampered[i] ^ 0xff;
     writeFileSync(resolve(TAMPERED, 'tampered.pdf'), tampered);
     expect(tampered.length).toBe(first.length);
