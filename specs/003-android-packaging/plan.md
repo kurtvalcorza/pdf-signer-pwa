@@ -8,7 +8,7 @@
 
 Ship a third distribution: a signed Android APK whose only UI is a WebView running the **unchanged**
 `dist/` build from inside the package, on the reserved `https://appassets.androidplatform.net`
-origin. The OS enforces the network ban: the APK declares no permissions at all, a dependency
+origin. The OS enforces the network ban: the APK declares no network permission (its only permission is `androidx.core`'s own signature-level one), a dependency
 allow-list keeps libraries from adding network code, and both are checked on the built APK. A thin
 Kotlin shell does only what the WebView can't:
 
@@ -51,8 +51,9 @@ minimum 119, plus a per-release validated floor (R11).
 **Performance Goals**: SC-001, under 60 s from opening a PDF to a saved signed copy on a mid-range
 phone. Saving a 100 MB PDF must complete without building a base64 string of the whole file (R7).
 
-**Constraints**: zero declared permissions; zero changes to `src/`, `index.html` or
-`vite.config.ts` (SC-006, C9); no secret in the repository, a log or an artifact (FR-021); every
+**Constraints**: no network permission, and no permission beyond C1's single allowed entry; no
+Android-specific change to `src/`, `index.html` or `vite.config.ts` (SC-006, C9). A
+distribution-neutral fix there, such as spike S11's wording, lands as its own commit; no secret in the repository, a log or an artifact (FR-021); every
 release check runs on the published APK (Principle V).
 
 **Scale/Scope**: about 6 Kotlin files, one injected script, three XML resource files, two Node
@@ -64,7 +65,7 @@ scripts, one workflow job, one user doc.
 
 | Principle | Obligation for Android | How this plan meets it | Status |
 |---|---|---|---|
-| **I. Zero-server** (NON-NEGOTIABLE) | CSP retained; no network permission; native code must not attempt network | CSP meta tag untouched and the handler adds no headers (R3); zero permissions, with `tools:node="remove"` against merging and an APK check (R5, C1); a dependency allow-list for "no attempt" (R5, C2); navigation locked to the origin (R2) | ✅ |
+| **I. Zero-server** (NON-NEGOTIABLE) | CSP retained; no network permission; native code must not attempt network | CSP meta tag untouched and the handler adds no headers (R3); no network permission, with `tools:node="remove"` against merging and an APK check allowing only core's own signature permission (R5, C1); a dependency allow-list for "no attempt" (R5, C2); navigation locked to the origin (R2) | ✅ |
 | **II. Offline-first & installable** | A self-contained package that runs with no network from first launch | `dist/` inside the APK, served locally; SW routed through the same handler (R4); the gate runs with airplane mode on before first launch (Q3) | ✅ |
 | **III. Crypto correctness** (NON-NEGOTIABLE) | The same signing engine, no distribution branch | Shared build unchanged and asset hashes compared with `dist/` (C7); a shared-code diff check (C9); the save interception acts only *after* signing, on the finished bytes (R7) | ✅ |
 | **IV. Honest posture** | Disclose that the engine depends on the device, the install from outside the store, and no self-update; warn locally below the validated floor | About panel and engine notice (contract §5, R11); the WebView provider's crash reports named, not hidden (R6) | ✅ |

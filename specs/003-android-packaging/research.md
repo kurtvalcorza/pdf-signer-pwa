@@ -92,14 +92,16 @@ an Android-specific build without the PWA plugin (rejected: FR-001 requires the 
 
 **Decision**: Three mechanisms, each checked on the **built APK**, not on source:
 
-1. The app manifest declares no permissions, and adds
+1. The app manifest declares no permissions of its own, and adds
    `<uses-permission android:name="android.permission.INTERNET" tools:node="remove"/>` (and the
    same for `ACCESS_NETWORK_STATE`) so a library manifest cannot merge them back in.
 2. A **dependency allow-list** (`android/dependency-allowlist.txt`) of exact Maven coordinates.
    The build fails if the resolved runtime classpath contains anything else. Gradle dependency
    verification (`android/gradle/verification-metadata.xml`) pins their checksums.
 3. The release check runs `aapt2 dump permissions` on the signed APK and fails on any permission
-   at all (C1).
+   except one: `androidx.core`'s self-granted, signature-level
+   `<applicationId>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, which grants nothing outside the
+   app (C1, spike S3).
 
 **Rationale**: The 002 lesson is that a guarantee needs a mechanism, and that a deny-list is walked
 past (the `got` import case). Without INTERNET the app's UID is outside the `inet` group, so the
@@ -301,6 +303,10 @@ accessibility tree is unaffected by FLAG_SECURE, and works across apps, includin
 **Alternatives**: Espresso-Web (rejected: the instrumentation APK must share the app's signature,
 which puts the signing key in the test path); a DevTools-enabled build (rejected: wrong artifact).
 
+**Driver rules** (spike S9, confirmed): dump twice after a launch, since the first dump can show
+the WebView with no children; and tap only from a fresh dump, by resource id where one exists
+(`android:id/button1` is the save dialog's SAVE), because positions shift when the keyboard closes.
+
 **Risk, named**: driving through `uiautomator dump` is the most fragile part of the plan, since it
 depends on the system picker's layout. If the spike finds it unreliable, the fallback is a
 UI Automator instrumentation test, which can drive other apps without sharing the target's
@@ -337,3 +343,43 @@ the release aligned with the web and desktop builds (FR-019).
 | Issue 16 | CSP must not govern workers | R3: no headers from the handler |
 | Issue 16 | Input limits, render guards, certified-PDF refusal | Carried unchanged because the shared build is unchanged; the gate checks certified refusal (quickstart Q4) |
 | Issue 16 | Release asset names | The APK name has no spaces: `pdf-signer-<version>.apk` |
+
+---
+
+## Spike findings (Q1, run 2026-11-07/08)
+
+The spike was a debug build of the plan's shell, built from the `bbfa0f7` `dist/`, on the
+`medium_phone` AVD: Android 16 (API 36), `google_apis_playstore` x86_64, system WebView
+**133.0.6943.137**, software GPU. Airplane mode was on from before the install. Driven only through
+`uiautomator dump` + `input`.
+
+| # | Item | Result | Evidence |
+|---|---|---|---|
+| S1 | **Sign + counter-sign validate** (FR-022, C10) | ✅ **PASS** | `validate_pdf.py`: signed sig[0] integrity ✅, policy ✅, modification NONE, entire file; counter-signed sig[0] FORM_FILLING (allowed) and sig[1] NONE, entire file; `RESULT: PASS`, exit 0. Trust is false (self-signed e2e cert), as in the web gate |
+| S2 | R5: no network permission | ✅ confirmed | `aapt2 dump permissions`: no INTERNET or network permission in the merged APK. With the network **up** (the shell's ping replied), `nc` run as the app UID fails with `socket: Operation not permitted`, so the kernel enforces it. `dumpsys netstats`: 0 traffic records for the app UID |
+| S3 | R5: what libraries merge in | ⚠ two additions | `androidx.core` adds a self-granted, signature-level `<pkg>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`. `androidx.profileinstaller` (via activity) adds `ProfileInstallReceiver` with `exported=true`, guarded by `android.permission.DUMP`. `androidx.startup`'s `InitializationProvider` is `exported=false`. C1 and C4 as written would fail on the first two |
+| S4 | R2: serving | ✅ confirmed | The `.mjs` pdf.js worker loads with the explicit MIME. The one miss in two launches was `favicon.ico` → explicit 404. 0 off-origin requests and 0 blocked navigations logged |
+| S5 | R4: service worker | ✅ confirmed | `app_webview/Default/Service Worker/CacheStorage` = 1,440 KB after first launch, against a precache of 1,330.62 KiB, so it installed and precached through the handler with no network |
+| S6 | R7: save interception | ✅ confirmed | The document-start script ran under the page's `script-src 'self'` ("SHELL injected"). The `download` name arrived (`sample-signed.pdf`, then `sample-signed-signed.pdf`), sent as one ArrayBuffer (11,764 and 29,861 bytes), and written through `CREATE_DOCUMENT`. `DownloadListener` never fired. **Not tested**: a 100 MB save, cancel, a failed write |
+| S7 | R8: pickers | ✅ for PDF, image, `.p12` | `accept` arrived as `[.pdf]`, `[image/png, image/jpeg]`, `[.p12, .pfx]`. All three picked through DocumentsUI with `allowContentAccess=false`. **Not tested**: camera capture |
+| S8 | R9: FLAG_SECURE | ✅ confirmed | `screencap` with the app open: 0 non-black pixels of 1,350 sampled. The accessibility tree is still fully readable |
+| S9 | R13: adb driver | ✅ works, with two rules | It drove the app, the picker and the save dialog. (a) The first dump after launch can show the WebView with no children, so dump twice. (b) Positions shift when the keyboard closes, so always tap from a fresh dump, by resource id where one exists (`android:id/button1` for SAVE) |
+| S10 | R1: toolchain | ✅, with notes | Kotlin is built into AGP 9.0.1 (no Kotlin plugin; it compiled). The CLI template targets SDK 37 and tried `platforms/android-37`, whose package is `android-37.0`. AGP installed `build-tools/36.0.0` on its own. `android emulator create medium_phone` chose and downloaded `google_apis_playstore` unasked. The first Gradle run took ~10 min (downloads), later runs 20 s |
+| S11 | Copy | ⚠ shared text | The remember-signature checkbox says "kept in this browser", which is inaccurate in the app and on desktop alike. Fixing it is a wording change for every distribution, not an Android branch |
+
+**Consequences, approved by the owner on 2026-11-08 and applied** to the contracts, plan, data
+model and R5/R13:
+
+1. **S3, C1**: allow exactly one permission, the app's own
+   `<applicationId>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` with signature protection, and fail on
+   anything else. Alternatively remove it with `tools:node="remove"`. The shell registers no
+   receivers, but core may use it internally. Recommended: allow it explicitly, since it grants
+   nothing outside the app.
+2. **S3, C4**: remove `ProfileInstallReceiver` with `tools:node="remove"`, keeping the launcher as
+   the only exported component. It only speeds up first launch through baseline profiles.
+3. **S11**: the shared label is now "Remember this signature on this device (image only)". The
+   "kept on this device" wording would have repeated "on this device", so the browser clause was
+   dropped. It is a neutral fix, made as its own commit.
+4. **S9** goes into `android-gate.mjs` as fixed rules. The remaining untested items (100 MB save,
+   cancel, camera, certified refusal, backup, engine floor) become gate and quickstart tasks
+   (Q3–Q8), not spike work.

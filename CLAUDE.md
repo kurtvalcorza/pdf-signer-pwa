@@ -15,7 +15,7 @@ digital signature). Installable on Android, deployed static on Vercel.
 ## Active feature: 003-android-packaging (planned; spike next, then stop for review)
 
 Native Android APK: a Kotlin shell hosting the UNCHANGED `dist/` in a WebView on
-`https://appassets.androidplatform.net`, zero declared permissions, signed in CI from a GitHub
+`https://appassets.androidplatform.net`, no network permission, signed in CI from a GitHub
 Environment secret, gated by sign + counter-sign on the signed APK.
 
 - Spec: [specs/003-android-packaging/spec.md](specs/003-android-packaging/spec.md)

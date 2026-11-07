@@ -25,7 +25,9 @@ and is deleted once its findings are written into research.md.
    handler and SW client, the injected save interception, the file chooser, FLAG_SECURE, and the
    manifest from R5, R6 and R10. No engine check, no About panel.
 3. Copy `dist/` into the spike's `assets/www/` and build a debug-signed APK.
-4. `aapt2 dump permissions` → **no permissions** (proves R5's inference about library manifests).
+4. `aapt2 dump permissions` → **no network permission** (proves R5's inference about library
+   manifests). Done 2026-11-07: the only entry was `androidx.core`'s own signature permission
+   (research S3).
 5. Boot the emulator, enable airplane mode **before** installing, install, and launch.
 6. Push the fixtures to `Download/`. Drive the flow with `uiautomator dump` + `input` (the R13
    driver, proving it works): open the PDF, place the signature, sign with the `.p12`, and save.

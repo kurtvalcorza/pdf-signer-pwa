@@ -13,7 +13,7 @@ only what the Android distribution adds. References in brackets point to [resear
 | `versionCode` | derived | `major*10000 + minor*100 + patch`; strictly increasing across releases |
 | `sourceCommit` | CI `GITHUB_SHA` | same commit as the web and desktop artifacts |
 | `minSdk` / `targetSdk` | build config | 26 / 36 [R15] |
-| `declaredPermissions` | APK (`aapt2 dump permissions`) | MUST be empty (FR-004, C1) |
+| `declaredPermissions` | APK (`aapt2 dump permissions`) | MUST contain nothing but the app's own signature-level `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` from `androidx.core`; never a network permission (FR-004, C1) |
 | `signingCertSha256` | APK (`apksigner verify --print-certs`) | MUST equal `android/SIGNING_FINGERPRINT` (FR-018, FR-021, C3) |
 | `webViewHardMin` | build constant | 119 [R11] |
 | `webViewValidatedFloor` | gate run | the WebView major the release gate ran on; written into the build's metadata [R11] |
