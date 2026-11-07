@@ -34,7 +34,9 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   const [remembered, setRemembered] = useState(false);
   const [showLabel, setShowLabel] = useState(true);
   const [showDate, setShowDate] = useState(true);
+  const [forgetError, setForgetError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const chosenRef = useRef(false);
 
   // Create-a-certificate state.
   const [creating, setCreating] = useState(false);
@@ -48,7 +50,8 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
   useEffect(() => {
     if (!canPersist) return; // read-only media: don't load a remembered cert
     loadCertificate().then((c) => {
-      if (c) {
+      // A slow read must not replace a certificate the user has already chosen.
+      if (c && !chosenRef.current) {
         setP12Bytes(c.p12Bytes);
         setCertLabel(c.label);
         setRemembered(true);
@@ -57,15 +60,32 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
     });
   }, []);
 
-  async function pickCert(file: File) {
-    setP12Bytes(new Uint8Array(await file.arrayBuffer()));
-    setCertLabel(file.name);
+  // Consent to remember belongs to one certificate. Every change of certificate withdraws it, so a
+  // box ticked for A can never persist B (SEC-05).
+  function changeCertificate(bytes: Uint8Array, label: string) {
+    chosenRef.current = true;
+    setP12Bytes(bytes);
+    setCertLabel(label);
     setRemembered(false);
+    setRemember(false);
+    setForgetError(null);
+  }
+
+  async function pickCert(file: File) {
+    changeCertificate(new Uint8Array(await file.arrayBuffer()), file.name);
     setCertDer(null);
   }
 
   async function forget() {
-    await clearCertificate();
+    setForgetError(null);
+    if (!(await clearCertificate())) {
+      // The record may still be on this device: keep showing it, and say so.
+      setForgetError(
+        'The certificate could not be removed from this device and may still be stored. ' +
+          'Clear this site’s data in your browser settings to remove it.',
+      );
+      return;
+    }
     setP12Bytes(null);
     setCertLabel(null);
     setRemember(false);
@@ -84,10 +104,8 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         },
         password,
       );
-      setP12Bytes(p12);
+      changeCertificate(p12, `${fullName.trim()}.p12`);
       setCertDer(der);
-      setCertLabel(`${fullName.trim()}.p12`);
-      setRemembered(false);
     } catch (e) {
       setGenError(e instanceof Error ? e.message : String(e));
     }
@@ -112,6 +130,12 @@ export function CertSheet({ canSign, busy, onSign, onCancel }: Props) {
         hidden
         onChange={(e) => e.target.files?.[0] && pickCert(e.target.files[0])}
       />
+
+      {forgetError && (
+        <p role="alert" className="text-xs text-amber-200">
+          {forgetError}
+        </p>
+      )}
 
       {!creating ? (
         <div className="flex items-center gap-2">

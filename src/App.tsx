@@ -296,7 +296,15 @@ export default function App() {
           });
         }
 
-        if (req.remember && canPersist) await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
+        if (req.remember && canPersist) {
+          const saved = await saveCertificate(req.p12Bytes, req.label ?? 'certificate');
+          if (!saved) {
+            const warning =
+              'Signed, but this certificate could not be remembered on this device. Any ' +
+              'certificate remembered earlier is unchanged.';
+            note = note ? `${note} ${warning}` : warning;
+          }
+        }
         downloadPdf(signed, doc.name.replace(/\.pdf$/i, '') + '-signed.pdf');
         setMode('stamp');
         if (note) setError(note);
