@@ -1,76 +1,29 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.0 → 1.1.0
-Bump rationale: MINOR. This amendment does two things.
+Version change: 1.1.0 → 1.2.0
+Bump rationale: MINOR. Adds a third distribution, a native Android app package (feature 003), with
+its obligation stated under each affected principle. Nothing is removed or redefined: every rule for
+web and desktop is unchanged, and the new clauses only add. Approved by the owner on 2026-11-07.
 
-(1) FORWARD-LOOKING — feature 002. The constitution was written in browser-and-Vercel-specific
-language that described the only distribution that existed at ratification. Feature 002 (portable
-offline desktop builds) contradicts that *letter* while honouring its *intent* more strictly — a
-packaged desktop app has no origin server at all, which is the strongest possible reading of
-Principle I. This generalizes the distribution-specific wording and materially expands guidance
-(per-distribution "installable", per-distribution network prohibition, bundled-engine staleness
-honesty, per-distribution validator evidence).
+Modified principles (titles unchanged):
+- I. Zero-Server, Client-Side Only: adds the Android network prohibition (content policy retained,
+  plus no network permission so the OS denies access).
+- II. Offline-First & Installable: adds Android's installable form.
+- IV. Honest Security Posture & Purpose: adds the Android disclosures. It runs on the system web
+  view rather than a bundled engine, so the frozen-engine clause does not apply as written; its own
+  weaknesses are named instead.
+- V. Verify Against Real Readers: names the Android package in the per-distribution rule.
+- VI. On-Device Data Minimization: adds platform backup and device-to-device transfer as ways stored
+  data leaves a device, which must be excluded.
 
-(2) RETROACTIVE — correcting a factual falsehood. Principle III's v1.0.0 scope note asserted "Both
-tiers ship in v1 — the visual image stamp (Tier A) AND the integrated PKCS#12 signature (Tier B)".
-This stopped being true when PR #4 (`a1a83ab`) removed the image-only "Stamp image & Download" flow
-and made certificate signing the sole signing path — a deliberate Principle IV call (a visible mark
-with no cryptography behind it is a "signature" that isn't one, and labeling alone does not fix
-that). The constitution went on asserting it regardless. The enumeration is therefore REMOVED, not
-merely corrected: governance MUST NOT duplicate product scope, because duplicated facts drift and a
-governance document that is quietly false is worse than one that is silent. Principle III's actual
-intent — that it gates from day one, for every distribution, with no divergent signing path — is
-preserved verbatim. Scope now lives solely in `specs/`.
+Modified sections: Technology & Deployment Constraints (lists the third distribution); Development
+Workflow & Quality Gates (privacy gate covers the Android permission check).
+Added sections: none. Removed sections: none.
 
-Why MINOR and not MAJOR: no principle is removed, renamed, or redefined. Principle III's normative
-content is untouched; what was deleted was a descriptive claim that never belonged in governance.
-Nothing previously permitted becomes forbidden and nothing previously forbidden becomes permitted.
-
-Modified principles (all retain their names and intent):
-  - I. Zero-Server, Client-Side Only (NON-NEGOTIABLE) — "browser runtime" → "local runtime on the
-    user's device"; Vercel recast as one instance of "no server", not the definition of it; the
-    network prohibition is now "strongest mechanism available to the distribution" (CSP for web,
-    CSP + runtime-level outbound denial for desktop) rather than CSP alone.
-  - II. Offline-First & Installable — "installable" is now defined per distribution (web app
-    manifest for web; portable single-file binary for desktop) instead of Android-home-screen only.
-  - IV. Honest Security Posture & Purpose — adds the bundled-engine staleness obligation.
-  - V. Verify Against Real Readers (Test-First) — adds that validator evidence is per-distribution
-    and is NOT inherited by assertion across distributions.
-  - VI. On-Device Data Minimization — persistence scope generalized from browser stores to ANY
-    on-device store, explicitly including a desktop application data directory.
-
-  - III. Cryptographic Correctness & Standards Compliance (NON-NEGOTIABLE) — normative content
-    UNCHANGED and fully binding on every distribution. Its stale "both tiers ship in v1" scope note
-    is removed (see rationale item 2 above) and replaced by a gating note plus an explicit statement
-    that governance does not enumerate product scope.
-
-Retroactive alignment (code already merged, docs had drifted):
-  - `a1a83ab` (PR #4) removed the stamp-only output → Principle III scope note corrected here;
-    `specs/001-pdf-signer/spec.md` FR-005, FR-010, US1, US2 amended in the same change.
-  - Audited and found ALREADY COMPLIANT, no change needed: `signatureStore.ts` /
-    `certStore.ts` (Principle VI — opt-in, disclosed, clearable, minimal record, secrets never
-    persisted); README (Principle IV — already rewritten to match the cert-only reality);
-    `GitHubLink.tsx` (Principle I — inline SVG + plain navigation; transmits no user content).
-
-Added sections: none (Section 2 "Technology & Deployment Constraints" restructured in place to name
-two distributions; no new top-level section).
-
-Removed sections: none.
-
-Templates requiring updates:
-  - ✅ .specify/templates/plan-template.md — Constitution Check gate is generic ("[Gates determined
-    based on constitution file]"); gates are derived per-plan from this file. No hardcoded principle
-    references to change.
-  - ✅ .specify/templates/spec-template.md — mandatory sections unaffected.
-  - ✅ .specify/templates/tasks-template.md — no principle references; unaffected.
-  - ✅ .specify/templates/checklist-template.md — unaffected.
-  - ⚠ CLAUDE.md — describes the project as "Installable on Android, deployed static on Vercel" and
-    "Client-only, no backend". Accurate for web; now incomplete. Update when 002 lands (not before —
-    the desktop distribution does not exist yet).
-  - ⚠ README.md — same; update as part of 002's documentation tasks.
-
-Follow-up TODOs: none. All placeholders resolved.
+Templates: plan, spec and tasks templates read the constitution at runtime and need no change.
+Docs: CLAUDE.md lists distributions and should mention 003 when its plan lands.
+Deferred TODOs: none.
 -->
 
 # PDF Signer PWA Constitution
@@ -94,6 +47,9 @@ rely on a single mechanism where more than one is available:
 - **Packaged/desktop**: the CSP above MUST be retained AND the runtime MUST additionally deny
   outbound network requests at the runtime level, so the guarantee does not rest on document policy
   alone.
+- **Android**: the CSP above MUST be retained AND the app package MUST declare no permission that
+  grants network access, so the operating system denies it. Native code and bundled libraries MUST
+  NOT attempt network access, even though the missing permission would block it.
 
 Any feature that would require server-side processing of user content is out of scope by definition
 and MUST be rejected, not worked around.
@@ -117,6 +73,8 @@ form:
 - **Packaged/desktop**: the application MUST be delivered as a self-contained artifact that runs
   without an installer, without elevated privileges, and without installing shared dependencies onto
   the host.
+- **Android**: the application MUST be delivered as a self-contained app package, installable
+  without the store, that runs fully from its first launch with no network ever available.
 
 **Rationale**: A privacy tool that only works online is a contradiction; offline capability is both a
 UX feature and a reinforcement of the zero-network guarantee. The *guarantee* is universal; only the
@@ -201,6 +159,11 @@ other distributions do not have. In particular:
   Codex, PR #7 — P1.)*
 - A distribution whose artifacts are **not signed by a recognised code-signing authority** MUST
   disclose that plainly, explain the resulting warnings, and offer a verification path in its place.
+- A distribution that **runs on the device's system engine** rather than bundling one (Android) is
+  not frozen, but its engine version depends on the device. It MUST disclose that dependency, and
+  MUST warn the user locally, with no network request, when the engine is below the oldest version
+  its release gate validated. It MUST also disclose that it is installed from outside the store and
+  never updates itself.
 
 **Rationale**: Users making trust decisions about signed documents deserve claims that hold up to
 scrutiny. Overclaiming — including implying legal weight the design cannot deliver offline, or
@@ -221,7 +184,8 @@ until the automated validator passes; Acrobat spot-checks confirm the human-faci
 
 **Evidence is per-distribution and MUST NOT be inherited by assertion.** A distribution MUST NOT be
 published on the strength of another distribution's validator run: the gate MUST be executed against
-output actually produced by the artifact being shipped. Sharing an implementation (Principle III)
+output actually produced by the artifact being shipped, including the Android package on its own
+system engine. Sharing an implementation (Principle III)
 makes a passing result *likely*; it does not make it *demonstrated*. Where a distribution runs on a
 different engine, that engine MUST earn its own passing gate before its artifacts are published.
 
@@ -248,6 +212,10 @@ persistence such as temporary files, logs, and crash dumps.
 
 Precached application assets (Principle II) cover application code ONLY, never user content.
 
+Opted-in data MUST stay on the device it was stored on. Where the platform can copy application data
+off the device, through cloud backup or device-to-device transfer (Android), that data MUST be
+excluded from both; otherwise the opt-in disclosure would be false.
+
 **Rationale**: "Zero-server" is hollow if the user's certificate and password sit in storage on a
 shared or lost device. Minimizing on-device residency — and forbidding secret persistence outright —
 is the on-device half of the privacy guarantee. The store's technology is irrelevant to the risk, so
@@ -257,9 +225,10 @@ the rule names the behaviour, not the API.
 
 - **Distributions**: The product ships from **one codebase** as (a) a **web PWA** — the primary
   distribution, targeting Android/Chrome as the primary install platform, with desktop browsers
-  supported and iOS best-effort (Safari PWA limitations acknowledged) — and (b) **packaged desktop
-  builds** for Windows and Linux, delivered as portable single-file artifacts. Additional
-  distributions require an amendment. A distribution MUST NOT fork the signing path (Principle III).
+  supported and iOS best-effort (Safari PWA limitations acknowledged) — (b) **packaged desktop
+  builds** for Windows and Linux, delivered as portable single-file artifacts — and (c) a **native
+  Android app package** that hosts the same web build in the device's system web view, distributed
+  on the GitHub release (added in v1.2.0). Any further distribution requires an amendment. A distribution MUST NOT fork the signing path (Principle III).
 - **Core stack**: Vite + React + `vite-plugin-pwa` (manifest + Workbox service worker); `pdf-lib`
   for PDF assembly and signature-field/appearance construction; `pdf.js` for on-screen preview;
   `@signpdf/signpdf` + `@signpdf/placeholder-pdf-lib` + `@signpdf/signer-p12` (over `node-forge`)
@@ -291,7 +260,7 @@ the rule names the behaviour, not the API.
 - **Privacy gate**: Any change that introduces or could introduce an outbound network request
   carrying user-derived data is blocked and MUST be redesigned (Principle I). The web CSP MUST
   remain `connect-src 'none'`; packaged distributions MUST additionally keep runtime-level outbound
-  denial in force.
+  denial in force, and the Android package MUST be checked for the absence of network permissions.
 - **Data-minimization gate**: Any change that writes user content to on-device storage MUST be
   behind an explicit, disclosed opt-in; any change that persists a certificate password or decrypted
   private key is blocked outright (Principle VI).
@@ -316,4 +285,4 @@ amended first.
   NON-NEGOTIABLE principles (I and III) admit no exceptions; a change that violates either MUST NOT
   ship.
 
-**Version**: 1.1.0 | **Ratified**: 2026-07-13 | **Last Amended**: 2026-07-17
+**Version**: 1.2.0 | **Ratified**: 2026-07-13 | **Last Amended**: 2026-11-07
