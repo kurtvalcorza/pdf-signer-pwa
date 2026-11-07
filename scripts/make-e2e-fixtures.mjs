@@ -39,7 +39,7 @@ writeFileSync(resolve(DIR, 'sample-large.pdf'), await big.save());
 
 // A small solid PNG (red 1x1); the app scales it to the placement box.
 const PNG_1x1 = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
   'base64',
 );
 writeFileSync(resolve(DIR, 'signature.png'), PNG_1x1);
