@@ -5,8 +5,8 @@ it runs as a single portable file with **no install and no network** (FR-009/FR-
 engine is unchanged and shared — a desktop signature is produced by the same code the web build's
 unit tests and pyHanko gate already validate.
 
-- **Windows**: `PDF Signer <version>.exe` — a portable single file, no installer, no registry.
-- **Linux**: `PDF Signer-<version>.AppImage` — a single file; `chmod +x` then run.
+- **Windows**: `PDF.Signer.<version>.exe` — a portable single file, no installer, no registry.
+- **Linux**: `PDF.Signer-<version>.AppImage` — a single file; `chmod +x` then run.
 
 ## v0.1.1: security release, replaces v0.1.0
 
@@ -103,7 +103,7 @@ Do not trust the release page's contents — verify independently:
 sha256sum -c SHA256SUMS
 
 # 2. Build provenance (proves the exact source commit + that this repo's workflow built it)
-gh attestation verify "PDF Signer <version>.exe" \
+gh attestation verify "PDF.Signer.<version>.exe" \
   --repo kurtvalcorza/pdf-signer-pwa \
   --signer-workflow kurtvalcorza/pdf-signer-pwa/.github/workflows/release-desktop.yml \
   --source-digest <expected-commit-sha>
