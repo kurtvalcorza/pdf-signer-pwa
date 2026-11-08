@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">PDF Signer</string>
+    <string name="renderer_gone_title">The app ran out of memory</string>
+    <string name="renderer_gone_message">The page that does the signing stopped, probably because the document is too large for this phone\'s memory. It has been restarted. Nothing was saved. Try a smaller file, or close other apps and try again.</string>
+</resources>
