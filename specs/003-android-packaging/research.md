@@ -418,3 +418,15 @@ repository has signed a near-100 MB PDF on any distribution (`sec-limits-render.
 that oversized inputs are refused), so this may not be Android-specific. Fixing it means changing the
 shared engine's memory use, which SC-006 keeps out of this feature. T026's "~100 MB" acceptance is
 therefore not met; the gate's `--large` defaults to 95 MiB and fails with the reason.
+
+**G2 measurement (2026-11-08, owner asked to measure desktop first)**: the same shared engine in
+desktop Chromium (Playwright, dev build) signs the identical 95 MiB fixture in 6.3 s and the
+output passes `validate_pdf.py`; 50 MiB signs in 4.3 s. The probe was a temporary spec, deleted
+afterwards. On the Android WebView, 37 MiB also runs out of memory, so the ceiling on this AVD is
+between 25 and 37 MiB. The limit belongs to the Android WebView renderer, an isolated process
+whose memory the app can't raise (`largeHeap` affects only the app process). It isn't a defect in
+the shared engine that also shows up on desktop.
+
+**G2 decision (owner, 2026-11-08)**: investigate the shared engine's peak memory in a **separate
+feature**, not in 003 (it would change shared code; SC-006). Until then the Android gate's
+`--large` runs at 25 MiB, which passes. The US2 disclosures (T033, T043) state the Android ceiling.

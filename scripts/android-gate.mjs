@@ -15,7 +15,8 @@
  *   wrong password  US1 AS4: the shared app's error, and no save dialog opens
  *   cancel          US1 AS5: backing out of the save dialog saves nothing
  *   certified (C11) US1 AS3: a certified "no changes" PDF is refused for certificate signing
- *   --large         R7: a ~95 MiB PDF signs, saves with a matching byte count, and validates
+ *   --large         R7: a 25 MiB PDF (--large-mb <n> to change) signs, saves with a matching
+ *                   byte count, and validates. 25, not ~100: research.md G2
  *
  * Driver rules from the spike (S9): dump twice after a launch, and tap only from a fresh dump,
  * by resource id where one exists (android:id/button1 = SAVE).
@@ -54,7 +55,8 @@ const option = (name) => {
 };
 const LARGE_MB_OPT = option('--large-mb');
 const LARGE = flag('--large') || LARGE_MB_OPT !== null;
-const LARGE_MB = Number(LARGE_MB_OPT ?? 95);
+// 25 MiB until the shared engine's peak memory is reduced (research.md G2, owner decision 2026-11-08).
+const LARGE_MB = Number(LARGE_MB_OPT ?? 25);
 const SKIP_NEGATIVE = flag('--skip-negative');
 const ADB = option('--adb') || process.env.ADB || 'adb';
 const APK = argv[0] && resolve(argv[0]);
@@ -372,7 +374,7 @@ async function caseLarge() {
     doc
       .addPage([595, 842])
       .drawText(`Large gate fixture, page ${i}`, { x: 50, y: 780, size: 18, font });
-  // Incompressible padding sets the file size; the default 95 MiB stays under LIMITS.pdfBytes (100 MiB).
+  // Incompressible padding sets the file size; it must stay under LIMITS.pdfBytes (100 MiB).
   if (!(LARGE_MB > 0 && LARGE_MB < 100))
     fail(`--large-mb must be between 0 and 100, got ${LARGE_MB}`);
   const pad = new Uint8Array(Math.round(LARGE_MB * 1024 * 1024));
