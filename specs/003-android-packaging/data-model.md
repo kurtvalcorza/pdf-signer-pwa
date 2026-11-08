@@ -63,9 +63,10 @@ are held in memory only and dropped on any terminal state; nothing is written to
 
 ## Capture file (transient)
 
-A camera capture writes to `cache/capture/<random>.jpg` through a non-exported `FileProvider`. It is
-deleted once it's handed to WebView, and the whole `cache/capture/` directory is cleared on every
-launch. It is never a remembered item.
+A camera capture writes to `cache/capture/<random>.jpg` through a non-exported `FileProvider`. WebView reads
+a chooser URI lazily, when the page reads the file, so the photo is not deleted the moment it is
+handed over: it is deleted when the next file chooser opens, when the activity is destroyed, and
+with the whole `cache/capture/` directory on every launch. It is never a remembered item.
 
 ## On-device stores and their exclusion
 

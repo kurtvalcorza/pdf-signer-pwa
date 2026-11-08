@@ -94,4 +94,5 @@ REFUSED state is a native screen, and the web app is never loaded.
 - WebView settings: JavaScript on, DOM storage on, `allowFileAccess` off, `allowContentAccess` off,
   multiple windows off, Safe Browsing off, and `setWebContentsDebuggingEnabled(false)` in release.
 - `DownloadListener` ignores every request.
-- `cache/capture/` is cleared on launch.
+- `cache/capture/` is cleared on launch; a capture is also deleted at the next chooser and when
+  the activity is destroyed.

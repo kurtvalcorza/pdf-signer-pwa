@@ -170,7 +170,7 @@ T049 deletes it.
 
 **Independent Test**: Q8 on the AVD, and Q9 on two phones ([OWNER]).
 
-- [ ] T035 [US3] Extend `scripts/android-gate.mjs` with `--backup`:
+- [X] T035 [US3] Extend `scripts/android-gate.mjs` with `--backup`:
   - opt in to "Remember this certificate";
   - `adb shell bmgr transport com.android.localtransport/.LocalTransport`, then `adb shell bmgr backupnow io.github.kurtvalcorza.pdfsigner`, and fail if the package contributes backup data (US3 AS1, cloud half);
   - choose Forget and confirm the item is gone (AS2);
@@ -187,8 +187,8 @@ T049 deletes it.
 
 **Independent Test**: on the AVD's virtual camera, take a photo, clean it up, sign, and the image is in the signed PDF. Backing out of the camera leaves "Add signature" working.
 
-- [ ] T037 [US4] Add the capture branch to `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/FileChooser.kt`: when `isCaptureEnabled()`, create `cache/capture/<random>.jpg` and launch `ActivityResultContracts.TakePicture` with its `FileProvider` URI. Delete the file after it's handed to WebView (data model "Capture file"). No camera app or back-out → callback `null`. The manifest declares **no** `CAMERA` permission (R8)
-- [ ] T038 [US4] Verify on the AVD: capture → clean up → sign → validate (US4 AS1); back out → the image picker still works and nothing is asked again (AS2); a capture over `LIMITS.imagePixels` (40,000,000 px) is refused with the shared app's message (AS3; use an emulator camera resolution or a pushed oversized image if the virtual camera can't exceed it). Record in `research.md`
+- [X] T037 [US4] Add the capture branch to `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/FileChooser.kt`: when `isCaptureEnabled()`, create `cache/capture/<random>.jpg` and launch `ActivityResultContracts.TakePicture` with its `FileProvider` URI. Delete the file after it's handed to WebView (data model "Capture file"; as built: at the next chooser, on destroy and on every launch, because WebView reads the URI lazily). No camera app or back-out → callback `null`. The manifest declares **no** `CAMERA` permission (R8)
+- [X] T038 [US4] Verify on the AVD: capture → clean up → sign → validate (US4 AS1); back out → the image picker still works and nothing is asked again (AS2); a capture over `LIMITS.imagePixels` (40,000,000 px) is refused with the shared app's message (AS3; use an emulator camera resolution or a pushed oversized image if the virtual camera can't exceed it). Record in `research.md`
 
 **Checkpoint**: US4 is done; C1 still shows no new permission.
 

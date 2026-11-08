@@ -7,7 +7,7 @@
  * picker and save dialog). No test APK, no debug build, no WebView DevTools.
  *
  *   node scripts/android-gate.mjs <apk> [--adb <path>] [--network-on] [--large | --large-mb <n>]
- *                                 [--skip-negative]
+ *                                 [--skip-negative] [--backup] [--camera]
  *
  * Cases:
  *   sign            open sample.pdf, place signature.png, sign with e2e-cert.p12, save
@@ -20,6 +20,10 @@
  *   certified (C11) US1 AS3: a certified "no changes" PDF is refused for certificate signing
  *   --large         R7: a 25 MiB PDF (--large-mb <n> to change) signs, saves with a matching
  *                   byte count, and validates. 25, not ~100: research.md G2
+ *   --backup        US3: a remembered certificate is refused by backup (bmgr, local transport,
+ *                   with a positive control), Forget removes it, and uninstall leaves nothing
+ *   --camera        US4: photo → clean up → sign → validate, the photo is in the PDF; backing out
+ *                   leaves the picker working with no prompt; a 48 MP image is refused
  *
  * Driver rules from the spike (S9): dump twice after a launch, and tap only from a fresh dump,
  * by resource id where one exists (android:id/button1 = SAVE).
@@ -29,7 +33,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { inflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 import { join, resolve } from 'node:path';
 
 const PKG = 'io.github.kurtvalcorza.pdfsigner';
@@ -63,11 +67,13 @@ const LARGE = flag('--large') || LARGE_MB_OPT !== null;
 const LARGE_MB = Number(LARGE_MB_OPT ?? 25);
 const SKIP_NEGATIVE = flag('--skip-negative');
 const NETWORK_ON = flag('--network-on');
+const BACKUP = flag('--backup');
+const CAMERA = flag('--camera');
 const ADB = option('--adb') || process.env.ADB || 'adb';
 const APK = argv[0] && resolve(argv[0]);
 if (!APK || !existsSync(APK)) {
   console.error(
-    'usage: node scripts/android-gate.mjs <signed-release.apk> [--adb <path>] [--large] [--skip-negative]',
+    'usage: node scripts/android-gate.mjs <signed-release.apk> [--adb <path>] [--network-on] [--large | --large-mb <n>] [--skip-negative] [--backup] [--camera]',
   );
   process.exit(2);
 }
@@ -271,12 +277,59 @@ async function fillCertificate(password) {
   await hideKeyboard();
 }
 
+const REMEMBER = /^Remember this certificate on this device/;
+
+/**
+ * Ticks "Remember this certificate". The WebView's accessibility tree reports every checkbox as
+ * checked="false" (WebView 133, 2026-11-08), so the tick is proved by its effect instead: callers
+ * check that the certificate is remembered on a fresh launch. Only a freshly chosen certificate
+ * is ticked; a remembered one (Forget shown) is already ticked and a tap would clear it.
+ */
+async function tickRemember() {
+  const ns = dump();
+  if (ns.some((n) => /^Forget/.test(n.text))) fail('tickRemember: a certificate is already remembered');
+  const n = await waitFor('the Remember checkbox', (all) =>
+    all.find((x) => x.cls === 'CheckBox' && REMEMBER.test(x.text)),
+  );
+  shell(`input tap ${n.x} ${n.y}`);
+  await sleep(600);
+  console.log('    tick Remember this certificate');
+}
+
+/**
+ * Opens the certificate sheet on a fresh launch WITHOUT choosing a certificate, and reports
+ * whether the shared app shows one as remembered (its label plus a Forget button).
+ */
+async function rememberedOnFreshLaunch() {
+  await launchFresh();
+  await openPdf('sample.pdf');
+  await placeSignature({ page2: false });
+  await tap('Sign with a digital certificate', /^Sign with a digital certificate/);
+  await waitFor('the certificate sheet', find(/^Certificate password$|^Choose certificate|e2e-cert\.p12/));
+  // The stored record is read asynchronously: give it time before calling it absent.
+  const hit = await waitFor(
+    'a remembered certificate',
+    (ns) => ns.some((n) => /^Forget/.test(n.text)) && ns.some((n) => /e2e-cert\.p12/.test(n.text)),
+    8000,
+  ).catch(() => false);
+  return !!hit;
+}
+
 /** Signs `input` and saves it. Returns the pulled local path and the device file name. */
-async function signAndSave(input, { page2 = false } = {}) {
+async function signAndSave(input, { page2 = false, remember = false } = {}) {
   await launchFresh();
   await openPdf(input);
   await placeSignature({ page2 });
   await fillCertificate(PASSWORD);
+  if (remember) await tickRemember();
+  return signAndSaveOpen(input);
+}
+
+/** With `input` open, a signature placed and the certificate filled: sign, save, pull. */
+async function signAndSaveOpen(input) {
+  // An earlier case may have left a file with the same name; the save dialog would then write
+  // "<name> (1).pdf" and the pull below would fetch the stale file (caught by the size check).
+  shell(`rm -f '${DEVICE_DIR}/${input.replace(/\.pdf$/i, '')}-signed.pdf'`);
   clearLog();
   await tap('Sign & Download', /^Sign & Download$/);
   await waitLog(
@@ -371,6 +424,221 @@ async function caseCertified() {
 }
 
 /** Minimal PNG decoder for `screencap -p` output: 8-bit RGB/RGBA, non-interlaced. */
+// Counts image XObjects reachable from page 1 (through form XObjects such as a signature
+// appearance), with pyHanko's reader, which the validator already needs.
+const IMAGES_PY = String.raw`
+import sys
+from pyhanko.pdf_utils.reader import PdfFileReader
+def walk(res, seen, out):
+    xo = res.get('/XObject') if res is not None else None
+    if xo is None:
+        return
+    xo = xo.get_object()
+    for k in xo:
+        o = xo.raw_get(k)
+        ref = getattr(o, 'idnum', None)
+        if ref in seen:
+            continue
+        seen.add(ref)
+        o = o.get_object()
+        if o.get('/Subtype') == '/Image':
+            out.append((int(o['/Width']), int(o['/Height'])))
+        elif o.get('/Subtype') == '/Form':
+            walk(o.get('/Resources'), seen, out)
+with open(sys.argv[1], 'rb') as f:
+    r = PdfFileReader(f, strict=False)
+    page = r.root['/Pages']['/Kids'][0].get_object()
+    out = []
+    walk(page.get('/Resources'), set(), out)
+    annots = page.get('/Annots') or []
+    for a in annots:
+        ap = a.get_object().get('/AP')
+        if ap is not None and '/N' in ap:
+            n = ap['/N'].get_object()
+            walk(n.get('/Resources'), set(), out)
+    print(len(out), ' '.join(f'{w}x{h}' for w, h in out))
+`;
+
+function pageOneImages(file) {
+  const r = spawnSync(PY, ['-c', IMAGES_PY, file], { encoding: 'utf8' });
+  if (r.status !== 0) fail(`image count failed for ${file}:\n${r.stderr}`);
+  const [count, ...dims] = r.stdout.trim().split(/\s+/);
+  return { count: Number(count), dims };
+}
+
+/** A tiny PNG whose header claims w x h: the shared app checks the header before decoding. */
+function oversizedPng(path, w, h) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([len, body, sum]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolour
+  writeFileSync(
+    path,
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', deflateSync(Buffer.alloc(0))),
+      chunk('IEND', Buffer.alloc(0)),
+    ]),
+  );
+}
+
+/** Fails if Android ever asks the user to grant this app a permission. */
+const askedForPermission = (ns) =>
+  ns.some((n) => /permissioncontroller|packageinstaller/.test(n.pkg) && /PDF Signer/.test(n.text));
+
+/**
+ * Taps "Take photo" and drives the emulator's camera app (com.android.camera2): shutter + Done
+ * to keep the photo, or Back to back out. Fails if a permission prompt for this app appears.
+ */
+async function takePhoto({ keep }) {
+  await tap('Take photo', /Take photo$/);
+  const shutter = await waitFor(
+    'the camera app',
+    (ns) => {
+      if (askedForPermission(ns)) fail('Android asked to grant PDF Signer a permission');
+      return ns.find((n) => n.id === 'com.android.camera2:id/shutter_button');
+    },
+    30000,
+  );
+  if (!keep) {
+    shell('input keyevent KEYCODE_BACK');
+    console.log('    back out of the camera');
+    return;
+  }
+  await sleep(1500); // let the preview settle
+  shell(`input tap ${shutter.x} ${shutter.y}`);
+  console.log('    tap Shutter');
+  await tap('Done', /^com\.android\.camera2:id\/done_button$/, 20000);
+}
+
+async function caseCamera() {
+  console.log('▶ camera capture (US4, FR-011)');
+  // AS1: capture → clean up → sign → validate, and the photo is in the signed PDF.
+  await launchFresh();
+  await openPdf('sample.pdf');
+  clearLog();
+  await takePhoto({ keep: true });
+  const got = await waitLog('the capture handed to WebView', /CHOOSER capture bytes=(\d+)/, 20000);
+  await waitFor('the placed photo', find(/^Remove signature$/), 30000);
+  console.log(`    capture ${got[1]} bytes placed as the signature`);
+  await tap('Clean up background', /^Clean up background$/);
+  await tap('Use cleaned', /^Use cleaned$/, 30000);
+  await fillCertificate(PASSWORD);
+  const out = await signAndSaveOpen('sample.pdf');
+  validate([out.local]);
+  const before = pageOneImages(join(FIXTURES, 'sample.pdf'));
+  const after = pageOneImages(out.local);
+  if (after.count <= before.count)
+    fail(`no image added to page 1: ${before.count} before, ${after.count} after`);
+  console.log(`    page 1 images: ${before.count} before, ${after.count} after (${after.dims.join(', ')})`);
+  shell(`rm -f '${DEVICE_DIR}/${out.name}'`);
+
+  // AS2: back out → nothing placed, the image picker still works, and nothing is asked again.
+  await launchFresh();
+  await openPdf('sample.pdf');
+  clearLog();
+  await takePhoto({ keep: false });
+  await waitLog('the capture cancelled', /CHOOSER capture cancelled/, 20000);
+  await waitFor('back in the app', find(/^Add signature$/), 20000);
+  if (dump().some((n) => /^Remove signature$/.test(n.text))) fail('a signature was placed after backing out');
+  await placeSignature({ page2: false });
+  console.log('    backed out: nothing placed; the image picker still works');
+  clearLog();
+  await takePhoto({ keep: false });
+  await waitLog('the second capture cancelled', /CHOOSER capture cancelled/, 20000);
+  console.log('    the camera opens again with no prompt');
+
+  // AS3: an image over LIMITS.imagePixels is refused with the shared app's message. The emulator's
+  // camera can't exceed 40 MP, so a pushed PNG goes through the same readImageFile path.
+  const big = join(WORK, 'gate-oversized.png');
+  oversizedPng(big, 8000, 6000);
+  push(big);
+  await launchFresh();
+  await openPdf('sample.pdf');
+  await tap('Add signature', /^Add signature$/);
+  await pickFile('gate-oversized.png');
+  await waitFor(
+    'the too-large message',
+    find(/This image is too large\. The limit is 40 megapixels\./),
+    20000,
+  );
+  if (dump().some((n) => /^Remove signature$/.test(n.text))) fail('the oversized image was placed');
+  console.log('    48 MP image refused with the shared message');
+}
+
+function bmgr(args) {
+  return shell('bmgr ' + args).trim();
+}
+
+async function caseBackup() {
+  console.log('▶ remembered certificate: backup, Forget, uninstall (US3, Q8)');
+  const first = await signAndSave('sample.pdf', { remember: true });
+  shell("rm -f '" + DEVICE_DIR + '/' + first.name + "'");
+  // Positive control for the rest: the certificate really is remembered.
+  if (!(await rememberedOnFreshLaunch()))
+    fail('the certificate was not remembered after opting in, so the checks below prove nothing');
+  console.log('    remembered across a fresh launch');
+
+  // AS1 (cloud half): the package contributes no backup data.
+  const wasEnabled = !/disabled/.test(bmgr('enabled'));
+  const wasTransport = bmgr('list transports')
+    .split(/\r?\n/)
+    .find((l) => l.trim().startsWith('*'))
+    ?.replace('*', '')
+    .trim();
+  try {
+    bmgr('enable true');
+    const sel = bmgr('transport com.android.localtransport/.LocalTransport');
+    if (!/LocalTransport/.test(sel)) fail('could not select the local transport: ' + sel);
+    const control = bmgr('backupnow com.android.providers.settings');
+    if (!/Package com\.android\.providers\.settings with result: Success/.test(control))
+      fail('positive control failed, the transport backs up nothing:\n' + control);
+    const out = bmgr('backupnow ' + PKG);
+    const line = out.split(/\r?\n/).find((l) => l.includes('Package ' + PKG + ' with result:'));
+    if (!line) fail('bmgr did not report on ' + PKG + ':\n' + out);
+    if (/result: Success/.test(line)) fail('the package contributed backup data: ' + line);
+    console.log('    ' + line.trim() + ' (control: the settings provider backed up)');
+  } finally {
+    if (wasTransport) bmgr('transport ' + wasTransport);
+    if (!wasEnabled) bmgr('enable false');
+  }
+
+  // AS2: Forget removes it, and a fresh launch shows nothing remembered.
+  await tap('Forget', /^Forget$/);
+  await waitFor('the certificate gone from the sheet', find(/^Choose certificate/), 15000);
+  if (await rememberedOnFreshLaunch()) fail('the certificate is still remembered after Forget');
+  console.log('    Forget: nothing remembered on a fresh launch');
+
+  // AS3: remember again, uninstall, reinstall: nothing remains.
+  const again = await signAndSave('sample.pdf', { remember: true });
+  shell("rm -f '" + DEVICE_DIR + '/' + again.name + "'");
+  if (!(await rememberedOnFreshLaunch())) fail('the certificate was not remembered the second time');
+  adb('uninstall', PKG);
+  adb('install', APK);
+  if (await rememberedOnFreshLaunch()) fail('a remembered certificate survived uninstall');
+  console.log('    uninstall + reinstall: nothing remembered');
+}
+
 function decodePng(buf) {
   if (buf.readUInt32BE(0) !== 0x89504e47) fail('screencap did not return a PNG');
   let p = 8;
@@ -571,6 +839,8 @@ async function main() {
     await caseCancel();
     await caseCertified();
   }
+  if (CAMERA) await caseCamera();
+  if (BACKUP) await caseBackup();
   if (LARGE) await caseLarge();
 }
 

@@ -187,7 +187,8 @@ confirmed in source:
 
 When `FileChooserParams.isCaptureEnabled()` is true, the shell sends `ACTION_IMAGE_CAPTURE` with an
 output URI from a non-exported `FileProvider` (`grantUriPermissions`, a single `cache/capture/`
-path, and the file deleted after it's handed to WebView). The app declares **no CAMERA
+path, and the file deleted at the next chooser, when the activity is destroyed, and on every
+launch; not at hand-over, because WebView reads the URI lazily). The app declares **no CAMERA
 permission**: a camera-app intent needs none, *unless* the app declares CAMERA, in which case the
 intent requires it to be granted. If no camera app exists or the user backs out, the callback gets
 `null` and the image file picker still works (FR-011). The shared app's limits apply because
@@ -449,3 +450,34 @@ Same AVD and test key as the US1 run. The APK under test had SHA-256 `75A88779�
 
 - **G3, Q7:** `WebViewCompat.getCurrentWebViewPackage()` returns the provider already loaded, which still reads as enabled after `pm disable-user`, so the app loaded a blank WebView. MainActivity now reads the live `getApplicationEnabledSetting` (readable here: `1`, then `3`), and falls back to the loaded package's flag only if that can't be read.
 - **G4, edge-to-edge:** targetSdk 36 forces edge-to-edge, so the page drew under the status bar, and a tap on the shell's About button (y=62) landed on the system bar. The WebView now sits in a container inset by the system bars, display cutout and keyboard, as in a browser. The About button moved to y=125, and the shared app's top row is no longer under the status bar.
+
+## US3 and US4 checks, local (T035, T038, run 2026-11-08)
+
+Same AVD (WebView 133.0.6943.137) and test key. The APK under test had SHA-256 `cc25fc2c…e7119fa1`.
+One gate run, `--skip-negative --camera --backup`, passed end to end. `android-check-apk.mjs`
+passed C1 C3 C4 C5 C6 C7 C9 on the same APK: still one permission, and no `CAMERA`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| US3 positive control | ✅ | After ticking "Remember this certificate" and signing, a fresh launch shows `e2e-cert.p12` with a Forget button. Without this, the checks below would prove nothing |
+| US3 AS1, cloud half | ✅ | `bmgr` local transport, `backupnow` → `Package io.github.kurtvalcorza.pdfsigner with result: Backup is not allowed`. Positive control on the same transport: `com.android.providers.settings` → `Success`. The emulator's backup state is restored afterwards |
+| US3 AS2 Forget | ✅ | After Forget, a fresh launch shows nothing remembered |
+| US3 AS3 uninstall | ✅ | Remember again, uninstall, reinstall: nothing remembered |
+| US3 D2D half | by mechanism | `data_extraction_rules` `<device-transfer>` excludes all 9 domains (C5). Behavioural check is T036 [OWNER] |
+| US4 AS1 | ✅ | Take photo → the emulator's camera app (`com.android.camera2`) → shutter → Done. The shell hands over 64,107 bytes; Clean up background → Use cleaned → sign, and the output passes `validate_pdf.py`. Page-1 image XObjects (pyHanko reader): 0 in `sample.pdf`, 1 (1440×1920) in the output |
+| US4 AS2 | ✅ | Back out of the camera → `CHOOSER capture cancelled`, nothing placed, and "Add signature" picks `signature.png`. A second Take photo opens the camera with no permission prompt. No prompt naming PDF Signer appeared at any point |
+| US4 AS3 | ✅ | The virtual camera can't exceed 40 MP, so a pushed PNG whose header claims 8000×6000 (48 MP) goes through "Add signature", which uses the same `readImageFile` as the camera input. The app refuses it with "This image is too large. The limit is 40 megapixels." and places nothing |
+
+**Notes:**
+
+- WebView's accessibility tree reports every checkbox as `checked="false"`, so the gate can't read
+  the Remember box. Its effect is checked instead (the positive control above).
+- **Capture file deletion, claim corrected:** the data model said the photo is deleted "once it's
+  handed to WebView". WebView reads a chooser URI lazily, when the page reads the file, so deleting
+  it at hand-over would race that read. As built, it's deleted at the next chooser, when the
+  activity is destroyed, and with all of `cache/capture/` on every launch. The data model,
+  contract §6, R8 and T037 now say so. The deletion itself isn't observed: release builds refuse
+  `run-as`, so the app's cache isn't readable from adb.
+- A gate bug found on the way: a previous case's `sample-signed.pdf` made the save dialog write
+  `sample-signed (1).pdf`, and the gate pulled the stale file. Its byte-count check caught it. The
+  gate now deletes the target name before each save.

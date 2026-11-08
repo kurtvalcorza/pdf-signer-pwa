@@ -12,11 +12,7 @@ object AcceptRules {
    * separate items and comma-joined (spike S7).
    */
   fun mimeTypes(acceptTypes: Array<String>?): Array<String>? {
-    val accept = acceptTypes.orEmpty()
-      .flatMap { it.split(',') }
-      .map { it.trim().lowercase() }
-      .filter { it.isNotEmpty() }
-      .toSet()
+    val accept = normalize(acceptTypes)
     if (accept.isEmpty()) return null
     return when {
       accept == setOf(".pdf") || accept == setOf(".pdf", "application/pdf") -> arrayOf("application/pdf")
@@ -26,4 +22,19 @@ object AcceptRules {
       else -> null
     }
   }
+
+  /**
+   * A capture request (`capture` attribute) is honoured only for an image input: the shared app's
+   * camera input accepts any image type (research R8). Anything else with `capture` is refused.
+   */
+  fun captureAllowed(acceptTypes: Array<String>?): Boolean {
+    val accept = normalize(acceptTypes)
+    return accept.isNotEmpty() && accept.all { it == "image/*" || it in images }
+  }
+
+  private fun normalize(acceptTypes: Array<String>?): Set<String> = acceptTypes.orEmpty()
+    .flatMap { it.split(',') }
+    .map { it.trim().lowercase() }
+    .filter { it.isNotEmpty() }
+    .toSet()
 }

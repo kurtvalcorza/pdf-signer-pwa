@@ -1,7 +1,9 @@
 package io.github.kurtvalcorza.pdfsigner
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AcceptRulesTest {
@@ -22,6 +24,16 @@ class AcceptRulesTest {
     assertArrayEquals(p12, AcceptRules.mimeTypes(arrayOf(".p12,.pfx")))
     assertArrayEquals(p12, AcceptRules.mimeTypes(arrayOf(".p12", ".pfx")))
     assertArrayEquals(p12, AcceptRules.mimeTypes(arrayOf(".p12,.pfx,application/x-pkcs12")))
+  }
+
+  @Test fun captureOnlyForImageInputs() {
+    assertTrue(AcceptRules.captureAllowed(arrayOf("image/*")))
+    assertTrue(AcceptRules.captureAllowed(arrayOf("image/png,image/jpeg")))
+    assertFalse(AcceptRules.captureAllowed(null))
+    assertFalse(AcceptRules.captureAllowed(arrayOf("")))
+    assertFalse(AcceptRules.captureAllowed(arrayOf(".pdf")))
+    assertFalse(AcceptRules.captureAllowed(arrayOf("image/*,.p12")))
+    assertFalse(AcceptRules.captureAllowed(arrayOf("*/*")))
   }
 
   @Test fun anythingElseRefused() {
