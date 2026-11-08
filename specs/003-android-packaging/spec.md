@@ -52,7 +52,9 @@ per principle and leaves the mechanisms to this spec and its data model:
   for the whole app (FR-023).
 - Q: Who signs the package and where does the key live? → A: The release job signs it using a key
   the owner creates once and stores as an encrypted repository secret, available to the release job
-  only, with an offline backup the owner keeps (FR-021).
+  only, with an offline backup the owner keeps (FR-021). *Corrected 2026-11-08 (T048): a GitHub
+  Environment secret, not a repository secret. A repository secret is readable by every workflow,
+  so "release job only" needs an environment (research R12).*
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -266,8 +268,8 @@ checksum, the build provenance and the signing certificate fingerprint all match
   network-permission check has passed.
 - **FR-021**: The package MUST be signed with a key the project owner controls, and every later
   release MUST be signed with the same key so updates install over earlier versions. The release
-  job signs it, with the key held as an encrypted repository secret that only the release job can
-  read. The owner keeps an offline backup. The key MUST NOT appear in the repository, a build log or
+  job signs it, with the key held as an encrypted GitHub Environment secret that only the release
+  job can read. The owner keeps an offline backup. The key MUST NOT appear in the repository, a build log or
   a published artifact.
 - **FR-023**: The app MUST hide its content from screenshots, screen recording and the recent-apps
   preview at all times, and its disclosure MUST say so.

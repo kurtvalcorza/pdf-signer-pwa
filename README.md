@@ -12,6 +12,7 @@ Works offline once loaded, and installs like a normal app on Android.
 
 - [What you can do](#what-you-can-do)
 - [Install it on your phone](#install-it-on-your-phone)
+- [Android app (APK)](#android-app-apk)
 - [Sign a PDF — step by step](#sign-a-pdf--step-by-step)
 - [Create a Digital ID inside the app](#create-a-digital-id-inside-the-app)
 - [Sign a PDF that is already signed (counter-signing)](#sign-a-pdf-that-is-already-signed-counter-signing)
@@ -46,6 +47,20 @@ Works offline once loaded, and installs like a normal app on Android.
 3. Launch it from your home screen like any other app. After the first load it works **offline**.
 
 > On a computer, you can use it right in the browser — no install needed.
+
+---
+
+## Android app (APK)
+
+There is also a native Android app: the same app packaged as an APK, the third distribution next to
+the web app and the [desktop builds](docs/desktop.md). It runs fully offline from the first launch,
+declares **no network permission** (Android itself blocks it from connecting), and blocks
+screenshots while it's open. It isn't on the Play Store and never updates itself: each release that
+includes it attaches `pdf-signer-<version>.apk` to the GitHub release.
+
+Read **[docs/android.md](docs/android.md)** before installing. It covers the install warning, how to
+check the checksum, build provenance and signing key, what the system WebView can still send, and
+what uninstalling deletes.
 
 ---
 
@@ -154,7 +169,8 @@ Please read this honestly:
   strict security policy (`connect-src 'none'`) blocks the app's scripts from opening network
   connections (fetch, WebSocket, beacons), and the app has no upload feature. That policy does not
   cover page navigation, and it can't protect you from a tampered copy of the app, so you are also
-  trusting the site or build you got it from. The desktop builds add their own network locks.
+  trusting the site or build you got it from. The desktop builds add their own network locks, and the Android app has no network permission at
+  all (see [docs/android.md](docs/android.md) for what that does not cover).
 - **Minimal on-device storage.** Your content stays in memory by default. The only things that can be
   saved are an **opt-in** remembered certificate and/or signature image — **never** your PDF, your
   certificate password, or decrypted private-key material.

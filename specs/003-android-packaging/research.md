@@ -481,3 +481,22 @@ passed C1 C3 C4 C5 C6 C7 C9 on the same APK: still one permission, and no `CAMER
 - A gate bug found on the way: a previous case's `sample-signed.pdf` made the save dialog write
   `sample-signed (1).pdf`, and the gate pulled the stale file. Its byte-count check caught it. The
   gate now deletes the target name before each save.
+
+## SC-007 in-place update, local (T045, run 2026-11-08)
+
+Two release builds from `da51138` plus the working tree, both signed with the scratch **test** key
+(v2 + v3), never the release key: N = 0.1.1 (versionCode 101, SHA-256 `3acacfd8…580675c3`) and
+N+1 = 0.1.2 (versionCode 102, SHA-256 `3a20634d…65ec2f5c`; `package.json` bumped for that build
+only, then restored). Command: `android-gate.mjs <N> --skip-negative --upgrade <N+1>` on the
+`medium_phone` AVD, WebView 133.0.6943.137. Exit 0.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Positive control before the update | ✅ | On versionCode 101, a fresh launch shows the certificate as remembered (label + Forget) and offers "Use saved signature" |
+| Update installs in place | ✅ | `adb install -r` over the running app; `dumpsys package` reads versionCode 102 afterwards |
+| Remembered items survive | ✅ | On 102, "Use saved signature" is offered and the certificate sheet shows the remembered `e2e-cert.p12` with Forget |
+| They still sign | ✅ | Signed with only the remembered items (the log shows no `signature.png` or `.p12` pick after the update); `validate_pdf.py`: integrity and policy pass |
+
+The case is `--upgrade <apk>` in `scripts/android-gate.mjs`, so it can be rerun on any later pair.
+What it doesn't cover: an update signed with the **release** key (T039) and an update between two
+published releases. Both need the first release.

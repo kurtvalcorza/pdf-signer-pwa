@@ -92,6 +92,7 @@ more.
 ## Q10 — Verify before installing (US5)
 
 Following `docs/android.md`: `sha256sum -c SHA256SUMS`, `gh attestation verify
-pdf-signer-<version>.apk --repo kurtvalcorza/pdf-signer-pwa`, and `apksigner verify --print-certs`
+pdf-signer-<version>.apk --repo kurtvalcorza/pdf-signer-pwa --signer-workflow
+kurtvalcorza/pdf-signer-pwa/.github/workflows/release-desktop.yml --source-digest <commit>`, and `apksigner verify --print-certs`
 → the fingerprint equals `android/SIGNING_FINGERPRINT`. Under 5 minutes (SC-005). Installing the
 next release over this one keeps remembered items (US5 AS2, SC-007).

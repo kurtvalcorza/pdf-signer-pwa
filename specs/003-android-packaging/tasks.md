@@ -215,8 +215,10 @@ T049 deletes it.
   - runs `scripts/android-gate.mjs` with `--network-on`, `--backup` and `--large`;
   - computes `SHA256SUMS-Android` and runs `actions/attest-build-provenance`;
   - uploads the APK and its checksum.
+  - **Status 2026-11-08: written, not run** (needs T039–T041 and a tag). As built, beyond the list above: the job runs only on `v*` tags (the environment's own rule); it fails if the tag isn't `v<package.json version>`; build-tools are pinned to 36.1.0; `--v4-signing-enabled false` (apksigner otherwise writes a stray `.idsig`, found by running the sign step with the scratch test key); the WebView assertion and the gate run from `scripts/android-release-gate.sh`, because the emulator action runs each `script` line in its own shell. The sign and delete steps ran verbatim with the test key: signed v2 + v3, password never in the output, keystore gone after the delete step. Without `android/SIGNING_FINGERPRINT` the static check fails closed (C3, exit 1). `--camera` is not in the release flag set: US4 rests on T038 (local) unless Kurt adds it.
 - [ ] T043 [US5] In `.github/workflows/release-desktop.yml`, make `publish` `needs: [build, android]`. Merge `SHA256SUMS-Android` into the single `SHA256SUMS` through the existing awk step (no spaces in the APK name), attach the APK, and add `docs/android.md` needles (`does not update itself`, `apksigner verify --print-certs`, `gh attestation verify`, `no network permission`) to the docs check
-- [ ] T044 [US5] Create `docs/android.md` covering:
+  - **Status 2026-11-08: written, not run.** Also added for FR-016 ("the app and its release notes"), which this task had missed: the release body is `release-notes.md`, docs/desktop.md followed by docs/android.md, with the one repository-relative link made absolute at the tag. The disclosure and assemble steps ran verbatim on fake Windows, Linux and Android artifacts: all needles found, the merged `SHA256SUMS` verifies all three names, and the notes carry the Android section.
+- [X] T044 [US5] Create `docs/android.md` covering:
   - install from outside the store and the platform warning;
   - verification: `sha256sum -c SHA256SUMS`, `gh attestation verify pdf-signer-<version>.apk --repo kurtvalcorza/pdf-signer-pwa`, and `apksigner verify --print-certs` compared with `android/SIGNING_FINGERPRINT`;
   - the FR-016 disclosures: outside the store, never updates itself, engine depends on the device, hard minimum WebView 119, validated floor from `android/VALIDATED_WEBVIEW`;
@@ -226,7 +228,8 @@ T049 deletes it.
   - why an install over a differently signed package fails and what removing the old app deletes.
 
   Link it from `README.md`.
-- [ ] T045 [US5] Verify SC-007 locally: build versionCode N and N+1 with the throwaway test key, install N, opt in to remembering a certificate, install N+1 over it with `adb install -r`, and confirm the remembered certificate is still offered. Record in `research.md`
+- [X] T045 [US5] Verify SC-007 locally: build versionCode N and N+1 with the throwaway test key, install N, opt in to remembering a certificate, install N+1 over it with `adb install -r`, and confirm the remembered certificate is still offered. Record in `research.md`
+  - **Status 2026-11-08: passed** as the gate's new `--upgrade <apk>` case (versionCode 101 → 102, certificate and signature both kept, and signing with only them validates). research.md "SC-007 in-place update".
 
 **Checkpoint**: US5 is done when a tag (Kurt's yes) produces a release whose APK passes Q10.
 
@@ -234,14 +237,17 @@ T049 deletes it.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T046 Add an `android` job to `.github/workflows/ci.yml` for pull requests:
+- [X] T046 Add an `android` job to `.github/workflows/ci.yml` for pull requests:
   - `npm ci && npm run build`;
   - `./gradlew verifyDependencyAllowlist testDebugUnitTest assembleRelease` (unsigned);
   - `node scripts/android-check-apk.mjs` for C1, C2 and C4–C7, plus C9 with `--base origin/main`;
   - no secrets and no environment (C9 "run in CI on PRs, not only on release").
-- [ ] T047 [P] Update `CLAUDE.md` (SPECKIT block: 003 status implemented, the spike removed) and `README.md` (Android as the third distribution, linking `docs/android.md`)
-- [ ] T048 [P] Run `/speckit-analyze` across spec.md, plan.md and tasks.md, and fix any claim that drifted (the 002 lesson: grep the whole repository for a corrected claim)
-- [ ] T049 Delete `spike-android/` and remove its line from `.git/info/exclude`. This is permanent: the folder is git-excluded, so there's no undo. Do it only after T001–T048 are done and Kurt confirms. Confirm first that no file outside it references `spike-android/` except the historical notes in research.md and tasks.md
+  - **Status 2026-11-08: written; not yet run on GitHub** (the branch is local). C9 gets `--base $(git merge-base HEAD origin/<target>)`, so a main that moved on doesn't show up as shell changes. The same check command passes locally on the unsigned APK. Found on the way: `android/gradlew` was tracked as 100644, so `./gradlew` would fail on Linux; now 100755.
+- [X] T047 [P] Update `CLAUDE.md` (SPECKIT block: 003 status implemented, the spike removed) and `README.md` (Android as the third distribution, linking `docs/android.md`)
+  - **Status 2026-11-08:** README done. The SPECKIT block says what is true now (US1–US4 implemented and gated locally, release pending, spike still present), not "implemented, spike removed": T049 makes that final edit.
+- [X] T048 [P] Run `/speckit-analyze` across spec.md, plan.md and tasks.md, and fix any claim that drifted (the 002 lesson: grep the whole repository for a corrected claim)
+  - **Status 2026-11-08:** fixed FR-021 and its clarification (Environment, not repository, secret), a D2D behaviour claim in docs/android.md that outran Q9, quickstart Q10's unpinned attestation command, and the T042/T043/T047 texts. Left open: SC-001 (60 s on a mid-range phone) has no measuring task; `--camera` isn't in the release gate.
+- [ ] T049 Delete `spike-android/` and remove its line from `.git/info/exclude`, and update CLAUDE.md's SPECKIT block to drop the spike line. This is permanent: the folder is git-excluded, so there's no undo. Do it only after T001–T048 are done and Kurt confirms. Confirm first that no file outside it references `spike-android/` except the historical notes in research.md and tasks.md
 
 ---
 

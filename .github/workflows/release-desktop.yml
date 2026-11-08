@@ -1,5 +1,7 @@
 # US4 — build, gate, and publish the portable desktop artifacts (Windows portable + Linux AppImage)
 # from ONE commit, with checksums + build-provenance attestation. Leaves ci.yml untouched (SC-008).
+# Feature 003 adds the `android` job: the signed APK from the same commit, gated on an emulator, in
+# the same SHA256SUMS and release (FR-019, FR-020).
 #
 # The release gate is authoritative in contracts/release-artifacts.md § Release gate; this workflow
 # implements it. Any platform's gate red -> nothing publishes (SC-002): fail-fast matrix + the publish
@@ -163,8 +165,126 @@ jobs:
             release/SHA256SUMS-${{ runner.os }}
           if-no-files-found: error
 
+  # Feature 003 (T042): the Android APK, from the same commit. Signed here and nowhere else: the key
+  # lives in the `android-release` environment (R12), whose deployment rule allows `v*` tags only,
+  # so a run from any other ref skips this job instead of failing on the environment.
+  android:
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: android-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # provenance attestation (Sigstore OIDC)
+      attestations: write # provenance attestation record
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # C9 diffs the shared paths against the merge-base with main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: pip install --require-hashes -r scripts/requirements-verify.txt
+      - run: npm ci
+      - name: Web build (copied into the APK unchanged)
+        run: npm run build
+
+      - name: Version and tag agree (FR-019)
+        id: version
+        run: |
+          set -euo pipefail
+          V=$(node -p "require('./package.json').version")
+          if [ "refs/tags/v$V" != "$GITHUB_REF" ]; then
+            echo "::error::tag $GITHUB_REF does not match package.json version $V"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Gradle (allow-list C2, unit tests, unsigned release APK)
+        run: node scripts/build-android.mjs verifyDependencyAllowlist testDebugUnitTest assembleRelease
+
+      - name: Build tools (pinned to the version the gate was validated with)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.1.0" > /dev/null
+
+      # The keystore exists only in $RUNNER_TEMP, only for this step and the next, and the passwords
+      # reach apksigner as environment variables (env:), never as arguments or in the log.
+      - name: Sign (v2 + v3)
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+          BT="$ANDROID_HOME/build-tools/36.1.0"
+          KS="$RUNNER_TEMP/release.p12"
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$KS"
+          mkdir -p out
+          "$BT/zipalign" -f -p 4 android/app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$KS" --ks-type PKCS12 --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+            --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true \
+            --v4-signing-enabled false \
+            --out "out/pdf-signer-$VERSION.apk" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify "out/pdf-signer-$VERSION.apk"
+      - name: Delete the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.p12" "$RUNNER_TEMP/aligned.apk"
+
+      # C1, C3 (the certificate must match the committed android/SIGNING_FINGERPRINT), C4-C7, C9.
+      - name: Static APK checks on the signed APK
+        run: node scripts/android-check-apk.mjs "out/pdf-signer-${{ steps.version.outputs.version }}.apk" --fingerprint android/SIGNING_FINGERPRINT
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Per-distribution gate (Principle V) on the SIGNED APK that is published. The wrapper first
+      # asserts the emulator's WebView major equals android/VALIDATED_WEBVIEW. One script line:
+      # this action runs each line of `script` as a separate shell.
+      - name: Emulator gate (C8, C10-C12, US1-US3, large files)
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          ram-size: 2048M
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: bash scripts/android-release-gate.sh "out/pdf-signer-${{ steps.version.outputs.version }}.apk"
+
+      - name: Checksum
+        run: |
+          cd out
+          sha256sum "pdf-signer-${{ steps.version.outputs.version }}.apk" > SHA256SUMS-Android
+          cat SHA256SUMS-Android
+      - name: Provenance attestation
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
+        with:
+          subject-path: out/pdf-signer-*.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android
+          path: |
+            out/pdf-signer-*.apk
+            out/SHA256SUMS-Android
+          if-no-files-found: error
+
   publish:
-    needs: build # only runs if BOTH build legs succeeded — no partial release (SC-002)
+    # Only runs if BOTH desktop legs AND the Android job succeeded — no partial release (SC-002).
+    needs: [build, android]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -184,6 +304,12 @@ jobs:
           for needle in "SmartScreen" "does not update itself" "gh attestation verify" "appimage-extract-and-run" "no user content remains"; do
             grep -qiF "$needle" "$D" || { echo "MISSING disclosure in $D: $needle"; exit 1; }
           done
+          # Feature 003, FR-016/FR-018: outside the store, no self-update, how to verify, what the
+          # missing network permission does and doesn't cover.
+          A=docs/android.md
+          for needle in "does not update itself" "apksigner verify --print-certs" "gh attestation verify" "no network permission"; do
+            grep -qiF "$needle" "$A" || { echo "MISSING disclosure in $A: $needle"; exit 1; }
+          done
           echo "All required disclosures present."
       # Merge the per-platform checksums into ONE SHA256SUMS (what docs/desktop.md tells users to
       # `sha256sum -c`), and stage the artifacts under unique names for the release.
@@ -195,7 +321,7 @@ jobs:
           # the published SHA256SUMS lists files that do not exist and `sha256sum -c` fails.
           cat dist-artifacts/**/SHA256SUMS-* |
             awk '{ hash = $1; sub(/^[0-9a-f]+ +\*?/, ""); gsub(/ /, "."); print hash "  " $0 }' > out/SHA256SUMS
-          find dist-artifacts -type f \( -name '*.exe' -o -name '*.AppImage' \) -print0 |
+          find dist-artifacts -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.apk' \) -print0 |
             while IFS= read -r -d '' file; do
               name=$(basename "$file")
               cp "$file" "out/${name// /.}"
@@ -203,9 +329,17 @@ jobs:
           echo "--- SHA256SUMS ---"; cat out/SHA256SUMS
           # The published checksums must verify against the files actually being uploaded.
           ( cd out && sha256sum -c SHA256SUMS )
+          # FR-016: the release notes carry the Android disclosures too. Outside out/, so it is not
+          # uploaded as an asset. The one repository-relative link is made absolute at this tag.
+          {
+            cat docs/desktop.md
+            printf '\n---\n\n'
+            sed "s#](\.\./android/#](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/android/#g" docs/android.md
+          } > release-notes.md
+          if grep -n '](\.\./' release-notes.md; then echo "relative link left in release notes"; exit 1; fi
       - name: Publish release with artifacts + checksums
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: out/*
-          body_path: docs/desktop.md
+          body_path: release-notes.md
           fail_on_unmatched_files: true

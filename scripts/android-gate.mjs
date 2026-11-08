@@ -8,6 +8,7 @@
  *
  *   node scripts/android-gate.mjs <apk> [--adb <path>] [--network-on] [--large | --large-mb <n>]
  *                                 [--skip-negative] [--backup] [--camera]
+ *                                 [--upgrade <apk-of-the-next-version>]
  *
  * Cases:
  *   sign            open sample.pdf, place signature.png, sign with e2e-cert.p12, save
@@ -24,6 +25,8 @@
  *                   with a positive control), Forget removes it, and uninstall leaves nothing
  *   --camera        US4: photo → clean up → sign → validate, the photo is in the PDF; backing out
  *                   leaves the picker working with no prompt; a 48 MP image is refused
+ *   --upgrade <apk> US5 AS2, SC-007: remember a certificate and a signature, install <apk> over
+ *                   the app (install -r, same key, higher versionCode), and sign with both
  *
  * Driver rules from the spike (S9): dump twice after a launch, and tap only from a fresh dump,
  * by resource id where one exists (android:id/button1 = SAVE).
@@ -69,11 +72,17 @@ const SKIP_NEGATIVE = flag('--skip-negative');
 const NETWORK_ON = flag('--network-on');
 const BACKUP = flag('--backup');
 const CAMERA = flag('--camera');
+const UPGRADE_OPT = option('--upgrade');
+const UPGRADE = UPGRADE_OPT && resolve(UPGRADE_OPT);
+if (UPGRADE && !existsSync(UPGRADE)) {
+  console.error(`--upgrade: no such file ${UPGRADE}`);
+  process.exit(2);
+}
 const ADB = option('--adb') || process.env.ADB || 'adb';
 const APK = argv[0] && resolve(argv[0]);
 if (!APK || !existsSync(APK)) {
   console.error(
-    'usage: node scripts/android-gate.mjs <signed-release.apk> [--adb <path>] [--network-on] [--large | --large-mb <n>] [--skip-negative] [--backup] [--camera]',
+    'usage: node scripts/android-gate.mjs <signed-release.apk> [--adb <path>] [--network-on] [--large | --large-mb <n>] [--skip-negative] [--backup] [--camera] [--upgrade <next.apk>]',
   );
   process.exit(2);
 }
@@ -266,6 +275,11 @@ async function fillCertificate(password) {
     await pickFile('e2e-cert.p12');
     await waitFor('the chosen certificate', chosen, 20000);
   }
+  await typePassword(password);
+}
+
+/** Types into the certificate sheet's password field (the password is never remembered). */
+async function typePassword(password) {
   const field = await waitFor('the password field', (ns) => ns.find((n) => n.cls === 'EditText'));
   shell(`input tap ${field.x} ${field.y}`);
   await sleep(500);
@@ -639,6 +653,59 @@ async function caseBackup() {
   console.log('    uninstall + reinstall: nothing remembered');
 }
 
+function versionCode() {
+  const m = /versionCode=(\d+)/.exec(shell(`dumpsys package ${PKG}`));
+  if (!m) fail('could not read the installed versionCode');
+  return Number(m[1]);
+}
+
+/** On a fresh launch with sample.pdf open: is "Use saved signature" offered? */
+async function savedSignatureOnFreshLaunch() {
+  await launchFresh();
+  await openPdf('sample.pdf');
+  const hit = await waitFor('a saved signature', find(/Use saved signature$/), 8000).catch(() => false);
+  return !!hit;
+}
+
+async function caseUpgrade() {
+  console.log('▶ in-place update keeps remembered items (US5 AS2, SC-007)');
+  const from = versionCode();
+  const first = await signAndSave('sample.pdf', { remember: true });
+  shell("rm -f '" + DEVICE_DIR + '/' + first.name + "'");
+  await launchFresh();
+  await openPdf('sample.pdf');
+  await placeSignature({ page2: false });
+  const box = await waitFor('the Remember signature checkbox', (ns) =>
+    ns.find((n) => n.cls === 'CheckBox' && /^Remember this signature on this device/.test(n.text)),
+  );
+  shell(`input tap ${box.x} ${box.y}`);
+  await sleep(800);
+  console.log('    tick Remember this signature');
+  // Positive controls: both are remembered before the update, so the checks after it mean something.
+  if (!(await rememberedOnFreshLaunch())) fail('the certificate was not remembered before the update');
+  if (!(await savedSignatureOnFreshLaunch())) fail('the signature was not remembered before the update');
+  console.log(`    versionCode ${from}: certificate and signature remembered`);
+
+  adb('install', '-r', UPGRADE);
+  const to = versionCode();
+  if (to <= from) fail(`the update did not raise versionCode (${from} → ${to})`);
+  if (!(await savedSignatureOnFreshLaunch())) fail('the saved signature was lost by the update');
+  // Sign with only what was remembered: the saved image, and the remembered certificate (no picker).
+  await tap('Use saved signature', /Use saved signature$/);
+  await waitFor('the placed signature', find(/^Remove signature$/), 20000);
+  await tap('Sign with a digital certificate', /^Sign with a digital certificate/);
+  const kept = await waitFor(
+    'the remembered certificate',
+    (ns) => ns.some((n) => /^Forget/.test(n.text)) && ns.some((n) => /e2e-cert\.p12/.test(n.text)),
+    8000,
+  ).catch(() => false);
+  if (!kept) fail('the remembered certificate was lost by the update');
+  await typePassword(PASSWORD);
+  const signed = await signAndSaveOpen('sample.pdf');
+  validate([signed.local]);
+  console.log(`    versionCode ${to}: both still remembered, and signing with them validates`);
+}
+
 function decodePng(buf) {
   if (buf.readUInt32BE(0) !== 0x89504e47) fail('screencap did not return a PNG');
   let p = 8;
@@ -841,6 +908,7 @@ async function main() {
   }
   if (CAMERA) await caseCamera();
   if (BACKUP) await caseBackup();
+  if (UPGRADE) await caseUpgrade();
   if (LARGE) await caseLarge();
 }
 
