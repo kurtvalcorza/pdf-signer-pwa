@@ -383,3 +383,38 @@ model and R5/R13:
 4. **S9** goes into `android-gate.mjs` as fixed rules. The remaining untested items (100 MB save,
    cancel, camera, certified refusal, backup, engine floor) become gate and quickstart tasks
    (Q3–Q8), not spike work.
+
+## US1 gate, local (T027, run 2026-11-08)
+
+`scripts/android-gate.mjs` against the production shell in `android/`, built with
+`npm run build:android` and signed with a **throwaway local test key** created in the session
+scratchpad (`CN=PDF Signer LOCAL TEST KEY - not for release`; never the release key, never in the
+repository). The APK under test had SHA-256 `E92FF7B9…1369511`. AVD `medium_phone`, API 36
+`google_apis_playstore` x86_64, 2 GB RAM, WebView 133.0.6943.137, with airplane mode on before
+installing.
+
+| Case | Result | Evidence |
+|---|---|---|
+| Static (pre-C1/C4) | ✅ | `aapt2 dump permissions`: only `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, declared at signature level. The launcher is the only exported component (`ProfileInstallReceiver` removed, both providers `exported=false`). `versionCode=101`, `versionName=0.1.1`. `assets/www` holds all 10 `dist/` files |
+| Unit tests | ✅ 30/30 | `PathRulesTest` 8, `SaveRulesTest` 18, `AcceptRulesTest` 4 (`testDebugUnitTest`; AGP 9 creates no release unit-test task) |
+| C2 | ✅ | `verifyDependencyAllowlist` resolves 36 coordinates, all allow-listed; `verification-metadata.xml` covers 350 components, and a `--rerun-tasks` release build passes it |
+| T016 smoke | ✅ | Offline first launch shows the start screen. The only miss is `favicon.ico` → 404, with no 403s. `Service Worker/CacheStorage` holds 1,440 KB (checked on a debug build of the same code, since `run-as` refuses the release build) |
+| C10 sign + counter-sign | ✅ PASS | `sample-signed.pdf` (11,764 B): integrity, policy, `ModificationLevel.NONE`. `sample-signed-signed.pdf` (29,861 B): sig[0] `FORM_FILLING`, sig[1] `NONE`; trust=False because the e2e certificate is self-signed |
+| AS4 wrong password | ✅ | "Incorrect certificate password." shown; no `SAVE begin` in the log and no save dialog |
+| AS5 cancel | ✅ | `SAVE cancelled`; no "Saved"; no new file in `Download/` |
+| AS3 / C11 certified | ✅ | `certified-p1.pdf` shows the shared "cannot be signed here" message; certificate signing isn't offered |
+| R7 `--large-mb 25` | ✅ PASS | 26,224,591 B in, 26,234,451 B saved through `CREATE_DOCUMENT`, byte count matches the shell log, validator PASS |
+| R7 `--large-mb 50` and `95` | ❌ renderer OOM | The WebView renderer dies while the **shared engine signs** (before any save message): `Renderer process … crash detected (code 5)`. 95 MiB also fails on the same AVD at 4 GB RAM (MemTotal 4,013,808 kB), so it's a renderer limit, not device RAM |
+
+**Finding G1 (shell, fixed)**: before the fix, a renderer crash took the whole app down
+(`crash wasn't handled by all associated webviews`), which breaks the spec edge case "they must fail
+with a message, not a crash". `MainActivity.onRenderProcessGone` now drops the dead WebView,
+recreates the activity and shows "The app ran out of memory … Nothing was saved." The gate reports
+that state separately from a crash.
+
+**Finding G2 (open, owner decision)**: on this AVD the shared signing engine can't sign a PDF near
+the 100 MB limit inside the WebView renderer; the ceiling is between 25 and 50 MiB. No test in this
+repository has signed a near-100 MB PDF on any distribution (`sec-limits-render.spec.ts` checks only
+that oversized inputs are refused), so this may not be Android-specific. Fixing it means changing the
+shared engine's memory use, which SC-006 keeps out of this feature. T026's "~100 MB" acceptance is
+therefore not met; the gate's `--large` defaults to 95 MiB and fails with the reason.

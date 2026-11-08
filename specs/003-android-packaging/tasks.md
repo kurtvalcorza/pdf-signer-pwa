@@ -40,15 +40,15 @@ T049 deletes it.
 
 **Purpose**: the `android/` Gradle project, pinned and allow-listed, building an APK that contains `dist/`.
 
-- [ ] T001 Create the Gradle project in `android/`: `settings.gradle.kts` (the spike's repository block, `rootProject.name = "pdf-signer-android"`, `include(":app")`), root `build.gradle.kts` (`android-application` plugin, `apply false`), `gradle.properties` (from the spike), and the wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/*`) copied from `spike-android/`, keeping `distributionSha256Sum`
-- [ ] T002 Create `android/gradle/libs.versions.toml` pinning exactly: AGP `9.0.1`, `androidx.core:core` `1.18.0`, `androidx.activity:activity` `1.13.0`, `androidx.webkit:webkit` `1.18.0`, `junit:junit` `4.13.2` (test only). No other library
-- [ ] T003 Create `android/app/build.gradle.kts`: `namespace` and `applicationId` = `io.github.kurtvalcorza.pdfsigner` (permanent, R15); `compileSdk = 36`, `targetSdk = 36`, `minSdk = 26`; `versionName` read from `../package.json` `version`; `versionCode = major*10000 + minor*100 + patch` (0.1.1 → 101, data model: "strictly increasing across releases"); Java/Kotlin toolchain 21; `buildConfig = true` with fields `WEBVIEW_HARD_MIN = 119`, `WEBVIEW_VALIDATED_FLOOR` (read from `android/VALIDATED_WEBVIEW`) and `SOURCE_COMMIT` (env `GITHUB_SHA`, else `git rev-parse HEAD`); `isMinifyEnabled = false`; dependencies `core`, `activity`, `webkit`, plus `testImplementation(junit)`
-- [ ] T004 In `android/app/build.gradle.kts`, register a task that copies `../dist/**` into a generated assets directory under `www/`, and adds it with `androidComponents.onVariants { it.sources.assets?.addGeneratedSourceDirectory(...) }`. The build must fail with a clear message if `../dist/index.html` is missing. `dist/` is never committed into `android/`
-- [ ] T005 [P] Create `android/VALIDATED_WEBVIEW` containing the single line `133`, the WebView major of the gate image (spike S10, R11). T042 asserts it in CI
-- [ ] T006 [P] Add `android/.gradle/`, `android/build/`, `android/app/build/`, `android/local.properties` to `.gitignore`
-- [ ] T007 [P] Create `android/dependency-allowlist.txt` with one Maven coordinate per line (`group:artifact:version`), listing every artifact `./gradlew :app:dependencies --configuration releaseRuntimeClasspath` resolves today. Add a `verifyDependencyAllowlist` task in `android/app/build.gradle.kts`, run before `preBuild`, that fails on any resolved coordinate not in the file (C2, R5: an allow-list, not a deny-list)
-- [ ] T008 Generate `android/gradle/verification-metadata.xml` with `./gradlew --write-verification-metadata sha256 :app:assembleRelease`, and confirm a second build passes verification (C2)
-- [ ] T009 Add `scripts/build-android.mjs` (runs `gradlew.bat` on Windows, `./gradlew` elsewhere, in `android/`, with `shell:false` and discrete argv, as in `scripts/verify-signatures.mjs`), plus a `build:android` script in `package.json`: `npm run build && node scripts/build-android.mjs assembleRelease`
+- [X] T001 Create the Gradle project in `android/`: `settings.gradle.kts` (the spike's repository block, `rootProject.name = "pdf-signer-android"`, `include(":app")`), root `build.gradle.kts` (`android-application` plugin, `apply false`), `gradle.properties` (from the spike), and the wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/*`) copied from `spike-android/`, keeping `distributionSha256Sum`
+- [X] T002 Create `android/gradle/libs.versions.toml` pinning exactly: AGP `9.0.1`, `androidx.core:core` `1.18.0`, `androidx.activity:activity` `1.13.0`, `androidx.webkit:webkit` `1.18.0`, `junit:junit` `4.13.2` (test only). No other library
+- [X] T003 Create `android/app/build.gradle.kts`: `namespace` and `applicationId` = `io.github.kurtvalcorza.pdfsigner` (permanent, R15); `compileSdk = 36`, `targetSdk = 36`, `minSdk = 26`; `versionName` read from `../package.json` `version`; `versionCode = major*10000 + minor*100 + patch` (0.1.1 → 101, data model: "strictly increasing across releases"); Java/Kotlin toolchain 21; `buildConfig = true` with fields `WEBVIEW_HARD_MIN = 119`, `WEBVIEW_VALIDATED_FLOOR` (read from `android/VALIDATED_WEBVIEW`) and `SOURCE_COMMIT` (env `GITHUB_SHA`, else `git rev-parse HEAD`); `isMinifyEnabled = false`; dependencies `core`, `activity`, `webkit`, plus `testImplementation(junit)`
+- [X] T004 In `android/app/build.gradle.kts`, register a task that copies `../dist/**` into a generated assets directory under `www/`, and adds it with `androidComponents.onVariants { it.sources.assets?.addGeneratedSourceDirectory(...) }`. The build must fail with a clear message if `../dist/index.html` is missing. `dist/` is never committed into `android/`
+- [X] T005 [P] Create `android/VALIDATED_WEBVIEW` containing the single line `133`, the WebView major of the gate image (spike S10, R11). T042 asserts it in CI
+- [X] T006 [P] Add `android/.gradle/`, `android/build/`, `android/app/build/`, `android/local.properties` to `.gitignore`
+- [X] T007 [P] Create `android/dependency-allowlist.txt` with one Maven coordinate per line (`group:artifact:version`), listing every artifact `./gradlew :app:dependencies --configuration releaseRuntimeClasspath` resolves today. Add a `verifyDependencyAllowlist` task in `android/app/build.gradle.kts`, run before `preBuild`, that fails on any resolved coordinate not in the file (C2, R5: an allow-list, not a deny-list)
+- [X] T008 Generate `android/gradle/verification-metadata.xml` with `./gradlew --write-verification-metadata sha256 :app:assembleRelease`, and confirm a second build passes verification (C2)
+- [X] T009 Add `scripts/build-android.mjs` (runs `gradlew.bat` on Windows, `./gradlew` elsewhere, in `android/`, with `shell:false` and discrete argv, as in `scripts/verify-signatures.mjs`), plus a `build:android` script in `package.json`: `npm run build && node scripts/build-android.mjs assembleRelease`
 
 **Checkpoint**: `npm run build:android` produces an unsigned release APK containing `assets/www/index.html`.
 
@@ -58,22 +58,22 @@ T049 deletes it.
 
 **Purpose**: a shell that loads the unchanged app from the package, offline, with the manifest guarantees. Every story depends on it.
 
-- [ ] T010 Create `android/app/src/main/AndroidManifest.xml`, porting the spike's manifest plus spike S3:
+- [X] T010 Create `android/app/src/main/AndroidManifest.xml`, porting the spike's manifest plus spike S3:
   - `INTERNET` and `ACCESS_NETWORK_STATE` with `tools:node="remove"`;
   - `<receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" tools:node="remove"/>`;
   - `allowBackup="false"`, `fullBackupContent="@xml/backup_rules"`, `dataExtractionRules="@xml/data_extraction_rules"`;
   - meta-data `android.webkit.WebView.MetricsOptOut = true` and `android.webkit.WebView.EnableSafeBrowsing = false`;
   - the launcher `MainActivity` as the only exported component;
   - a `FileProvider` with authority `io.github.kurtvalcorza.pdfsigner.capture`, `exported="false"`, `grantUriPermissions="true"`.
-- [ ] T011 [P] Create `android/app/src/main/res/xml/data_extraction_rules.xml` (every domain excluded in **both** `<cloud-backup>` and `<device-transfer>`, R10), `backup_rules.xml` (every domain excluded) and `file_paths.xml` (`<cache-path name="capture" path="capture/"/>` only), ported from the spike. Add `res/values/strings.xml` (`app_name` = "PDF Signer"), `themes.xml` and the launcher icons from the spike
-- [ ] T012 [P] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/PathRules.kt` (pure Kotlin, no Android imports). It provides `resolve(path): Resolved`, returning either `Asset(assetPath = "www/<p>", mime, encoding)` or `NotFound`:
+- [X] T011 [P] Create `android/app/src/main/res/xml/data_extraction_rules.xml` (every domain excluded in **both** `<cloud-backup>` and `<device-transfer>`, R10), `backup_rules.xml` (every domain excluded) and `file_paths.xml` (`<cache-path name="capture" path="capture/"/>` only), ported from the spike. Add `res/values/strings.xml` (`app_name` = "PDF Signer"), `themes.xml` and the launcher icons from the spike
+- [X] T012 [P] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/PathRules.kt` (pure Kotlin, no Android imports). It provides `resolve(path): Resolved`, returning either `Asset(assetPath = "www/<p>", mime, encoding)` or `NotFound`:
   - `""` maps to `index.html`;
   - leading `/`, `..`, `\`, `%` and empty segments return `NotFound`;
   - MIME comes from contract §1's explicit map, with `.js` and `.mjs` as `text/javascript`, `.wasm` as `application/wasm`, and anything unknown as `application/octet-stream`;
   - `headers()` always returns an empty map.
-- [ ] T013 [P] Create `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/PathRulesTest.kt`: root → index.html; traversal, encoded and absolute paths → NotFound; `.mjs` → `text/javascript`; unknown → octet-stream; `headers()` is empty (the C7 header assertion: no `Content-Security-Policy`, R3)
-- [ ] T014 Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/AppAssetHandler.kt`: a `WebViewAssetLoader.PathHandler` at `/` on `appassets.androidplatform.net` that uses `PathRules`. It returns an explicit 404 `WebResourceResponse` and **never `null`** (R2). Also an `intercept(request)` used by both the page client and the `ServiceWorkerClientCompat`: off-origin requests get 403 and a log line, never a fall-through (R2, R4, spike S4–S5)
-- [ ] T015 Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/MainActivity.kt`, a `ComponentActivity` with contract §6's invariants:
+- [X] T013 [P] Create `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/PathRulesTest.kt`: root → index.html; traversal, encoded and absolute paths → NotFound; `.mjs` → `text/javascript`; unknown → octet-stream; `headers()` is empty (the C7 header assertion: no `Content-Security-Policy`, R3)
+- [X] T014 Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/AppAssetHandler.kt`: a `WebViewAssetLoader.PathHandler` at `/` on `appassets.androidplatform.net` that uses `PathRules`. It returns an explicit 404 `WebResourceResponse` and **never `null`** (R2). Also an `intercept(request)` used by both the page client and the `ServiceWorkerClientCompat`: off-origin requests get 403 and a log line, never a fall-through (R2, R4, spike S4–S5)
+- [X] T015 Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/MainActivity.kt`, a `ComponentActivity` with contract §6's invariants:
   - `FLAG_SECURE` set before any content, and `setRecentsScreenshotEnabled(false)` on API 33+ (R9, FR-023);
   - WebView settings: JavaScript and DOM storage on; `allowFileAccess`, `allowContentAccess`, multiple windows and Safe Browsing off;
   - `setWebContentsDebuggingEnabled` only when the app is debuggable;
@@ -82,7 +82,7 @@ T049 deletes it.
   - `cache/capture/` cleared on launch;
   - the SW client from T014 registered when `SERVICE_WORKER_BASIC_USAGE` and `SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST` are supported;
   - loads `https://appassets.androidplatform.net/`.
-- [ ] T016 Build, install on the `medium_phone` AVD with airplane mode on before installing, and confirm from logcat and `uiautomator dump` that the shared app's start screen appears, the only miss is `favicon.ico` → 404, and `app_webview/Default/Service Worker/CacheStorage` is non-empty (Q1 baseline, spike S4–S5). Run the emulator through the 8.3 short path with `-gpu swiftshader_indirect` (R14)
+- [X] T016 Build, install on the `medium_phone` AVD with airplane mode on before installing, and confirm from logcat and `uiautomator dump` that the shared app's start screen appears, the only miss is `favicon.ico` → 404, and `app_webview/Default/Service Worker/CacheStorage` is non-empty (Q1 baseline, spike S4–S5). Run the emulator through the 8.3 short path with `-gpu swiftshader_indirect` (R14)
 
 **Checkpoint**: the unchanged app runs from the APK offline. Stories can start.
 
@@ -94,37 +94,38 @@ T049 deletes it.
 
 **Independent Test**: Q3 + Q4. The gate signs and counter-signs on the signed release APK with airplane mode on from first launch, and `scripts/validate_pdf.py` passes both files on integrity and modification policy.
 
-- [ ] T017 [P] [US1] Create `android/app/src/main/assets/shell/shell.js`, porting the spike's script and doing exactly contract §2 items 1–2: blob registry, plus download interception on `HTMLAnchorElement.prototype.click` for `download` + `blob:` + registered anchors only. It sends `save-begin` and then one ArrayBuffer, falling back to base64 chunks of ≤ 1 MB plus `save-end`. It touches no `fetch`, `XMLHttpRequest`, `WebSocket`, worker, storage or `#root`
-- [ ] T018 [P] [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/SaveRules.kt` (pure Kotlin), applying data-model "Save request" verbatim:
+- [X] T017 [P] [US1] Create `android/app/src/main/assets/shell/shell.js`, porting the spike's script and doing exactly contract §2 items 1–2: blob registry, plus download interception on `HTMLAnchorElement.prototype.click` for `download` + `blob:` + registered anchors only. It sends `save-begin` and then one ArrayBuffer, falling back to base64 chunks of ≤ 1 MB plus `save-end`. It touches no `fetch`, `XMLHttpRequest`, `WebSocket`, worker, storage or `#root`
+- [X] T018 [P] [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/SaveRules.kt` (pure Kotlin), applying data-model "Save request" verbatim:
   - `name`: "strips path separators and control characters, and keeps the extension";
   - `mime`: "one of `application/pdf`, `application/x-pkcs12`, `application/x-x509-ca-cert`, `application/x-pem-file`, else `application/octet-stream`";
   - `size`: "MUST be ≤ 100 MB + 1 MB headroom, or it is refused before the save dialog opens";
   - a state machine `RECEIVING → AWAITING_LOCATION → WRITING → SAVED`, with `CANCELLED` and `FAILED` terminal states;
   - refusal of a second `save-begin` while one is active, a size mismatch, or a malformed message.
-- [ ] T019 [P] [US1] Create `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/SaveRulesTest.kt` covering every rule and transition in T018, including `../x.pdf` → `.._x.pdf` (no separator survives), size 101 MB + 1 refused, and a second begin refused
-- [ ] T020 [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/SaveBridge.kt`:
+- [X] T019 [P] [US1] Create `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/SaveRulesTest.kt` covering every rule and transition in T018, including `../x.pdf` → `.._x.pdf` (no separator survives), size 101 MB + 1 refused, and a second begin refused
+- [X] T020 [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/SaveBridge.kt`:
   - `addWebMessageListener("pdfSignerShell", {app origin})`, dropping messages from other origins or sub-frames;
   - drives `SaveRules`, then `ACTION_CREATE_DOCUMENT` with the sanitised name and MIME, writing with `openOutputStream(uri, "wt")`;
   - on `IOException`, `DocumentsContract.deleteDocument` and a native message;
   - only SAVED shows "Saved", CANCELLED shows nothing, FAILED shows the reason;
   - bytes held in memory only and dropped on every terminal state;
   - replies `save-result` (contract §3).
-- [ ] T021 [P] [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/AcceptRules.kt` (pure Kotlin) mapping accept values to MIME types per contract §4's table: `.pdf` → `application/pdf`; `image/png`, `image/jpeg` → as given; `.p12`, `.pfx` → `application/x-pkcs12` + `application/octet-stream`; anything else → refused. Accept entries arrive both as separate items and comma-joined (spike S7). Add `AcceptRulesTest.kt` in `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/`
-- [ ] T022 [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/FileChooser.kt`: `onShowFileChooser` using `AcceptRules` and `ActivityResultContracts.OpenDocument`, single selection, and the callback called **exactly once** on every path (cancel, error, refusal → `null`). No runtime permission is requested (FR-010). The capture branch is T037
-- [ ] T023 [US1] Wire `shell.js` (`addDocumentStartJavaScript`, app origin only), `SaveBridge` and `FileChooser` into `MainActivity.kt`. Rebuild and repeat the spike's manual sign → save on the AVD as a smoke test
-- [ ] T024 [US1] Create `scripts/android-gate.mjs` implementing R13, including spike S9's driver rules: dump twice after launch, and tap only from a fresh dump, by resource id where one exists (`android:id/button1` = SAVE). The script:
+- [X] T021 [P] [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/AcceptRules.kt` (pure Kotlin) mapping accept values to MIME types per contract §4's table: `.pdf` → `application/pdf`; `image/png`, `image/jpeg` → as given; `.p12`, `.pfx` → `application/x-pkcs12` + `application/octet-stream`; anything else → refused. Accept entries arrive both as separate items and comma-joined (spike S7). Add `AcceptRulesTest.kt` in `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/`
+- [X] T022 [US1] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/FileChooser.kt`: `onShowFileChooser` using `AcceptRules` and `ActivityResultContracts.OpenDocument`, single selection, and the callback called **exactly once** on every path (cancel, error, refusal → `null`). No runtime permission is requested (FR-010). The capture branch is T037
+- [X] T023 [US1] Wire `shell.js` (`addDocumentStartJavaScript`, app origin only), `SaveBridge` and `FileChooser` into `MainActivity.kt`. Rebuild and repeat the spike's manual sign → save on the AVD as a smoke test
+- [X] T024 [US1] Create `scripts/android-gate.mjs` implementing R13, including spike S9's driver rules: dump twice after launch, and tap only from a fresh dump, by resource id where one exists (`android:id/button1` = SAVE). The script:
   - takes `<apk>` and `--adb`;
   - installs the APK and enables airplane mode before first launch;
   - pushes `tests/e2e/fixtures/sample.pdf`, `signature.png` and `e2e-cert.p12` (password `e2e-pass`) to `Download/`;
   - signs, saves, reopens the result, counter-signs on page 2 and saves again;
   - pulls both files and runs `python scripts/validate_pdf.py` on them (C10);
   - exits non-zero on any failure, printing the validator output.
-- [ ] T025 [US1] Extend `scripts/android-gate.mjs` with three cases:
+- [X] T025 [US1] Extend `scripts/android-gate.mjs` with three cases:
   - a wrong password shows the shared app's error and no save dialog opens (US1 AS4);
   - cancelling the save dialog logs nothing saved and leaves no new file in `Download/` (US1 AS5);
   - the certified fixture from `tests/signing/fixtures/policy/` (generated by `scripts/make_policy_fixtures.py`) is refused for certificate signing with the shared app's message (US1 AS3, C11).
 - [ ] T026 [US1] Extend `scripts/android-gate.mjs` with a `--large` case: generate a ~100 MB PDF in a temp directory (pdf-lib, under `LIMITS.pdfBytes`), sign it, and confirm the save completes with matching byte count and validates (R7, spike S6 untested item)
-- [ ] T027 [US1] Locally build a release APK, sign it with a **throwaway local test keystore created in the session scratchpad** (never the release key, never in the repository), run `node scripts/android-gate.mjs` against it on the AVD, and record the result in `specs/003-android-packaging/research.md` under the spike findings as "US1 gate, local"
+  - **Status 2026-11-08: implemented, acceptance not met.** `--large-mb 25` passes; 50 and 95 MiB fail because the WebView renderer runs out of memory while the shared engine signs (research.md "US1 gate, local", G2). Open for the owner's decision.
+- [X] T027 [US1] Locally build a release APK, sign it with a **throwaway local test keystore created in the session scratchpad** (never the release key, never in the repository), run `node scripts/android-gate.mjs` against it on the AVD, and record the result in `specs/003-android-packaging/research.md` under the spike findings as "US1 gate, local"
 
 **Checkpoint**: US1 is done when the gate passes C10, C11, AS4, AS5 and `--large` on a signed release APK. That's the MVP.
 
