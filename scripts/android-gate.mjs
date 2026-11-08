@@ -6,12 +6,15 @@
  * (`uiautomator dump` + `input`), which works under FLAG_SECURE and across apps (the system
  * picker and save dialog). No test APK, no debug build, no WebView DevTools.
  *
- *   node scripts/android-gate.mjs <apk> [--adb <path>] [--large] [--skip-negative]
+ *   node scripts/android-gate.mjs <apk> [--adb <path>] [--network-on] [--large | --large-mb <n>]
+ *                                 [--skip-negative]
  *
  * Cases:
  *   sign            open sample.pdf, place signature.png, sign with e2e-cert.p12, save
  *   counter-sign    open the result, place the image on page 2, sign again, save
  *   validate (C10)  scripts/validate_pdf.py on both files: integrity + modification policy
+ *   content hidden  C8: with a document open, screencap is black (FLAG_SECURE)
+ *   --network-on    C12: with airplane mode off, sign again; netstats shows no traffic for the UID
  *   wrong password  US1 AS4: the shared app's error, and no save dialog opens
  *   cancel          US1 AS5: backing out of the save dialog saves nothing
  *   certified (C11) US1 AS3: a certified "no changes" PDF is refused for certificate signing
@@ -26,6 +29,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { inflateSync } from 'node:zlib';
 import { join, resolve } from 'node:path';
 
 const PKG = 'io.github.kurtvalcorza.pdfsigner';
@@ -58,6 +62,7 @@ const LARGE = flag('--large') || LARGE_MB_OPT !== null;
 // 25 MiB until the shared engine's peak memory is reduced (research.md G2, owner decision 2026-11-08).
 const LARGE_MB = Number(LARGE_MB_OPT ?? 25);
 const SKIP_NEGATIVE = flag('--skip-negative');
+const NETWORK_ON = flag('--network-on');
 const ADB = option('--adb') || process.env.ADB || 'adb';
 const APK = argv[0] && resolve(argv[0]);
 if (!APK || !existsSync(APK)) {
@@ -365,6 +370,136 @@ async function caseCertified() {
   console.log('    refused with the shared message; certificate signing not offered');
 }
 
+/** Minimal PNG decoder for `screencap -p` output: 8-bit RGB/RGBA, non-interlaced. */
+function decodePng(buf) {
+  if (buf.readUInt32BE(0) !== 0x89504e47) fail('screencap did not return a PNG');
+  let p = 8;
+  let width = 0;
+  let height = 0;
+  let channels = 0;
+  const idat = [];
+  while (p < buf.length) {
+    const len = buf.readUInt32BE(p);
+    const type = buf.toString('latin1', p + 4, p + 8);
+    const data = buf.subarray(p + 8, p + 8 + len);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      const depth = data[8];
+      const color = data[9];
+      if (depth !== 8 || data[12] !== 0 || (color !== 2 && color !== 6)) {
+        fail(`unsupported PNG (depth ${depth}, color ${color}, interlace ${data[12]})`);
+      }
+      channels = color === 6 ? 4 : 3;
+    } else if (type === 'IDAT') idat.push(data);
+    else if (type === 'IEND') break;
+    p += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * channels;
+  const px = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) {
+    const f = raw[y * (stride + 1)];
+    const src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    const row = px.subarray(y * stride, (y + 1) * stride);
+    const up = y > 0 ? px.subarray((y - 1) * stride, y * stride) : null;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= channels ? row[i - channels] : 0;
+      const b = up ? up[i] : 0;
+      const c = up && i >= channels ? up[i - channels] : 0;
+      let v = src[i];
+      if (f === 1) v += a;
+      else if (f === 2) v += b;
+      else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) {
+        const pa = Math.abs(b - c);
+        const pb = Math.abs(a - c);
+        const pc = Math.abs(a + b - 2 * c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      row[i] = v & 0xff;
+    }
+  }
+  return { width, height, channels, px };
+}
+
+async function caseContentHidden() {
+  console.log('▶ content hidden (C8, FR-023)');
+  await launchFresh();
+  await openPdf('sample.pdf');
+  const png = execFileSync(ADB, ['exec-out', 'screencap', '-p'], { maxBuffer: 64 << 20 });
+  const img = decodePng(png);
+  // Spike S8 method: a 40 px grid over the app window, skipping the status and navigation bars.
+  const top = Math.round(img.height * 0.045);
+  const bottom = img.height - Math.round(img.height * 0.07);
+  let sampled = 0;
+  let lit = 0;
+  for (let y = top; y < bottom; y += 40) {
+    for (let x = 0; x < img.width; x += 40) {
+      const o = (y * img.width + x) * img.channels;
+      sampled++;
+      if (img.px[o] > 8 || img.px[o + 1] > 8 || img.px[o + 2] > 8) lit++;
+    }
+  }
+  console.log(
+    `    ${img.width}x${img.height}, ${sampled} samples in y ${top}..${bottom}, ${lit} non-black`,
+  );
+  if (lit) {
+    writeFileSync(join(WORK, 'screencap.png'), png);
+    fail(`screencap shows content: ${lit} of ${sampled} samples are not black`);
+  }
+}
+
+function appUid() {
+  const m = shell(`cmd package list packages -U ${PKG}`).match(
+    new RegExp(`package:${PKG.replace(/\./g, '\\.')} uid:(\\d+)`),
+  );
+  if (!m) fail('could not read the app UID');
+  return m[1];
+}
+
+/** Every netstats record for `uid` with bytes in either direction (C12). */
+function trafficFor(uid) {
+  try {
+    shell('dumpsys netstats --poll >/dev/null');
+  } catch {
+    // older builds lack --poll; the detail dump still reflects the last poll
+  }
+  const out = shell('dumpsys netstats detail');
+  const hits = [];
+  let current = null;
+  for (const line of out.split(/\r?\n/)) {
+    const key = line.match(/\buid=(-?\d+) set=(\w+) tag=(0x[0-9a-f]+)/i);
+    if (key) {
+      current = key[1] === uid ? line.trim() : null;
+      continue;
+    }
+    const b = current && line.match(/\brb=(\d+).*\btb=(\d+)/);
+    if (b && (Number(b[1]) > 0 || Number(b[2]) > 0)) hits.push(`${current} :: ${line.trim()}`);
+  }
+  return hits;
+}
+
+async function caseNetworkOn() {
+  console.log('▶ no traffic with the network on (C12, SC-003)');
+  shell('cmd connectivity airplane-mode disable');
+  try {
+    await sleep(5000);
+    const uid = appUid();
+    for (const f of deviceFiles())
+      if (/^sample-signed/.test(f)) shell(`rm -f '${DEVICE_DIR}/${f}'`);
+    const out = await signAndSave('sample.pdf');
+    validate([out.local]);
+    await sleep(3000);
+    const hits = trafficFor(uid);
+    console.log(`    app uid ${uid}: ${hits.length} traffic record(s)`);
+    for (const h of hits) console.log(`      ${h}`);
+    if (hits.length) fail(`the app UID has network traffic`);
+  } finally {
+    shell('cmd connectivity airplane-mode enable');
+  }
+}
+
 async function caseLarge() {
   console.log('▶ large PDF (R7, --large)');
   const { PDFDocument, StandardFonts } = await import('pdf-lib');
@@ -429,6 +564,8 @@ async function main() {
     if (/-signed(\s*\(\d+\))?\.pdf$|^gate-/.test(f)) shell(`rm -f '${DEVICE_DIR}/${f}'`);
 
   await caseSignAndCounterSign();
+  await caseContentHidden();
+  if (NETWORK_ON) await caseNetworkOn();
   if (!SKIP_NEGATIVE) {
     await caseWrongPassword();
     await caseCancel();

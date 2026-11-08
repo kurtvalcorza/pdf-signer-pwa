@@ -137,7 +137,7 @@ T049 deletes it.
 
 **Independent Test**: Q2 + Q5 + Q6 + Q7. `android-check-apk.mjs` passes C1–C7 and C9; the gate with the network on shows 0 traffic records for the app UID; the screencap is black; the About panel states the network claim.
 
-- [ ] T028 [P] [US2] Create `scripts/android-check-apk.mjs <apk> --dist dist [--fingerprint android/SIGNING_FINGERPRINT] [--base <ref>]`, implementing C1, C3–C7 and C9 from contracts/apk-checks.md with `aapt2` and `apksigner` from the SDK's newest build-tools:
+- [X] T028 [P] [US2] Create `scripts/android-check-apk.mjs <apk> --dist dist [--fingerprint android/SIGNING_FINGERPRINT] [--base <ref>]`, implementing C1, C3–C7 and C9 from contracts/apk-checks.md with `aapt2` and `apksigner` from the SDK's newest build-tools:
   - **C1**: allow only `<applicationId>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, which must also be declared with `protectionLevel=signature`.
   - **C4**: the launcher is the only exported component.
   - **C5**: both rule sections exclude every domain.
@@ -146,11 +146,11 @@ T049 deletes it.
   - **C9**: `git diff <base>..HEAD -- src/ index.html vite.config.ts`, case-insensitive grep for `pdfSignerShell|appassets|androidplatform|android`.
 
   Each check prints the evidence it judged and never prints a secret.
-- [ ] T029 [US2] Extend `scripts/android-gate.mjs` with `--network-on`: disable airplane mode, run the US1 sign flow, then read `adb shell dumpsys netstats detail` and fail on any traffic record (`set=DEFAULT|FOREGROUND|BACKGROUND`) for the app UID, which `cmd package list packages -U` provides (C12, SC-003, spike S2). Re-enable airplane mode afterwards
-- [ ] T030 [US2] Extend `scripts/android-gate.mjs` with C8: with a document open, `adb exec-out screencap -p` and fail if any sampled pixel below the status bar is non-black (spike S8 method: 40 px grid)
-- [ ] T031 [P] [US2] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/EngineCheck.kt` (pure Kotlin) implementing data-model "Engine check" verbatim: `major < webViewHardMin → REFUSED`; `webViewHardMin ≤ major < webViewValidatedFloor → UNVALIDATED`; `major ≥ webViewValidatedFloor → OK`; no WebView provider, or disabled → REFUSED. It parses the major from `versionName` (`133.0.6943.137` → 133). Add `EngineCheckTest.kt` in `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/`
-- [ ] T032 [US2] In `MainActivity.kt`, read `WebViewCompat.getCurrentWebViewPackage(this)` **before** creating the WebView. REFUSED shows a native screen (layout `res/layout/refused.xml`) explaining that the system web view is too old or disabled, how to update or enable it, and that nothing was loaded; the web app is never loaded. UNVALIDATED loads the app and asks `shell.js` to show the notice. There's no "don't show again" and no stored preference (data model, R11)
-- [ ] T033 [US2] Add contract §2 item 3 to `android/app/src/main/assets/shell/shell.js` and `MainActivity.kt`: a shell-owned "About this app" button and panel in its own DOM node outside `#root`, with text supplied by native code over the same message channel. The panel lists every bullet in contract §5:
+- [X] T029 [US2] Extend `scripts/android-gate.mjs` with `--network-on`: disable airplane mode, run the US1 sign flow, then read `adb shell dumpsys netstats detail` and fail on any traffic record (`set=DEFAULT|FOREGROUND|BACKGROUND`) for the app UID, which `cmd package list packages -U` provides (C12, SC-003, spike S2). Re-enable airplane mode afterwards
+- [X] T030 [US2] Extend `scripts/android-gate.mjs` with C8: with a document open, `adb exec-out screencap -p` and fail if any sampled pixel below the status bar is non-black (spike S8 method: 40 px grid)
+- [X] T031 [P] [US2] Create `android/app/src/main/kotlin/io/github/kurtvalcorza/pdfsigner/EngineCheck.kt` (pure Kotlin) implementing data-model "Engine check" verbatim: `major < webViewHardMin → REFUSED`; `webViewHardMin ≤ major < webViewValidatedFloor → UNVALIDATED`; `major ≥ webViewValidatedFloor → OK`; no WebView provider, or disabled → REFUSED. It parses the major from `versionName` (`133.0.6943.137` → 133). Add `EngineCheckTest.kt` in `android/app/src/test/kotlin/io/github/kurtvalcorza/pdfsigner/`
+- [X] T032 [US2] In `MainActivity.kt`, read `WebViewCompat.getCurrentWebViewPackage(this)` **before** creating the WebView. REFUSED shows a native screen (layout `res/layout/refused.xml`) explaining that the system web view is too old or disabled, how to update or enable it, and that nothing was loaded; the web app is never loaded. UNVALIDATED loads the app and asks `shell.js` to show the notice. There's no "don't show again" and no stored preference (data model, R11)
+- [X] T033 [US2] Add contract §2 item 3 to `android/app/src/main/assets/shell/shell.js` and `MainActivity.kt`: a shell-owned "About this app" button and panel in its own DOM node outside `#root`, with text supplied by native code over the same message channel. The panel lists every bullet in contract §5:
   - version, source commit, installed from outside the store, never updates itself;
   - the WebView version in use, the validated floor, and that the engine depends on the device;
   - no network permission, how to confirm it in Settings, and the crash-report caveat (R6);
@@ -158,7 +158,7 @@ T049 deletes it.
   - screenshots and recents are blocked.
 
   Plus the UNVALIDATED banner.
-- [ ] T034 [US2] Run Q2, Q5, Q6 and Q7 on the AVD. For Q7's REFUSED case, `adb shell pm disable-user com.google.android.webview` (re-enable afterwards). For UNVALIDATED, a temporary local build with `WEBVIEW_VALIDATED_FLOOR=999`, never committed. Record the results in `research.md`
+- [X] T034 [US2] Run Q2, Q5, Q6 and Q7 on the AVD. For Q7's REFUSED case, `adb shell pm disable-user com.google.android.webview` (re-enable afterwards). For UNVALIDATED, a temporary local build with `WEBVIEW_VALIDATED_FLOOR=999`, never committed. Record the results in `research.md`
 
 **Checkpoint**: US2 is done when C1–C9 and C12 pass with evidence, and the About panel states each contract §5 item.
 

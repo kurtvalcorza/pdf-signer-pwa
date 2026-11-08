@@ -41,7 +41,11 @@ private class CreateDocument : ActivityResultContract<Pair<String, String>, Uri?
  *
  * Must be constructed while the activity is being created (it registers an ActivityResult launcher).
  */
-class SaveBridge(private val activity: ComponentActivity) {
+class SaveBridge(
+  private val activity: ComponentActivity,
+  /** Answers the channel's non-save messages (the About panel's `about-request`); null = unknown. */
+  private val onOtherMessage: (type: String) -> JSONObject? = { null },
+) {
   private val session = SaveSession()
   private val main = Handler(Looper.getMainLooper())
   private val io = Executors.newSingleThreadExecutor()
@@ -97,7 +101,18 @@ class SaveBridge(private val activity: ComponentActivity) {
       }
       "save-chunk" -> handle(session.chunk(id, if (json.has("seq")) json.optInt("seq") else null, json.optString("data", null)))
       "save-end" -> handle(session.end(id))
-      else -> Log.w(LOG_TAG, "MSG unknown type")
+      else -> {
+        val answer = onOtherMessage(json.optString("type"))
+        if (answer == null) {
+          Log.w(LOG_TAG, "MSG unknown type")
+        } else {
+          try {
+            reply?.postMessage(answer.toString())
+          } catch (e: Exception) {
+            Log.w(LOG_TAG, "MSG reply failed", e)
+          }
+        }
+      }
     }
   }
 

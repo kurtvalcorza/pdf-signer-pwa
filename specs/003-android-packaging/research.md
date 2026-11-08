@@ -430,3 +430,22 @@ the shared engine that also shows up on desktop.
 **G2 decision (owner, 2026-11-08)**: investigate the shared engine's peak memory in a **separate
 feature**, not in 003 (it would change shared code; SC-006). Until then the Android gate's
 `--large` runs at 25 MiB, which passes. The US2 disclosures (T033, T043) state the Android ceiling.
+
+## US2 checks, local (T034, run 2026-11-08)
+
+Same AVD and test key as the US1 run. The APK under test had SHA-256 `75A88779…EDBE4AF2`, floor 133.
+
+| Quickstart | Result | Evidence |
+|---|---|---|
+| Q2 static (`android-check-apk.mjs`) | ✅ C1 C3 C4 C5 C6 C7 C9 | C1: one permission, signature level (`0x2`). C3: v2+v3 verified; the fingerprint isn't pinned until T041. C5: cloud-backup, device-transfer and full-backup-content each exclude all 9 domains (resource IDs resolved through `aapt2 dump resources`, since release paths are shortened). C7: 11/11 `dist/` files match by SHA-256. C9: one shared-path commit, `7676207` (neutral label fix), with no shell mentions |
+| Q2 negative controls | ✅ fail as expected | Debug APK + tampered `dist/` + wrong fingerprint → C3 (v3 missing, or fingerprint mismatch), C6 (debuggable), C7 (`differs index.html`, `missing extra.txt`). A colon-separated fingerprint is accepted |
+| Q5 / C12 network on | ✅ 0 records | Airplane mode off, sign + validate, `dumpsys netstats --poll` then `detail`: 0 traffic records for the app UID. Positive control: the same parser finds records for UIDs 1000, 1051, 10101 and others. Settings → Apps → PDF Signer shows "No permissions requested" and "Mobile data usage: No data used" |
+| Q6 / C8 content hidden | ✅ | Screencap with a document open: 0 of 1,458 grid samples are non-black. Positive control: the launcher gives 1,458/1,458. The recent-apps card for the app is solid black (checked by eye) |
+| Q7 REFUSED | ✅ | `pm disable-user` on the provider → `engine=REFUSED reason=DISABLED`, the native screen shows, and there's no WebView in the tree. The provider was re-enabled afterwards |
+| Q7 UNVALIDATED | ✅ | Temporary local build with `VALIDATED_WEBVIEW=999` (restored to 133, never committed) → `engine=UNVALIDATED`, the banner shows, and sign + counter-sign still pass C10 |
+| About panel | ✅ | Every contract §5 item is on screen, plus the 25 MB Android ceiling (G2). `AboutInfoTest` asserts each item |
+
+**Findings fixed during the run:**
+
+- **G3, Q7:** `WebViewCompat.getCurrentWebViewPackage()` returns the provider already loaded, which still reads as enabled after `pm disable-user`, so the app loaded a blank WebView. MainActivity now reads the live `getApplicationEnabledSetting` (readable here: `1`, then `3`), and falls back to the loaded package's flag only if that can't be read.
+- **G4, edge-to-edge:** targetSdk 36 forces edge-to-edge, so the page drew under the status bar, and a tap on the shell's About button (y=62) landed on the system bar. The WebView now sits in a container inset by the system bars, display cutout and keyboard, as in a browser. The About button moved to y=125, and the shared app's top row is no longer under the status bar.
