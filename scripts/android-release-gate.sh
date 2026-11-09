@@ -14,8 +14,11 @@ apk="${1:?usage: android-release-gate.sh <signed-release.apk>}"
 adb_bin="${ADB:-adb}"
 
 want=$(tr -d '[:space:]' < android/VALIDATED_WEBVIEW)
-have=$("$adb_bin" shell dumpsys package com.google.android.webview |
-  sed -n 's/.*versionName=\([0-9][0-9]*\)\..*/\1/p' | head -n 1)
+# No pipe: an updated WebView lists versionName twice, and under pipefail a reader that stops
+# early (head, sed q) can fail the step with SIGPIPE.
+dump=$("$adb_bin" shell dumpsys package com.google.android.webview)
+have=$(sed -n 's/.*versionName=\([0-9][0-9]*\)\..*/\1/p' <<<"$dump")
+have=${have%%$'\n'*}
 echo "WebView major on the gate emulator: ${have:-none}; android/VALIDATED_WEBVIEW: $want"
 if [ "$have" != "$want" ]; then
   echo "::error::the gate emulator runs WebView ${have:-none}, but android/VALIDATED_WEBVIEW says $want"

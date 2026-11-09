@@ -202,6 +202,11 @@ jobs:
         run: |
           set -euo pipefail
           V=$(node -p "require('./package.json').version")
+          # Later steps splice the version into shell lines: allow only a plain semver.
+          if ! printf '%s' "$V" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'; then
+            echo "::error::package.json version '$V' is not a plain semver"
+            exit 1
+          fi
           if [ "refs/tags/v$V" != "$GITHUB_REF" ]; then
             echo "::error::tag $GITHUB_REF does not match package.json version $V"
             exit 1
