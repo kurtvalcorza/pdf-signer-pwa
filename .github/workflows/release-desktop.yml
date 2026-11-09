@@ -248,6 +248,8 @@ jobs:
 
       # C1, C3 (the certificate must match the committed android/SIGNING_FINGERPRINT), C4-C7, C9.
       - name: Static APK checks on the signed APK
+        env:
+          ANDROID_BUILD_TOOLS: '36.1.0' # the version that signed it (the Sign step's $BT)
         run: node scripts/android-check-apk.mjs "out/pdf-signer-${{ steps.version.outputs.version }}.apk" --fingerprint android/SIGNING_FINGERPRINT
 
       - name: Enable KVM
