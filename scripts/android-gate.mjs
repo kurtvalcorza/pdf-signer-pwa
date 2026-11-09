@@ -301,7 +301,8 @@ const REMEMBER = /^Remember this certificate on this device/;
  */
 async function tickRemember() {
   const ns = dump();
-  if (ns.some((n) => /^Forget/.test(n.text))) fail('tickRemember: a certificate is already remembered');
+  if (ns.some((n) => /^Forget/.test(n.text)))
+    fail('tickRemember: a certificate is already remembered');
   const n = await waitFor('the Remember checkbox', (all) =>
     all.find((x) => x.cls === 'CheckBox' && REMEMBER.test(x.text)),
   );
@@ -319,7 +320,10 @@ async function rememberedOnFreshLaunch() {
   await openPdf('sample.pdf');
   await placeSignature({ page2: false });
   await tap('Sign with a digital certificate', /^Sign with a digital certificate/);
-  await waitFor('the certificate sheet', find(/^Certificate password$|^Choose certificate|e2e-cert\.p12/));
+  await waitFor(
+    'the certificate sheet',
+    find(/^Certificate password$|^Choose certificate|e2e-cert\.p12/),
+  );
   // The stored record is read asynchronously: give it time before calling it absent.
   const hit = await waitFor(
     'a remembered certificate',
@@ -564,7 +568,9 @@ async function caseCamera() {
   const after = pageOneImages(out.local);
   if (after.count <= before.count)
     fail(`no image added to page 1: ${before.count} before, ${after.count} after`);
-  console.log(`    page 1 images: ${before.count} before, ${after.count} after (${after.dims.join(', ')})`);
+  console.log(
+    `    page 1 images: ${before.count} before, ${after.count} after (${after.dims.join(', ')})`,
+  );
   shell(`rm -f '${DEVICE_DIR}/${out.name}'`);
 
   // AS2: back out → nothing placed, the image picker still works, and nothing is asked again.
@@ -574,7 +580,8 @@ async function caseCamera() {
   await takePhoto({ keep: false });
   await waitLog('the capture cancelled', /CHOOSER capture cancelled/, 20000);
   await waitFor('back in the app', find(/^Add signature$/), 20000);
-  if (dump().some((n) => /^Remove signature$/.test(n.text))) fail('a signature was placed after backing out');
+  if (dump().some((n) => /^Remove signature$/.test(n.text)))
+    fail('a signature was placed after backing out');
   await placeSignature({ page2: false });
   console.log('    backed out: nothing placed; the image picker still works');
   clearLog();
@@ -646,7 +653,8 @@ async function caseBackup() {
   // AS3: remember again, uninstall, reinstall: nothing remains.
   const again = await signAndSave('sample.pdf', { remember: true });
   shell("rm -f '" + DEVICE_DIR + '/' + again.name + "'");
-  if (!(await rememberedOnFreshLaunch())) fail('the certificate was not remembered the second time');
+  if (!(await rememberedOnFreshLaunch()))
+    fail('the certificate was not remembered the second time');
   adb('uninstall', PKG);
   adb('install', APK);
   if (await rememberedOnFreshLaunch()) fail('a remembered certificate survived uninstall');
@@ -663,7 +671,9 @@ function versionCode() {
 async function savedSignatureOnFreshLaunch() {
   await launchFresh();
   await openPdf('sample.pdf');
-  const hit = await waitFor('a saved signature', find(/Use saved signature$/), 8000).catch(() => false);
+  const hit = await waitFor('a saved signature', find(/Use saved signature$/), 8000).catch(
+    () => false,
+  );
   return !!hit;
 }
 
@@ -682,8 +692,10 @@ async function caseUpgrade() {
   await sleep(800);
   console.log('    tick Remember this signature');
   // Positive controls: both are remembered before the update, so the checks after it mean something.
-  if (!(await rememberedOnFreshLaunch())) fail('the certificate was not remembered before the update');
-  if (!(await savedSignatureOnFreshLaunch())) fail('the signature was not remembered before the update');
+  if (!(await rememberedOnFreshLaunch()))
+    fail('the certificate was not remembered before the update');
+  if (!(await savedSignatureOnFreshLaunch()))
+    fail('the signature was not remembered before the update');
   console.log(`    versionCode ${from}: certificate and signature remembered`);
 
   adb('install', '-r', UPGRADE);
@@ -830,6 +842,12 @@ async function caseNetworkOn() {
     console.log(`    app uid ${uid}: ${hits.length} traffic record(s)`);
     for (const h of hits) console.log(`      ${h}`);
     if (hits.length) fail(`the app UID has network traffic`);
+    // Positive control: the same parser must see traffic that certainly happened in this window,
+    // or "no records" could mean a dead network or a netstats format change, not a quiet app.
+    shell('ping -c 2 -W 3 10.0.2.2');
+    const control = trafficFor('2000');
+    console.log(`    control: shell uid 2000 after a ping: ${control.length} traffic record(s)`);
+    if (!control.length) fail('C12 positive control: netstats shows no traffic for a known sender');
   } finally {
     shell('cmd connectivity airplane-mode enable');
   }

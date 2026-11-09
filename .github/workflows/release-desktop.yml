@@ -1,5 +1,5 @@
 # US4 — build, gate, and publish the portable desktop artifacts (Windows portable + Linux AppImage)
-# from ONE commit, with checksums + build-provenance attestation. Leaves ci.yml untouched (SC-008).
+# from ONE commit, with checksums + build-provenance attestation.
 # Feature 003 adds the `android` job: the signed APK from the same commit, gated on an emulator, in
 # the same SHA256SUMS and release (FR-019, FR-020).
 #
@@ -179,7 +179,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0 # C9 diffs the shared paths against the merge-base with main
+          fetch-depth: 0 # a tag cut on main makes C9 vacuous here; the PR job's C9 (--base) is the gate
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22

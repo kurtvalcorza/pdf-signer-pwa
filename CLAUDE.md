@@ -15,8 +15,8 @@ digital signature). Installable on Android, deployed static on Vercel.
 ## Active feature: 003-android-packaging (US1–US4 implemented and gated locally; release pending)
 
 - **Tasks: [specs/003-android-packaging/tasks.md](specs/003-android-packaging/tasks.md)**: 49 tasks.
-  Open: Kurt's T036 (two-phone transfer), T039 (release key) and T040 (`android-release`
-  environment), then T041 (commit the fingerprint), the first tagged release (Kurt's yes) and T049.
+  Release key (T039), `android-release` environment (T040) and pinned fingerprint (T041) done
+  2026-11-09; v0.2.0 is the first release with the APK. Open: Kurt's T036 (two-phone transfer) and T049.
   `spike-android/` is git-excluded reference code until T049 deletes it.
 - User docs: [docs/android.md](docs/android.md). Gate: `scripts/android-gate.mjs` (emulator, signed
   APK); static checks: `scripts/android-check-apk.mjs`.
