@@ -8,9 +8,9 @@ unit tests and pyHanko gate already validate.
 - **Windows**: `PDF.Signer.<version>.exe` — a portable single file, no installer, no registry.
 - **Linux**: `PDF.Signer-<version>.AppImage` — a single file; `chmod +x` then run.
 
-## v0.1.1: security release, replaces v0.1.0
+## Security fixes since v0.1.1 (do not use v0.1.0)
 
-**Stop using v0.1.0 and download this release.** v0.1.0 ships node-forge 1.4.0, which accepts a crafted
+**Stop using v0.1.0 and download v0.1.1 or later.** v0.1.0 ships node-forge 1.4.0, which accepts a crafted
 `.p12` under any password (GHSA-jc66-7q78-782g). That flaw does not reveal your password or private key.
 
 What changes for you:

@@ -1,7 +1,7 @@
 {
   "name": "pdf-signer-pwa",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "Privacy-first, offline-first PWA to sign PDFs on-device (visual stamp + PKCS#12 digital signature).",
   "main": "electron/main.js",

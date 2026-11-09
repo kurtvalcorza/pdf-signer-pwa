@@ -3,6 +3,7 @@
 // clicks into save requests over the `pdfSignerShell` channel, and shows the shell's own About
 // panel and engine notice outside #root. It never reads or modifies the app's state, storage,
 // React tree or #root, and never touches fetch, XMLHttpRequest, WebSocket or workers.
+/* global window, document, URL, Blob, btoa, HTMLAnchorElement */
 (() => {
   'use strict';
   if (window.__pdfSignerShell) return;
@@ -45,7 +46,7 @@
       );
       try {
         channel.postMessage(buf);
-      } catch (_) {
+      } catch {
         // No ArrayBuffer messages on this WebView: base64 chunks of at most 1 MB, in order.
         const bytes = new Uint8Array(buf);
         for (let seq = 0, i = 0; i < bytes.length; seq++, i += CHUNK) {
@@ -168,7 +169,7 @@
       let msg = null;
       try {
         msg = JSON.parse(event.data);
-      } catch (_) {
+      } catch {
         return;
       }
       if (msg && msg.type === 'about') mountNotices(msg);
