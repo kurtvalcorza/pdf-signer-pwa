@@ -272,6 +272,7 @@ jobs:
           api-level: 36
           target: google_apis
           arch: x86_64
+          profile: medium_phone # the 1080x2400 device the gate was validated on locally
           ram-size: 2048M
           disable-animations: true
           emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect

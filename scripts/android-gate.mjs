@@ -143,6 +143,7 @@ function dump() {
       enabled: at.enabled !== 'false',
       x: (x1 + x2) >> 1,
       y: (y1 + y2) >> 1,
+      box: { x1, y1, x2, y2 },
     });
   }
   return nodes;
@@ -242,7 +243,15 @@ async function pickFile(name) {
   }
   const n = dump().find(isFile);
   if (!n) fail(`${name} disappeared from the picker`);
-  shell(`input tap ${n.x} ${n.y}`);
+  // A grid tile (matched by its description) carries a "Preview the file" button over its
+  // top-right corner; on a small screen it covers the centre and the tap opens a viewer instead
+  // of picking. Tap the tile's lower-left quarter. A list row (matched by text) has no such button.
+  const { x1, y1, x2, y2 } = n.box;
+  const [x, y] =
+    n.text === name
+      ? [n.x, n.y]
+      : [Math.round(x1 + (x2 - x1) * 0.25), Math.round(y2 - (y2 - y1) * 0.2)];
+  shell(`input tap ${x} ${y}`);
   console.log(`    pick ${name}`);
   await sleep(800);
 }
