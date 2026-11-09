@@ -91,7 +91,12 @@ function newestBuildTools(root) {
   if (!versions.length) throw new Error('no build-tools version installed');
   return join(root, 'build-tools', versions[0]);
 }
-const BT = newestBuildTools(sdkRoot());
+// ANDROID_BUILD_TOOLS pins a version (the release job pins the one it signed with); otherwise the
+// newest installed. apksigner's output format changes between build-tools versions.
+const BT = process.env.ANDROID_BUILD_TOOLS
+  ? join(sdkRoot(), 'build-tools', process.env.ANDROID_BUILD_TOOLS)
+  : newestBuildTools(sdkRoot());
+if (!existsSync(BT)) throw new Error(`build-tools not found: ${BT}`);
 const AAPT2 = join(BT, process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
 // The jar, not apksigner(.bat): a .bat can't be spawned with shell:false on Windows.
 const APKSIGNER_JAR = join(BT, 'lib', 'apksigner.jar');
@@ -253,12 +258,27 @@ check('C3', 'signing identity', () => {
   const line = (re) => out.match(re)?.[1];
   const v2 = line(/Verified using v2 scheme \(APK Signature Scheme v2\): (\w+)/);
   const v3 = line(/Verified using v3 scheme \(APK Signature Scheme v3\): (\w+)/);
-  const digest = line(/Signer #1 certificate SHA-256 digest: ([0-9a-f]+)/i);
+  // Older apksigner labels signers "Signer #1"; newer ones may label them by SDK range. Take every
+  // signer's digest: they must all be one certificate, and an unparsed output fails closed.
+  const digests = [
+    ...out.matchAll(/^Signer\b[^\n]*? certificate SHA-256 digest: ([0-9a-f]{64})\s*$/gim),
+  ].map((m) => m[1].toLowerCase());
+  if (!digests.length)
+    evidence(
+      'apksigner signer lines',
+      out
+        .split(/\r?\n/)
+        .filter((l) => /^Signer\b/.test(l))
+        .join(' | ') || '(none)',
+    );
+  if (new Set(digests).size > 1)
+    throw new Error(`more than one signing certificate: ${digests.join(', ')}`);
+  const digest = digests[0];
   evidence('verified', r.status === 0 ? 'yes' : 'NO');
   evidence('v2', v2);
   evidence('v3', v3);
   evidence('certificate SHA-256', digest || '(none)');
-  evidence('certificate DN', line(/Signer #1 certificate DN: (.+)/) || '(none)');
+  evidence('certificate DN', line(/^Signer\b[^\n]*? certificate DN: (.+)$/m) || '(none)');
   if (r.status !== 0) throw new Error('apksigner verify failed');
   if (v2 !== 'true') throw new Error('v2 signature missing');
   if (v3 !== 'true') throw new Error('v3 signature missing');
