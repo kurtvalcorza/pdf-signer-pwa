@@ -254,7 +254,7 @@ check('C3', 'signing identity', () => {
     encoding: 'utf8',
     maxBuffer: 16 << 20,
   });
-  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
   const line = (re) => out.match(re)?.[1];
   const v2 = line(/Verified using v2 scheme \(APK Signature Scheme v2\): (\w+)/);
   const v3 = line(/Verified using v3 scheme \(APK Signature Scheme v3\): (\w+)/);
@@ -282,6 +282,8 @@ check('C3', 'signing identity', () => {
   if (r.status !== 0) throw new Error('apksigner verify failed');
   if (v2 !== 'true') throw new Error('v2 signature missing');
   if (v3 !== 'true') throw new Error('v3 signature missing');
+  if (!digest)
+    throw new Error('could not read a certificate digest from apksigner (signer lines above)');
   if (!FINGERPRINT_FILE)
     return 'fingerprint NOT pinned: a release passes --fingerprint android/SIGNING_FINGERPRINT';
   const expected = readFileSync(resolve(FINGERPRINT_FILE), 'utf8')
