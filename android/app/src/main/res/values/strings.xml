@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">PDF Signer</string>
+    <string name="renderer_gone_title">The app ran out of memory</string>
+    <string name="renderer_gone_message">The page that does the signing stopped, probably because the document is too large for this phone\'s memory. It has been restarted. Nothing was saved. Try a smaller file, or close other apps and try again.</string>
+    <string name="refused_title">PDF Signer can\'t run on this phone\'s web view</string>
+    <string name="refused_too_old">This phone\'s system WebView is version %1$d. PDF Signer needs version %2$d or later.</string>
+    <string name="refused_disabled">Android System WebView is turned off on this phone.</string>
+    <string name="refused_no_provider">This phone has no system WebView, which PDF Signer runs in.</string>
+    <string name="refused_unreadable">PDF Signer couldn\'t read this phone\'s WebView version (%1$s).</string>
+    <string name="refused_howto">To fix it, update Android System WebView from the Play Store, or turn it on in Settings → Apps → Android System WebView, then open PDF Signer again.</string>
+    <string name="refused_nothing_loaded">Nothing was loaded and no document was opened.</string>
+</resources>

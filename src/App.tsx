@@ -546,7 +546,7 @@ export default function App() {
                   checked={rememberSig}
                   onChange={(e) => toggleRememberSignature(e.target.checked, selectedAsset)}
                 />
-                Remember this signature on this device (image only, kept in this browser)
+                Remember this signature on this device (image only)
               </label>
             )}
 

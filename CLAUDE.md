@@ -3,15 +3,47 @@
 Privacy-first, offline-first, client-only PWA for signing PDFs on-device (visual stamp + PKCS#12
 digital signature). Installable on Android, deployed static on Vercel.
 
-- **Constitution**: [.specify/memory/constitution.md](.specify/memory/constitution.md) (**v1.1.0**) —
+- **Constitution**: [.specify/memory/constitution.md](.specify/memory/constitution.md) (**v1.2.0**) —
   6 principles; I (zero-server) and III (crypto correctness) are NON-NEGOTIABLE. v1.1.0 generalized
   the browser-specific wording so the product is **two distributions from one codebase** (web PWA +
   portable desktop): "installable" and the network prohibition are now defined per distribution, and
   validator evidence (V) is explicitly **per-distribution — never inherited by assertion**.
+  v1.2.0 adds a third distribution, a native Android app package (feature 003).
 - **Design notes (technical origin)**: [DESIGN.md](DESIGN.md) — the original technical design doc; the formal, technology-agnostic spec is `specs/001-pdf-signer/spec.md`.
 
 <!-- SPECKIT START -->
-## Active feature: 002-desktop-packaging (planning)
+## Active feature: 003-android-packaging (US1–US4 implemented and gated locally; release pending)
+
+- **Tasks: [specs/003-android-packaging/tasks.md](specs/003-android-packaging/tasks.md)**: 49 tasks.
+  Release key (T039), `android-release` environment (T040) and pinned fingerprint (T041) done
+  2026-11-09; v0.2.0 is the first release with the APK. Open: Kurt's T036 (two-phone transfer) and T049.
+  `spike-android/` is git-excluded reference code until T049 deletes it.
+- User docs: [docs/android.md](docs/android.md). Gate: `scripts/android-gate.mjs` (emulator, signed
+  APK); static checks: `scripts/android-check-apk.mjs`.
+
+Native Android APK: a Kotlin shell hosting the UNCHANGED `dist/` in a WebView on
+`https://appassets.androidplatform.net`, no network permission, signed in CI from a GitHub
+Environment secret, gated by sign + counter-sign on the signed APK.
+
+- Spec: [specs/003-android-packaging/spec.md](specs/003-android-packaging/spec.md)
+- **Plan: [specs/003-android-packaging/plan.md](specs/003-android-packaging/plan.md)**: Constitution
+  Check (v1.2.0) passes before and after design
+- Research: [specs/003-android-packaging/research.md](specs/003-android-packaging/research.md)
+- Data model, contracts, quickstart: same folder
+
+**Traps this feature must not fall into** (see research.md):
+
+1. `allowBackup="false"` alone does **not** stop device-to-device transfer on API 31+; only
+   `dataExtractionRules` does (R10).
+2. "No INTERNET permission" covers the app's UID, not the system WebView provider, which uploads
+   its own metrics and crash reports. Opt out of metrics and disclose crash reports. Never claim
+   nothing can leave (R6).
+3. A path handler that returns `null` falls through to the network, and one that adds a CSP header
+   governs workers (R2, R3).
+4. A repository secret is readable by every workflow. "Release job only" needs a GitHub
+   Environment (R12).
+
+## Previous feature: 002-desktop-packaging (shipped)
 
 Portable offline desktop builds — Windows portable `.exe` + Linux AppImage via Electron. Additive:
 the web PWA stays primary and unchanged (FR-019).

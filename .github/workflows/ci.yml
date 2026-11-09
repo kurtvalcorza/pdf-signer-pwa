@@ -1,8 +1,9 @@
 name: CI
 
 # Ordinary CI: web build, lint, dependency audit, unit + signing tests, signature policy gate, browser
-# E2E, and the desktop shell (renderer sandbox included) run unpackaged on Windows and Linux. Packaged
-# artifacts, fuses and the no-egress gates run only in release-desktop.yml.
+# E2E, the desktop shell (renderer sandbox included) run unpackaged on Windows and Linux, and the
+# Android shell built unsigned with its static APK checks. Packaged desktop artifacts, fuses, APK
+# signing and the emulator gates run only in release-desktop.yml.
 on:
   push:
     branches: [main]
@@ -125,3 +126,43 @@ jobs:
       - name: Desktop E2E [Windows]
         if: runner.os == 'Windows'
         run: npm run e2e:desktop
+
+  # Feature 003: the Android shell, unsigned. No secrets and no environment: the release key is
+  # only readable by the release job (R12). C3 (signing certificate) and the emulator gates
+  # (C8, C10-C12) need the signed APK and run in release-desktop.yml.
+  android:
+    name: Android shell (unsigned build + static APK checks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # C9 diffs the shared paths against the merge-base with the target branch
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Web build (dist/ is copied into the APK unchanged)
+        run: npm run build
+
+      # C2 (dependency allow-list) runs inside Gradle; the unit tests cover the shell's pure rules.
+      - name: Gradle (allow-list, unit tests, unsigned release APK)
+        run: node scripts/build-android.mjs verifyDependencyAllowlist testDebugUnitTest assembleRelease
+
+      - name: Static APK checks (C1, C4-C7, C9)
+        env:
+          TARGET: ${{ github.base_ref || 'main' }}
+        run: |
+          base=$(git merge-base HEAD "origin/$TARGET")
+          apk=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          node scripts/android-check-apk.mjs "$apk" --skip-c3 --base "$base"

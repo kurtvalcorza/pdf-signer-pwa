@@ -42,3 +42,9 @@ release/
 
 # Generated build metadata (injected at build:desktop time)
 electron/build-info.json
+
+# Android shell (feature 003)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
