@@ -252,6 +252,11 @@ jobs:
           ANDROID_BUILD_TOOLS: '36.1.0' # the version that signed it (the Sign step's $BT)
         run: node scripts/android-check-apk.mjs "out/pdf-signer-${{ steps.version.outputs.version }}.apk" --fingerprint android/SIGNING_FINGERPRINT
 
+      # The gate pushes tests/e2e/fixtures/e2e-cert.p12 (a throwaway self-signed test certificate,
+      # gitignored); Playwright's global setup makes it elsewhere, so make it here.
+      - name: E2E fixtures for the gate
+        run: node scripts/make-e2e-fixtures.mjs
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
