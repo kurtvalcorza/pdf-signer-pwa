@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.util.Log
 import android.webkit.WebView
 import android.widget.Toast
@@ -150,7 +151,8 @@ class SaveBridge(
     if (step !is SaveStep.Write || uri == null) {
       // A picked location with no save awaiting it: the process died while the dialog was open, so
       // the bytes are gone and ACTION_CREATE_DOCUMENT's empty file would stay behind (#27, F3).
-      if (uri != null) io.execute { deleteQuietly(uri) }
+      // The user may have picked an existing file to overwrite, so delete only a known-empty one.
+      if (uri != null) io.execute { deleteIfEmpty(uri) }
       handle(step)
       return
     }
@@ -166,6 +168,24 @@ class SaveBridge(
         e.message ?: e.javaClass.simpleName
       }
       main.post { handle(session.written(error == null, error)) }
+    }
+  }
+
+  /** Deletes an orphaned document only when the provider reports its size as exactly 0. */
+  private fun deleteIfEmpty(uri: Uri) {
+    val size: Long? = try {
+      activity.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+        val col = c.getColumnIndex(OpenableColumns.SIZE)
+        if (col >= 0 && c.moveToFirst() && !c.isNull(col)) c.getLong(col) else null
+      }
+    } catch (e: Exception) {
+      Log.w(LOG_TAG, "SAVE could not read the orphaned document's size", e)
+      null
+    }
+    if (SaveRules.shouldDeleteOrphan(size)) {
+      deleteQuietly(uri)
+    } else {
+      Log.i(LOG_TAG, "SAVE orphaned document kept size=$size")
     }
   }
 

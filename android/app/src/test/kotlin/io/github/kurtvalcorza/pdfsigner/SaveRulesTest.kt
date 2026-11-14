@@ -157,6 +157,14 @@ class SaveRulesTest {
     assertTrue(s2.timeout(3) is SaveStep.Refused)
   }
 
+  @Test fun orphanDeletedOnlyWhenKnownEmpty() {
+    assertTrue(SaveRules.shouldDeleteOrphan(0L))
+    assertFalse(SaveRules.shouldDeleteOrphan(1L))
+    assertFalse(SaveRules.shouldDeleteOrphan(5_000_000L))
+    assertFalse(SaveRules.shouldDeleteOrphan(null))
+    assertFalse(SaveRules.shouldDeleteOrphan(-1L))
+  }
+
   @Test fun pageFailureFailsOnlyWhileReceiving() {
     val s = SaveSession()
     s.begin(4, "a.pdf", "application/pdf", 2)

@@ -11,6 +11,13 @@ object SaveRules {
   /** "MUST be ≤ 100 MB + 1 MB headroom, or it is refused before the save dialog opens". */
   const val MAX_BYTES: Long = 101L * 1024 * 1024
   const val MAX_CHUNK_BYTES: Int = 1024 * 1024
+  /**
+   * A document picked for a save that no longer exists (process death with the dialog open) is
+   * deleted only when its size is known to be exactly 0: it may be an existing file the user chose
+   * to overwrite. Unknown size (null) keeps it.
+   */
+  fun shouldDeleteOrphan(sizeBytes: Long?): Boolean = sizeBytes == 0L
+
   /** Reason shown when the page could not read or send the bytes (`save-failed`). */
   const val UNREADABLE = "the file could not be read"
   private const val MAX_NAME_CHARS = 120

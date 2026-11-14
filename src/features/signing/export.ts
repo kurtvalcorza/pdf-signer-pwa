@@ -1,11 +1,4 @@
-/**
- * Trigger a client-side download of raw bytes. No network (Principle I).
- *
- * Keep the download on `HTMLAnchorElement.prototype.click()`: dist/ is shared by every
- * distribution, and the Android shell (android/app/src/main/assets/shell/shell.js) intercepts
- * blob: downloads only through that method. A dispatched MouseEvent, or a link the user clicks,
- * would bypass it, and the save would silently do nothing on Android.
- */
+/** Trigger a client-side download of raw bytes. No network (Principle I). */
 export function downloadBytes(bytes: Uint8Array, filename: string, mime: string): void {
   const blob = new Blob([bytes as BlobPart], { type: mime });
   const url = URL.createObjectURL(blob);
