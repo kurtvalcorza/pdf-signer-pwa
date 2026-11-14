@@ -19,12 +19,13 @@ val webVersionCode: Int = run {
   parts[0] * 10000 + parts[1] * 100 + parts[2]
 }
 val validatedFloor: Int = rootProject.file("VALIDATED_WEBVIEW").readText().trim().toInt()
-val sourceCommit: String = providers.environmentVariable("GITHUB_SHA").orElse(
-  providers.exec {
-    commandLine("git", "rev-parse", "HEAD")
-    isIgnoreExitValue = true
-  }.standardOutput.asText.map { it.trim().ifEmpty { "unknown" } },
-).get()
+// ^{commit} peels an annotated tag object to the commit it points at, so the About panel always
+// shows a commit hash (#27, F2). The raw GITHUB_SHA is the fallback only when git cannot answer.
+val sourceRef: String? = providers.environmentVariable("GITHUB_SHA").orNull
+val sourceCommit: String = providers.exec {
+  commandLine("git", "rev-parse", "--verify", "--quiet", "${sourceRef ?: "HEAD"}^{commit}")
+  isIgnoreExitValue = true
+}.standardOutput.asText.get().trim().ifEmpty { sourceRef ?: "unknown" }
 
 android {
   namespace = "io.github.kurtvalcorza.pdfsigner"

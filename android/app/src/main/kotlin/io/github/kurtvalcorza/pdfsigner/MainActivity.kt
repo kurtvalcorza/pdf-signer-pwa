@@ -238,6 +238,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onDestroy() {
     fileChooser.discardCapture()
+    saveBridge.close()
     webView?.destroy()
     webView = null
     super.onDestroy()
