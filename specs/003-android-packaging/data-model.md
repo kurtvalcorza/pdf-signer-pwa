@@ -56,7 +56,13 @@ State transitions:
 RECEIVING → (all bytes, size matches) → AWAITING_LOCATION → (user picks) → WRITING → SAVED
     │                                       │                               │
     └─ size mismatch / timeout → FAILED     └─ user cancels → CANCELLED     └─ IOException → FAILED (document deleted)
+    └─ save-failed from the page → FAILED
 ```
+
+`save-failed` with no transfer begun (the blob could not be read before `save-begin`) is shown as a
+failed save on its own. A location that arrives with no save awaiting it (the process died while
+the dialog was open) is deleted only when the provider reports its size as exactly 0; an existing
+file the user picked to overwrite, or one of unknown size, is kept.
 
 Only `SAVED` shows "Saved". `CANCELLED` shows nothing (US1 AS5). `FAILED` shows the reason. Bytes
 are held in memory only and dropped on any terminal state; nothing is written to app storage.

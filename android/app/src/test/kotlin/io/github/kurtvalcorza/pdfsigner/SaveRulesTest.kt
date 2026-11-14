@@ -157,6 +157,29 @@ class SaveRulesTest {
     assertTrue(s2.timeout(3) is SaveStep.Refused)
   }
 
+  @Test fun orphanDeletedOnlyWhenKnownEmpty() {
+    assertTrue(SaveRules.shouldDeleteOrphan(0L))
+    assertFalse(SaveRules.shouldDeleteOrphan(1L))
+    assertFalse(SaveRules.shouldDeleteOrphan(5_000_000L))
+    assertFalse(SaveRules.shouldDeleteOrphan(null))
+    assertFalse(SaveRules.shouldDeleteOrphan(-1L))
+  }
+
+  @Test fun pageFailureFailsOnlyWhileReceiving() {
+    val s = SaveSession()
+    s.begin(4, "a.pdf", "application/pdf", 2)
+    val d = s.aborted(4) as SaveStep.Done
+    assertEquals(SaveState.FAILED, d.transfer.state)
+    assertEquals(SaveRules.UNREADABLE, d.reason)
+    assertEquals(null, s.active)
+    assertTrue(SaveSession().aborted(4) is SaveStep.Refused)
+    val s2 = SaveSession()
+    s2.begin(4, "a.pdf", "application/pdf", 1)
+    assertTrue(s2.aborted(5) is SaveStep.Refused)
+    s2.buffer(byteArrayOf(1))
+    assertTrue(s2.aborted(4) is SaveStep.Refused)
+  }
+
   @Test fun outOfStateMessagesRefused() {
     val s = SaveSession()
     assertTrue(s.buffer(byteArrayOf(1)) is SaveStep.Refused)

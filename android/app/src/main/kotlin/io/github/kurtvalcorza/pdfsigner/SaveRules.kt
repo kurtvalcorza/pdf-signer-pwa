@@ -11,6 +11,15 @@ object SaveRules {
   /** "MUST be ≤ 100 MB + 1 MB headroom, or it is refused before the save dialog opens". */
   const val MAX_BYTES: Long = 101L * 1024 * 1024
   const val MAX_CHUNK_BYTES: Int = 1024 * 1024
+  /**
+   * A document picked for a save that no longer exists (process death with the dialog open) is
+   * deleted only when its size is known to be exactly 0: it may be an existing file the user chose
+   * to overwrite. Unknown size (null) keeps it.
+   */
+  fun shouldDeleteOrphan(sizeBytes: Long?): Boolean = sizeBytes == 0L
+
+  /** Reason shown when the page could not read or send the bytes (`save-failed`). */
+  const val UNREADABLE = "the file could not be read"
   private const val MAX_NAME_CHARS = 120
 
   val ALLOWED_MIME = setOf(
@@ -136,6 +145,13 @@ class SaveSession {
     val t = active ?: return SaveStep.Refused("no save in progress")
     if (t.state != SaveState.WRITING) return SaveStep.Refused("not writing")
     return if (ok) finish(t, SaveState.SAVED, null) else finish(t, SaveState.FAILED, reason ?: "write failed")
+  }
+
+  /** The web side could not read or send the bytes (`save-failed`); fails a transfer still receiving. */
+  fun aborted(id: Int?): SaveStep {
+    val t = active ?: return SaveStep.Refused("no save in progress")
+    if (t.id != id || t.state != SaveState.RECEIVING) return SaveStep.Refused("not receiving")
+    return fail(t, SaveRules.UNREADABLE)
   }
 
   /** A transfer that stays in RECEIVING too long fails. */

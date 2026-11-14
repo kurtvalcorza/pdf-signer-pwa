@@ -61,6 +61,13 @@
         }
         channel.postMessage(JSON.stringify({ type: 'save-end', id }));
       }
+    }).catch(() => {
+      // The click is already swallowed, so native code must hear about the failure to show it.
+      try {
+        channel.postMessage(JSON.stringify({ type: 'save-failed', id }));
+      } catch {
+        // The channel itself is gone; there is no one left to tell.
+      }
     });
   }
 

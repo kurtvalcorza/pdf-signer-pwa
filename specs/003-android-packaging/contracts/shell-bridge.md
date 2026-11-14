@@ -45,7 +45,17 @@ Messages from any other origin, or from a sub-frame, are dropped.
   or
 { "type": "save-chunk", "id": <int>, "seq": <int>, "data": <base64, ≤ 1 MB decoded> } …
 { "type": "save-end",   "id": <int> }
+  or, at any point, when the page cannot read or send the bytes
+{ "type": "save-failed", "id": <int> }
 ```
+
+The shared app MUST trigger downloads through `HTMLAnchorElement.prototype.click()` on a `blob:`
+anchor with `download` set: that is the only path the shell intercepts. A dispatched `MouseEvent`
+or a user-clicked link bypasses it, and the save silently does nothing. `tests/unit/exportClick.test.ts`
+holds the shared export path to it.
+
+`save-failed` fails a transfer that is still receiving, or, when none was begun (the blob could
+not be read before `save-begin`), is shown natively as a failed save on its own.
 
 Native → web reply, on the same port: `{ "type": "save-result", "id", "status": "saved" | "cancelled" | "failed", "reason"? }`.
 The shared app ignores it (its downloads are fire-and-forget). The shell itself shows the outcome

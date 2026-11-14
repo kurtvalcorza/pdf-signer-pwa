@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.util.Log
 import android.webkit.WebView
 import android.widget.Toast
@@ -101,6 +102,17 @@ class SaveBridge(
       }
       "save-chunk" -> handle(session.chunk(id, if (json.has("seq")) json.optInt("seq") else null, json.optString("data", null)))
       "save-end" -> handle(session.end(id))
+      "save-failed" -> {
+        val step = session.aborted(id)
+        if (step is SaveStep.Done) {
+          handle(step)
+        } else {
+          // Usually the bytes could not be read before save-begin, so no transfer exists yet.
+          Log.w(LOG_TAG, "SAVE failed in the page id=$id")
+          toast("Couldn't save: ${SaveRules.UNREADABLE}")
+          post(id, "failed", SaveRules.UNREADABLE)
+        }
+      }
       else -> {
         val answer = onOtherMessage(json.optString("type"))
         if (answer == null) {
@@ -137,6 +149,10 @@ class SaveBridge(
   private fun onLocation(uri: Uri?) {
     val step = session.locationChosen(uri != null)
     if (step !is SaveStep.Write || uri == null) {
+      // A picked location with no save awaiting it: the process died while the dialog was open, so
+      // the bytes are gone and ACTION_CREATE_DOCUMENT's empty file would stay behind (#27, F3).
+      // The user may have picked an existing file to overwrite, so delete only a known-empty one.
+      if (uri != null) io.execute { deleteIfEmpty(uri) }
       handle(step)
       return
     }
@@ -148,14 +164,43 @@ class SaveBridge(
         null
       } catch (e: Exception) {
         Log.e(LOG_TAG, "SAVE write failed", e)
-        try {
-          DocumentsContract.deleteDocument(activity.contentResolver, uri)
-        } catch (_: Exception) {
-        }
+        deleteQuietly(uri)
         e.message ?: e.javaClass.simpleName
       }
       main.post { handle(session.written(error == null, error)) }
     }
+  }
+
+  /** Deletes an orphaned document only when the provider reports its size as exactly 0. */
+  private fun deleteIfEmpty(uri: Uri) {
+    val size: Long? = try {
+      activity.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+        val col = c.getColumnIndex(OpenableColumns.SIZE)
+        if (col >= 0 && c.moveToFirst() && !c.isNull(col)) c.getLong(col) else null
+      }
+    } catch (e: Exception) {
+      Log.w(LOG_TAG, "SAVE could not read the orphaned document's size", e)
+      null
+    }
+    if (SaveRules.shouldDeleteOrphan(size)) {
+      deleteQuietly(uri)
+    } else {
+      Log.i(LOG_TAG, "SAVE orphaned document kept size=$size")
+    }
+  }
+
+  /** Best effort: the provider may refuse, and there is nothing more to do about it. */
+  private fun deleteQuietly(uri: Uri) {
+    try {
+      DocumentsContract.deleteDocument(activity.contentResolver, uri)
+    } catch (e: Exception) {
+      Log.w(LOG_TAG, "SAVE could not delete the unwritten document", e)
+    }
+  }
+
+  /** Releases the I/O thread; call from the activity's onDestroy (each recreate() builds a new bridge). */
+  fun close() {
+    io.shutdown()
   }
 
   private fun finish(done: SaveStep.Done) {
