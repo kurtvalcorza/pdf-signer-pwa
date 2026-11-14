@@ -44,12 +44,63 @@ export function loadP12(p12Bytes: Uint8Array, password: string): forge.pkcs12.Pk
     throw new MalformedCertificateError();
   }
 
+  const { pkcs8ShroudedKeyBag } = forge.pki.oids;
+  const hasKey = !!p12.getBags({ bagType: pkcs8ShroudedKeyBag })[pkcs8ShroudedKeyBag]?.[0]?.key;
+  // Checked before the key/certificate match so the message names the real cause: forge leaves a
+  // certificate it cannot read as null, and an RSA ID issued by an ECDSA CA is one of those.
+  if (hasKey) {
+    const unreadable = unreadableCertificate(p12);
+    if (unreadable) throw new MalformedCertificateError(unreadable);
+  }
   if (!signingCertificate(p12)) {
     throw new MalformedCertificateError(
       'This .p12 needs a password-protected RSA private key and its certificate, so it was not used.',
     );
   }
   return p12;
+}
+
+const EC_OID_PREFIX = '1.2.840.10045.';
+
+/**
+ * P12Signer adds every certificate bag to the signature and dereferences each one, so a single bag
+ * forge could not parse (cert === null) makes it throw a raw TypeError (#23 G1-1). Returns the
+ * message for such bags, or null when every certificate is readable. A bag whose key is RSA but
+ * which forge still could not read was signed by its issuer with a non-RSA algorithm, such as an
+ * ECDSA CA (#23 G1-2); that cause is reported in preference to a stray non-RSA certificate.
+ */
+function unreadableCertificate(p12: forge.pkcs12.Pkcs12Pfx): string | null {
+  const { certBag } = forge.pki.oids;
+  const bags = (p12.getBags({ bagType: certBag })[certBag] ?? []).filter((bag) => !bag.cert);
+  if (bags.length === 0) return null;
+  const algorithms = bags.map((bag) => certificateAlgorithms(bag.asn1));
+  const rsaKeyed = algorithms.find((a) => a?.publicKey === forge.pki.oids.rsaEncryption);
+  if (rsaKeyed) {
+    const by = rsaKeyed.signature?.startsWith(EC_OID_PREFIX)
+      ? 'ECDSA'
+      : 'an algorithm other than RSA';
+    return `This .p12's certificate was signed by its issuer with ${by}, which the signer cannot read, so it was not used.`;
+  }
+  const ec = algorithms.some((a) => a?.publicKey?.startsWith(EC_OID_PREFIX));
+  return `This .p12 includes ${ec ? 'an ECDSA' : 'a non-RSA'} certificate, which the signer cannot read, so it was not used.`;
+}
+
+/** OIDs of a certificate's public key and of its issuer's signature, read from raw ASN.1. */
+function certificateAlgorithms(
+  cert: forge.asn1.Asn1 | undefined,
+): { publicKey: string; signature: string } | null {
+  try {
+    const [tbs, signatureAlgorithm] = cert!.value as forge.asn1.Asn1[];
+    const fields = tbs.value as forge.asn1.Asn1[];
+    // Skip the optional [0] version; then serial, signature, issuer, validity, subject, SPKI.
+    const first = fields[0].tagClass === forge.asn1.Class.CONTEXT_SPECIFIC ? 1 : 0;
+    const spki = fields[first + 5].value as forge.asn1.Asn1[];
+    const oidOf = (seq: forge.asn1.Asn1) =>
+      forge.asn1.derToOid((seq.value as forge.asn1.Asn1[])[0].value as string);
+    return { publicKey: oidOf(spki[0]), signature: oidOf(signatureAlgorithm) };
+  } catch {
+    return null;
+  }
 }
 
 /**
