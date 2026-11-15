@@ -1,7 +1,8 @@
 # RFC 23-2: Packet-level no-egress gate on Windows, scoped to the app's process tree
 
-Status: **proposal, not implemented**. Issue #23, item 2; it came from #12 and SEC-14
-([audit.md](audit.md)).
+Status: **accepted 2026-11-15, not implemented**. Issue #23, item 2; it came from #12 and SEC-14
+([audit.md](audit.md)). Owner decisions recorded in [§7](#7-owner-decisions): B1 (a), B2 (a),
+B3 (b) gate-only probe build, B4–B7 (a).
 
 ## Summary
 
@@ -289,6 +290,11 @@ review (CLAUDE.md).
 Done-when, from issue #23: steps 1 and 5 pass, with step 6 shown to fail closed.
 
 ## 7. Owner decisions
+
+**Decided 2026-11-15 by the owner:** B1 (a), B2 (a), B3 (b), B4 (a), B5 (a), B6 (a), B7 (a). Turning
+the inspector fuse off in release builds, and asserting the fuse state in `verify-packaged.mjs`, is
+tracked as a separate security follow-up. The options below are kept as the record of what was
+weighed.
 
 **B1. Mechanism**
 

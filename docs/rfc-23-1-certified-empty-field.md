@@ -1,6 +1,7 @@
 # RFC 23-1: Sign a certified PDF through an existing empty signature field
 
-Status: **proposal, not implemented**. Issue #23, item 1. Follows SEC-02 in [audit.md](audit.md).
+Status: **accepted 2026-11-15, not implemented**. Issue #23, item 1. Owner decisions recorded in
+[§8](#8-owner-decisions): D1–D9 option (a), D10 option (a) (all three distributions together). Follows SEC-02 in [audit.md](audit.md).
 
 ## Summary
 
@@ -328,6 +329,9 @@ The generator keeps the in-memory key rule: nothing private is stored.
   inherited from the web build.
 
 ## 8. Owner decisions
+
+**Decided 2026-11-15 by the owner:** D1 (a), D2 (a), D3 (a), D4 (a), D5 (a), D6 (a), D7 (a), D8 (a),
+D9 (a), D10 (a). The options below are kept as the record of what was weighed.
 
 **D1. Which DocMDP levels to support**
 
