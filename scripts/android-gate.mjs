@@ -163,10 +163,29 @@ async function waitFor(what, pick, timeoutMs = 20000) {
     await sleep(700);
   }
   const seen = nodes.map(label).filter(Boolean).slice(0, 40).join('\n    ');
-  fail(`timed out waiting for ${what}. Last screen:\n    ${seen}`);
+  fail(`timed out waiting for ${what}.${webViewDrift()} Last screen:\n    ${seen}`);
 }
 
 const find = (re) => (nodes) => nodes.find((n) => matches(n, re));
+
+/**
+ * The WebView the run started on. A Play Store image can update WebView mid-run (the network-on
+ * case opens a window). The update kills every app using the old WebView, so the app restarts and
+ * a wait times out on a node the restart removed (issue #27). Say so instead of a bare timeout.
+ */
+let startWebView = '';
+const webViewVersion = () =>
+  shell('dumpsys package com.google.android.webview | grep -m1 versionName').trim();
+function webViewDrift() {
+  if (!startWebView) return '';
+  let now;
+  try {
+    now = webViewVersion();
+  } catch {
+    return ' (WebView version could not be re-read.)'; // never mask the original timeout
+  }
+  return now === startWebView ? '' : ` WebView changed during the run (${startWebView} -> ${now}).`;
+}
 
 /** Waits for a node, then taps it from a fresh dump (S9 rule b). */
 async function tap(what, re, timeoutMs) {
@@ -313,7 +332,7 @@ async function tickRemember() {
   if (ns.some((n) => /^Forget/.test(n.text)))
     fail('tickRemember: a certificate is already remembered');
   const n = await waitFor('the Remember checkbox', (all) =>
-    all.find((x) => x.cls === 'CheckBox' && REMEMBER.test(x.text)),
+    all.find((x) => x.cls === 'CheckBox' && matches(x, REMEMBER)),
   );
   shell(`input tap ${n.x} ${n.y}`);
   await sleep(600);
@@ -909,9 +928,8 @@ async function main() {
     .split(/\r?\n/)
     .filter((l) => /\tdevice$/.test(l));
   if (devices.length !== 1) fail(`need exactly one device, found ${devices.length}`);
-  console.log(
-    `  device ${devices[0].split('\t')[0]}, WebView ${shell('dumpsys package com.google.android.webview | grep -m1 versionName').trim()}`,
-  );
+  startWebView = webViewVersion();
+  console.log(`  device ${devices[0].split('\t')[0]}, WebView ${startWebView}`);
 
   // Airplane mode before first launch (Q3): the app must never have seen a network.
   shell('cmd connectivity airplane-mode enable');
