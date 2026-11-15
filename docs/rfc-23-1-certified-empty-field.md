@@ -42,8 +42,11 @@ Evidence labels used below:
   - the field dictionary's new version, at `LTA_UPDATES`, as long as only the
     `VALUE_UPDATE_KEYS` changed: `/AP /AS /V /F /DA /Q /Ff /Type` (`constants.py`);
   - the new `/AP` streams, at `FORM_FILLING`. This holds only if `/AP /N` (and `/R`, `/D`) point
-    at streams created in the new revision (`_allow_appearance_update`). An existing appearance
-    stream is never whitelisted for an in-place rewrite;
+    at streams created in the new revision (`_allow_appearance_update`). Rewriting an existing
+    appearance stream in place is a different case. It is also allowed by default, under a
+    separate rule with more conditions (`allow_in_place_appearance_stream_changes=True`,
+    `form_field_rules.py:464`; `_allow_in_place_appearance_update`). This design does not rely
+    on that rule: it always writes a new stream;
   - the new signature dictionary that `/V` references, at `FORM_FILLING`. It must be an indirect
     reference to an object that did not exist in the old revision. Otherwise the result is
     `SuspiciousModification`.
@@ -58,6 +61,20 @@ Evidence labels used below:
 - **[pyHanko]** `StandardDiffPolicy` logs a warning that it "was not designed to support DocMDP
   level 3 (MDPPerm.ANNOTATE)". So a P=3 pass must be shown by a fixture, not assumed (decision
   D1).
+- **[pyHanko, review probe]** The Fable review's probe (`scratchpad/review-probe/probe.py`,
+  in-memory PDFs, pyHanko signing and validating) ran these cases at both P=2 and P=3:
+
+  | Case                                                      | Result                                                        |
+  | :-------------------------------------------------------- | :------------------------------------------------------------ |
+  | Merged field/widget, filled                               | pass, `docmdp_ok=True` at FORM_FILLING (P=3 logs the warning) |
+  | Field with one separate widget kid, filled                | **fail** (`docmdp_ok=False`)                                  |
+  | New visible field after certification                     | fail                                                          |
+  | Visible field appended after certification, then filled   | fail                                                          |
+  | Invisible field appended after certification, then filled | pass                                                          |
+  | Fill that rewrites the AcroForm with unchanged content    | pass                                                          |
+
+  This is evidence about **pyHanko's own** writer, not yet about the app's. The per-level fixtures
+  in §7 are what prove the app's writer.
 
 ## 2. What the incremental update changes
 
@@ -69,18 +86,20 @@ The update is still a byte-level append. The original bytes are never rewritten
 | 1   | Appearance resources: the image XObject and the font, if a label is drawn                            | new                                                | Same as today (`incrementalUpdate.ts` step 0).                                                                                               |
 | 2   | Appearance form XObject (`/AP /N`)                                                                   | new                                                | It must be a **new** stream ([pyHanko] `_allow_appearance_update`). Its BBox comes from the field's `/Rect`, not from a user-drawn box (§4). |
 | 3   | Signature dictionary `/Type /Sig` with `/Filter /SubFilter /ByteRange /Contents /M /Reason`          | new                                                | Same placeholder `@signpdf` fills today. **No `/Reference` array**: this is an approval signature, not a certification.                      |
-| 4   | The field (merged field/widget dictionary)                                                           | **new version, same object number and generation** | Adds `/V` (a reference to #3) and replaces `/AP` with `<< /N ref(#2) >>`. It may set `/F` to Print if absent. Nothing else changes.          |
+| 4   | The field: a merged field/widget dictionary only (§3 rule 3)                                         | **new version, same object number and generation** | Adds `/V` (a reference to #3) and replaces `/AP` with `<< /N ref(#2) >>`. It may set `/F` to Print if absent. Nothing else changes.          |
 | 5   | xref section and trailer, `/Prev` set to the previous `startxref`, `/Root /Info /ID` carried forward | new                                                | Same as today (step 4).                                                                                                                      |
 
 What the update does **not** change, compared with the current path:
 
 - **No new annotation, and no page `/Annots` rewrite.** The widget is already on its page.
   Step 3 of `addIncrementalPlaceholder` must not run.
-- **No AcroForm rewrite and no `/Fields` rewrite.** The field is already listed. Step 2 must not
-  run. This is load-bearing: `/SigFlags` is **not** in `ACROFORM_EXEMPT_STRICT_COMPARISON`
-  ([pyHanko] `constants.py`: `/Fields /DR /DA /Q /NeedAppearances`). The current path's
-  unconditional `SigFlags 3` rewrite would therefore count as an unexplained AcroForm change after
-  certification **[inferred]**. A certifying writer already sets SigFlags 3 ([ISO] 12.7.2,
+- **No AcroForm rewrite and no `/Fields` rewrite.** The field is already listed, so step 2 does
+  not need to run. The actual constraint is narrower: **no AcroForm key may change other than
+  `/Fields /DR /DA /Q /NeedAppearances`** (`ACROFORM_EXEMPT_STRICT_COMPARISON`, [pyHanko]
+  `constants.py`). `/SigFlags` is not on that list. The review probe showed that rewriting the
+  AcroForm with unchanged content still passes at P=2 and P=3. A _changed_ `/SigFlags` value is
+  expected to fail under the strict comparison **[inferred; not run]**. Not rewriting the AcroForm
+  at all is simply the easiest way to meet the constraint. A certifying writer already sets SigFlags 3 ([ISO] 12.7.2,
   Table 219: SignaturesExist and AppendOnly). pyHanko does this when it signs (`fields.py`), and
   the committed `certified-p2.pdf` and `certified-p3.pdf` both contain `/SigFlags 3` **[repo]**.
   So leaving it untouched loses nothing. If the
@@ -113,18 +132,47 @@ Walk `/AcroForm /Fields` with the cyclic `/Parent`/`/Kids` guard `allSignatureDi
 A field is **eligible** only when every one of these holds:
 
 1. `/FT /Sig`, inherited through `/Parent` as [ISO] 12.7.3.1 allows.
-2. It has no `/V`, or its `/V` is null. A `/V` that is not a dictionary is refused, not treated as
-   empty.
-3. It is a **terminal field with exactly one widget**: either a merged field/widget dictionary
-   (`/Subtype /Widget` on the field itself) or a single-element `/Kids` holding one widget
-   ([ISO] 12.7.3.1, 12.5.6.19). Two or more widgets are refused (threat T3).
-4. The widget's `/P` resolves to a page, and that page's `/Annots` contains the widget reference.
-   If either check fails, refuse. A reader would place it differently from what we show (T2).
+2. It has no `/V`, or its `/V` is null, **and no ancestor on its `/Parent` chain carries a `/V`**.
+   `/V` is inheritable ([ISO] 12.7.3.1). No other `/Sig` terminal shares its parent, because a
+   value inherited by siblings would be ambiguous. A `/V` that is not a dictionary is refused, not
+   treated as empty.
+3. It is a **merged field/widget dictionary**: `/Subtype /Widget` on the terminal field itself
+   ([ISO] 12.7.3.1, 12.5.6.19), with no `/Kids`. **A field whose widget is a separate kid is
+   refused, even when it has only one kid.** The review probe shows pyHanko 0.36.2 rejects that
+   fill at P=2 and P=3: `docmdp_ok=False`, with "objects … replaced … without precise
+   justification" naming the kid widget. The reason is that a kid without `/T` is not a field
+   (`form_rules_api.py:289-292`), and `SigFieldModificationRule` whitelists `/AP` only on the field
+   dictionary itself. Supporting separate kid widgets would need its own investigation: a custom
+   diff policy, or an Acrobat-only evidence bar that the pinned gate cannot provide (D8). Fields
+   with two or more widgets are refused anyway (threat T3).
+4. The widget's `/P` resolves to a page, that page's `/Annots` contains the widget reference, and
+   **no other page's `/Annots` does**. If any of these fails, refuse. A reader would place or
+   repeat it differently from what we show (T2, T3).
 5. The widget is **visible**. Hidden (bit 2) and NoView (bit 6) must be clear ([ISO] 12.5.3,
    Table 165), and the `/Rect` must have non-zero width and height and intersect the page's
    CropBox. pyHanko's own `is_field_visible` checks only that the `/Rect` area is non-zero
-   ([pyHanko]), so the flag and CropBox rules are ours and are stricter. Invisible fields are
-   refused (decision D5).
+   ([pyHanko]), so the flag and CropBox rules are ours and are stricter. A widget carrying `/OC`
+   (optional content, [ISO] 8.11) is refused, because a hidden content group can make it invisible
+   in some viewers. Invisible fields are refused (decision D5).
+   - **Rule 5a.** The field is not **read-only**: `/Ff` bit 1 is clear, inherited values included ([ISO]
+     12.7.3.1, Table 221). A read-only signature field is one the author did not mean anyone to sign.
+   - **Rule 5b.** **Names are well formed.** Every node on the path to the field has a `/T`. No partial name
+     contains a period, and no two siblings share a partial name. pyHanko's field walk raises
+     "Duplicate field name" and "Partial names must not contain periods"
+     (`form_rules_api.py:297-300`), so a document the app accepted here would fail the gate. Two
+     fields with the same displayed name would also confuse the picker (T1).
+   - **Rule 5c.** **The field existed when the document was certified.** Its object, and its widget's page
+     `/Annots` entry, must be defined in the bytes the certification signature's `/ByteRange`
+     covers. In practice: the revision whose `startxref` lies inside the signed range must already
+     resolve the field. The review probe shows that a _visible_ field appended after a P=2 or P=3
+     certification and then filled fails `docmdp_ok`. Later revisions are handled by rule 5d and D9.
+   - **Rule 5d.** **Every revision after the certification is classifiable.** Each must be a signature fill of a
+     field that passed 5c, the same shape this RFC writes. Anything else after certification (new
+     annotations, new fields, page changes, DSS or metadata updates) refuses the document. The app
+     has no diff analysis of its own, so it cannot tell whether such a revision kept the
+     certification intact. This rule covers P=2 documents that already have annotation revisions
+     (probably in violation already) and P=3 documents with permitted later annotations, which may
+     sit over or beside the field (D9).
 6. No `/Lock` and no `/SV` on the field ([ISO] 12.7.4.5, Tables 232–234). A seed-value dictionary
    can require a filter, sub-filter, digest or certificate this app may not meet. This RFC refuses
    rather than half-honouring it (D2).
@@ -153,8 +201,11 @@ the user is not left wondering why a field they can see cannot be used.
 - The stamp is laid out into the field's `/Rect`, taking the page `/Rotate` into account through
   the same `appearanceLayout` maths. Aspect ratio is preserved, so the stamp may letterbox. The
   user cannot move or resize it (D6).
-- After signing, the existing success copy applies. Add one sentence: "The certification stays
-  valid: this signature used a field the certifier allowed."
+- After signing, the existing success copy applies. Add one sentence that says only what the app
+  did: "Signed in the existing field '<name>'. No other part of the document was changed." Do
+  **not** claim that the certification "stays valid". The app runs no diff analysis, and the
+  fixtures prove validity only for the shapes they cover. A validator such as Acrobat or pyHanko
+  is the authority on that.
 
 ## 5. What stays refused
 
@@ -171,6 +222,13 @@ the user is not left wondering why a field they can see cannot be used.
 | R9  | `/AcroForm /SigFlags` is not 3, or `/NeedAppearances true`                                   | new check; we must not rewrite the AcroForm     | new reason                                                                            |
 | R10 | XFA present (`/AcroForm /XFA`)                                                               | new check                                       | new reason. An XFA form's field model is not the AcroForm one we edit **[inferred]**. |
 | R11 | Free placement on any certified document                                                     | UI never offers it; `signIncremental` re-checks | CERTIFIED (unchanged)                                                                 |
+| R12 | Empty field whose widget is a separate kid (one kid or more)                                 | rule 3                                          | per-field reason (pyHanko rejects the fill; D8)                                       |
+| R13 | Duplicate partial name, a partial name containing a period, or a node without `/T`           | rule 5b                                         | per-field reason                                                                      |
+| R14 | `/V` inherited from a non-terminal parent, or `/Sig` siblings sharing a parent               | rule 2                                          | per-field reason                                                                      |
+| R15 | Widget listed in more than one page's `/Annots`                                              | rule 4                                          | per-field reason                                                                      |
+| R16 | Widget with `/OC`, or a read-only field (`/Ff` bit 1)                                        | rules 5, 5a                                     | per-field reason                                                                      |
+| R17 | Field not present in the certified revision                                                  | rule 5c                                         | per-field reason                                                                      |
+| R18 | A revision after certification that is not a signature fill of a certified-revision field    | rule 5d                                         | new document-level reason (D9)                                                        |
 
 Approval-only documents (not certified) keep today's append-a-field path unchanged. Whether they
 should also be offered their empty fields is a separate choice (D7).
@@ -184,13 +242,16 @@ issue #23: could a malicious PDF trick the user into signing an unexpected field
 | :-- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | T1  | **Misleading field name**: `/T (Approved by Finance Director)` on a field the user picks as their own.                                                                                            | Show `/T` as data, labelled "field name set by the document", never as a role the app asserts. Selection is by position on the page. The signature's meaning comes from the certificate, not the field name.                                                                                |
 | T2  | **Widget drawn somewhere other than where we show it**: `/P` names page 1, but the widget sits in page 3's `/Annots`, or in none.                                                                 | Rule 4: `/P` and `/Annots` must agree, or the field is refused. Highlight the field from the `/Rect` we will actually lay the stamp into.                                                                                                                                                   |
-| T3  | **One field, several widgets**: the user sees one box, and the signature appears in five places, including on a page they did not review.                                                         | Rule 3: exactly one widget.                                                                                                                                                                                                                                                                 |
+| T3  | **One field, several widgets**: the user sees one box, and the signature appears in five places, including on a page they did not review.                                                         | Rule 3 (merged widget only, no `/Kids`) and rule 4 (listed in exactly one page's `/Annots`).                                                                                                                                                                                                |
 | T4  | **Invisible or off-page field**: zero `/Rect`, Hidden or NoView flag, or a Rect outside the CropBox, so the signature is real but the user sees no box.                                           | Rule 5.                                                                                                                                                                                                                                                                                     |
 | T5  | **Overlay or appearance tricks**: an existing `/AP` that draws text resembling a signature, or a field placed over content to obscure it.                                                         | We always write a new `/AP /N` (pyHanko requires a new stream anyway). Placing a box over content is no different from today's approval flow. The user reviews the whole document before signing.                                                                                           |
 | T6  | **Hidden or shadow content** (the "shadow attack" class: content swapped in a later permitted revision).                                                                                          | Our signature covers the whole file as shown, so this is not new to this path. A P=2 certifier permits form filling by design. Point to pyHanko's diff report as the authority for what changed between revisions; do not claim more.                                                       |
 | T7  | **Seed values or a lock the user does not know about**: the certifier set `/SV /Cert` to pin a specific signer, or `/Lock` to freeze other fields on signing.                                     | Rule 6 refuses both. This loses some legitimate PDFs (D2).                                                                                                                                                                                                                                  |
 | T8  | **Parser differential**: pdf-lib resolves the field one way, and Acrobat or pyHanko resolve it another way (duplicate object numbers, a broken xref, an object in an ObjStm with a stale offset). | `reserveExistingObjectNumbers` already covers number reuse. Add a post-update check that the **pyHanko** field enumeration in the test gate (`enumerate_sig_fields`) matches pdf-lib's on every fixture. In production, re-parse with pdf-lib and require exactly one field to change (§2). |
 | T9  | **Actions on the field**: `/AA` or `/A` JavaScript.                                                                                                                                               | The app executes nothing, and pdf.js preview runs with scripting off **[inferred: confirm in `renderPage.ts`]**. We never add actions. A downstream viewer running pre-existing JS is outside our control and not new.                                                                      |
+| T11 | **Late field**: a field appended after certification, so filling it breaks the certification while the app reports success.                                                                       | Rules 5c and 5d (R17, R18). Success copy states only what the app did (§4).                                                                                                                                                                                                                 |
+| T12 | **Name collision**: two fields shown as the same name, or a dotted name that resolves to another field in some readers.                                                                           | Rule 5b (R13).                                                                                                                                                                                                                                                                              |
+| T13 | **Annotation over the field (P=3)**: a permitted later annotation drawn over or beside the field, changing what the stamp appears to approve.                                                     | Rule 5d refuses any later annotation revision (R18). An annotation already in the certified revision is part of what the user reviews.                                                                                                                                                      |
 | T10 | **Resource exhaustion**: thousands of empty fields, or deep `/Kids`.                                                                                                                              | Cap the field walk (for example 2,000 nodes, a number to set in the spec) and refuse above it. This extends the SEC-08 limits.                                                                                                                                                              |
 
 Residual risk: a certifier-designed form whose visible text around the field misdescribes what the
@@ -203,21 +264,32 @@ signature means. No tool can fix that. The user's review of the document is the 
 Use pyHanko's `append_signature_field(writer, SigFieldSpec(...))` (**[pyHanko]** `fields.py`) on the
 base PDF, and certify afterwards, so the empty field exists in the certified revision:
 
-| Fixture                                    | Construction                                                              | Expectation                |
-| :----------------------------------------- | :------------------------------------------------------------------------ | :------------------------- |
-| `certified-p2-empty-field.pdf`             | empty `Approver` field at a box, then certify P=2 into `Cert`             | eligible; sign succeeds    |
-| `certified-p3-empty-field.pdf`             | same, P=3                                                                 | eligible, subject to D1    |
-| `certified-p2-empty-field-xref-stream.pdf` | same, with `stream_xrefs=True`                                            | eligible (ObjStm path)     |
-| `certified-p2-two-empty-fields.pdf`        | `Approver` on p.1 and `Witness` on p.1                                    | both listed; each signable |
-| `certified-p2-empty-field-signed-once.pdf` | P=2 fixture, then pyHanko fills `Approver`                                | `Witness` absent, so R2    |
-| `certified-p1-empty-field.pdf`             | empty field, certify P=1                                                  | R1                         |
-| `certified-p2-no-empty-field.pdf`          | existing `certified-p2.pdf`                                               | R2                         |
-| `certified-p2-empty-field-lock.pdf`        | `SigFieldSpec(field_mdp_spec=FieldMDPSpec(ALL))` on `Approver`            | R5                         |
-| `certified-p2-empty-field-sv.pdf`          | `SigFieldSpec(seed_value_dict=SigSeedValueSpec(...))`                     | R6                         |
-| `certified-p2-fieldmdp-approval.pdf`       | P=2 cert, then an approval signature with FieldMDP Include `Approver`     | R4                         |
-| `certified-p2-empty-field-hidden.pdf`      | built with `generic` objects: `/F 2` on the widget                        | R3 (T4)                    |
-| `certified-p2-empty-field-two-widgets.pdf` | built with `generic` objects: `/Kids` with two widgets on different pages | R3 (T3)                    |
-| `certified-p2-empty-field-p-mismatch.pdf`  | widget `/P` names page 1 but sits in page 2's `/Annots`                   | R3 (T2)                    |
+| Fixture                                    | Construction                                                                          | Expectation                                                                                                             |
+| :----------------------------------------- | :------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------- |
+| `certified-p2-empty-field.pdf`             | empty `Approver` field at a box, then certify P=2 into `Cert`                         | eligible; sign succeeds                                                                                                 |
+| `certified-p3-empty-field.pdf`             | same, P=3                                                                             | eligible, subject to D1                                                                                                 |
+| `certified-p2-empty-field-xref-stream.pdf` | same, with `stream_xrefs=True`                                                        | eligible (ObjStm path)                                                                                                  |
+| `certified-p2-two-empty-fields.pdf`        | `Approver` on p.1 and `Witness` on p.1                                                | both listed; each signable                                                                                              |
+| `certified-p2-empty-field-signed-once.pdf` | P=2 fixture, then pyHanko fills `Approver`                                            | `Witness` absent, so R2                                                                                                 |
+| `certified-p1-empty-field.pdf`             | empty field, certify P=1                                                              | R1                                                                                                                      |
+| `certified-p2-no-empty-field.pdf`          | existing `certified-p2.pdf`                                                           | R2                                                                                                                      |
+| `certified-p2-empty-field-lock.pdf`        | `SigFieldSpec(field_mdp_spec=FieldMDPSpec(ALL))` on `Approver`                        | R5                                                                                                                      |
+| `certified-p2-empty-field-sv.pdf`          | `SigFieldSpec(seed_value_dict=SigSeedValueSpec(...))`                                 | R6                                                                                                                      |
+| `certified-p2-fieldmdp-approval.pdf`       | P=2 cert, then an approval signature with FieldMDP Include `Approver`                 | R4                                                                                                                      |
+| `certified-p2-empty-field-hidden.pdf`      | built with `generic` objects: `/F 2` on the widget                                    | R3 (T4)                                                                                                                 |
+| `certified-p2-empty-field-two-widgets.pdf` | built with `generic` objects: `/Kids` with two widgets on different pages             | R3 (T3)                                                                                                                 |
+| `certified-p2-empty-field-p-mismatch.pdf`  | widget `/P` names page 1 but sits in page 2's `/Annots`                               | R3 (T2)                                                                                                                 |
+| `certified-p2-empty-field-kid-widget.pdf`  | `generic` objects: `/Sig` field with one separate widget kid, then certify P=2        | R12. Also run pyHanko's own fill on it and require `docmdp_ok=False`, so the refusal stays justified if pyHanko changes |
+| `certified-p3-empty-field-kid-widget.pdf`  | same, P=3                                                                             | R12                                                                                                                     |
+| `certified-p2-duplicate-names.pdf`         | two sibling `/Sig` fields both `/T (Approver)`                                        | R13                                                                                                                     |
+| `certified-p2-dotted-name.pdf`             | `/T (Approver.One)` on a terminal                                                     | R13                                                                                                                     |
+| `certified-p2-inherited-v.pdf`             | non-terminal parent with `/V` and an empty-looking `/Sig` kid                         | R14                                                                                                                     |
+| `certified-p2-widget-two-pages.pdf`        | one merged widget referenced from page 1 and page 2 `/Annots`                         | R15                                                                                                                     |
+| `certified-p2-widget-oc.pdf`               | widget with `/OC` naming an OFF group                                                 | R16                                                                                                                     |
+| `certified-p2-readonly-field.pdf`          | `/Ff 1` on the field                                                                  | R16                                                                                                                     |
+| `certified-p2-late-visible-field.pdf`      | certify P=2, then append a visible empty field (pyHanko, approval-only writer)        | R17. Also show that pyHanko's own fill of it gives `docmdp_ok=False`                                                    |
+| `certified-p3-later-annotation.pdf`        | P=3 empty-field fixture, then a revision adding a `/Square` annotation over the field | R18                                                                                                                     |
+| `certified-p2-later-annotation.pdf`        | same at P=2 (the revision is already a violation)                                     | R18                                                                                                                     |
 
 The generator keeps the in-memory key rule: nothing private is stored.
 
@@ -237,7 +309,7 @@ The generator keeps the in-memory key rule: nothing private is stored.
 
 ### 7.3 Negative gates
 
-- Every refuse row R1–R10 has a fixture that `signingPolicyBlock` classifies correctly. Each one
+- Every refuse row R1–R10 and R12–R18 has a fixture that `signingPolicyBlock` classifies correctly. Each one
   asserts the specific reason, not just "blocked".
 - **The current path stays refused on certified input.** Force `addIncrementalPlaceholder` (the
   append-a-field path) on `certified-p2-empty-field.pdf` in a test-only harness. Then run
@@ -260,7 +332,10 @@ The generator keeps the in-memory key rule: nothing private is stored.
 **D1. Which DocMDP levels to support**
 
 - **(a) P=2 and P=3, each gated by its own fixture passing `docmdp_ok=True` at FORM_FILLING.
-  Recommended.** If P=3 fails in pyHanko, ship P=2 only and record P=3 as refused.
+  Recommended.** If P=3 fails in pyHanko, ship P=2 only and record P=3 as refused. Evidence so
+  far: the review probe's merged-field fill by **pyHanko's own writer** passes at P=3 at
+  FORM_FILLING, with only the "not designed for P=3" warning logged. The app's writer still needs
+  its own P=3 fixture.
 - (b) P=2 only, and leave P=3 refused because pyHanko warns it was not designed for P=3.
 - (c) P=2 and P=3 without a P=3 fixture. Not recommended.
 
@@ -298,6 +373,31 @@ The generator keeps the in-memory key rule: nothing private is stored.
 - **(a) Out of scope here, keeping today's append path. Recommended**: a smaller change.
 - (b) Also offer the fill path there, as an alternative to free placement.
 
+**D8. Fields whose widget is a separate kid**
+
+- **(a) Refuse them (R12) and leave support to a later investigation. Recommended.** pyHanko
+  0.36.2 rejects the fill at P=2 and P=3, and the project's gate is pyHanko.
+- (b) Investigate support now: a custom pyHanko diff rule that whitelists the kid widget's `/AP`
+  update. This changes what the gate means, so it needs its own review.
+- (c) Support them with Acrobat as the only evidence. Not recommended: it contradicts the
+  automatable-validator rule (Principle V).
+
+**D9. Revisions after the certification**
+
+- **(a) Allow only later revisions that are signature fills of fields present at certification.
+  Refuse everything else (R18). Recommended.** The app cannot diff-analyse, so this is the shape
+  it can classify.
+- (b) Also allow P=3 documents whose later revisions only add annotations, accepting T13.
+- (c) Ignore later revisions. Not recommended: the app could report success on a document whose
+  certification is already broken.
+
+**D10. Delivery scope**
+
+- **(a) Ship all three distributions together at 6–9 days. Recommended**: Principle V evidence
+  is per distribution, and one signing path keeps FR-009.
+- (b) Desktop first (about 5–7 days), with PWA and Android E2E and the Acrobat check following
+  in a second PR. The signing code is shared, so only the evidence is staged.
+
 ## 9. Open questions for Kurt
 
 1. Is there a real-world certified form, for example a government form, that this must accept?
@@ -309,16 +409,18 @@ The generator keeps the in-memory key rule: nothing private is stored.
 
 ## 10. Effort
 
-About **4–6 working days** for one implementer. This is **[inferred]**, from the size of the
-existing `incrementalUpdate.ts` and `signingPolicy.ts` (488 and 77 lines):
+About **6–9 working days** for one implementer (raised from 4–6 after review). This is
+**[inferred]**, from the size of the existing `incrementalUpdate.ts` and `signingPolicy.ts` (488 and
+77 lines). A desktop-first split is D10 (b).
 
-| Part                                                                            | Estimate   |
-| :------------------------------------------------------------------------------ | :--------- |
-| Fixtures (13), including the three hand-built `generic` ones                    | 1 day      |
-| `signingPolicyBlock` classification and eligibility rules 1–8, with unit tests  | 1 day      |
-| `fillExistingSignatureField`, shared tail extraction, well-formedness check     | 1–1.5 days |
-| UI field picker on the preview, and copy                                        | 1–1.5 days |
-| Gates (positive, negative, tampered), E2E on three distributions, Acrobat check | 1 day      |
+| Part                                                                                                                                                      | Estimate   |
+| :-------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------- |
+| Fixtures (24), many hand-built from `generic` objects, plus pyHanko's own-fill controls                                                                   | 1.5–2 days |
+| `signingPolicyBlock` classification across `loadPdf.ts` and `signIncremental.ts`; rules 1–8 and 5a–5d (revision classification included), with unit tests | 1.5–2 days |
+| `fillExistingSignatureField`, shared tail extraction, well-formedness check                                                                               | 1–1.5 days |
+| UI field picker on the preview with `/Rotate`, and copy                                                                                                   | 1–1.5 days |
+| Gates (positive, negative, tampered)                                                                                                                      | 0.5–1 day  |
+| E2E on three distributions, and the Acrobat check                                                                                                         | 0.5–1 day  |
 
 ## Sources
 

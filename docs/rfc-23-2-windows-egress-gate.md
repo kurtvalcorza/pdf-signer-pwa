@@ -48,7 +48,7 @@ run on a runner; the test plan (§6) confirms or refutes each one.
   (`{0CCE9226-69AE-11D9-BED3-505054503030}`) enabled, WFP writes Security-log events. These
   include **5156** (connection permitted), **5157** (connection blocked), **5158** and **5159**
   (bind permitted or blocked), and **5154** and **5155** (listen). **Filtering Platform Packet
-  Drop** (`{0CCE9225-…}`) adds **5152** (packet dropped) and **5153** (vetoed). WFP auditing is
+  Drop** (`{0CCE9225-69AE-11D9-BED3-505054503030}`) adds **5152** (packet dropped) and **5153** (vetoed). WFP auditing is
   off by default, and only `auditpol.exe` can enable a single subcategory. Event 5157 carries
   `ProcessID`, `Application` (the full `\device\harddiskvolumeN\…` path), `Direction`, the source
   and destination address and port, `Protocol`, `FilterRTID` and `LayerName`, which is an ALE
@@ -59,8 +59,9 @@ run on a runner; the test plan (§6) confirms or refutes each one.
   event however briefly the socket lives, and a sampler cannot miss it the same way. That this
   happens for an attempt closed within microseconds is the claim the probe (§6) must confirm.
 - **Net events** (`FwpmNetEventEnum`, `netsh wfp show netevents`) are a second, non-Security-log
-  record. Collection is **on by default**, and all outbound events are collected [MS,
-  FwpmEngineSetOption0]. They are useful as a cross-check, but they need P/Invoke or `netsh` XML
+  record. **[inferred]** Collection is on by default, and all outbound events are collected. The
+  `FwpmEngineSetOption0` remarks say so, but the review did not re-check that page, and nothing
+  has been observed on a runner. They are useful as a cross-check, but they need P/Invoke or `netsh` XML
   parsing to read.
 - **A callout** needs a signed kernel driver. That fails G4. Rejected.
 - **A custom user-mode filter** (`FwpmFilterAdd0` in a dynamic session, conditioned on
@@ -113,8 +114,8 @@ run on a runner; the test plan (§6) confirms or refutes each one.
 - **Fails closed both ways.** A blocked attempt yields 5157. An attempt that somehow got
   through yields 5156. The gate fails on either one.
 - **Risk.** If the runner's firewall profiles are disabled, `-Program` rules are not enforced
-  **[inferred]**. The gate must either enable the profile (`Set-NetFirewallProfile -Enabled True
--DefaultOutboundAction Allow`) or prove enforcement through the positive control. It does both.
+  **[inferred]**. The gate must either enable the profile (`Set-NetFirewallProfile -Enabled True -DefaultOutboundAction Allow`)
+  or prove enforcement through the positive control. It does both.
 
 ## 3. DNS attribution
 
@@ -129,9 +130,15 @@ run on a runner; the test plan (§6) confirms or refutes each one.
   `ProcessId` is in the app's tree.
   - **[inferred]** The client-side query events (for example 3006 "query called" and 3008
     "query completed") are logged in the **calling** process's context, so the header PID is the
-    app's. Secondary write-ups say so; no Microsoft page seen in this pass does. The probe's
-    deliberate `.invalid` lookup (§6) decides whether this check can gate or must stay
-    informational (decision B2).
+    app's. Secondary write-ups say so; no Microsoft page seen in this pass does.
+- **There are two resolver paths, and the probe must cover both.** Node's `dns.lookup` in the
+  main process uses getaddrinfo, the system resolver. Chromium's host resolver runs in the
+  **network-service utility process**. Depending on its configuration, it either calls the system
+  resolver from that process or uses its built-in DNS client **[inferred]**. A renderer or session
+  request takes the Chromium path, which is the one most likely to leak. So decision B2 rests on
+  the results for **both** probes (§4 step 3), not on the Node one alone. If attribution works
+  for one path and not the other, the check gates on the path that works, and the other is
+  recorded as a gap.
 - A name lookup with no connection afterwards still discloses the name to the resolver. So the
   DNS check is part of SC-004, not a nicety.
 
@@ -148,34 +155,63 @@ The shape is **[inferred]**; no script is written by this RFC.
      cannot roll over the window.
    - Record `StartTime`.
 2. **Arm.**
-   - `auditpol /set /subcategory:"{0CCE9226-69AE-11D9-BED3-505054503030}" /success:enable
-/failure:enable`, and the same for `{0CCE9225-…}`. Use the GUIDs, because the names are
-     localised [MS].
+   - Enable auditing by GUID, because the subcategory names are localised [MS]:
+     - Filtering Platform Connection:
+       `auditpol /set /subcategory:"{0CCE9226-69AE-11D9-BED3-505054503030}" /success:enable /failure:enable`
+     - Filtering Platform Packet Drop: the same command with
+       `{0CCE9225-69AE-11D9-BED3-505054503030}`
+     - Process Creation (event 4688): `{0CCE922B-69AE-11D9-BED3-505054503030}`. This GUID is from
+       memory **[inferred]**; confirm it with `auditpol /list /subcategory:* /v` before use. Also
+       enable "Include command line in process creation events" so the `--type=` of each child is
+       recorded.
    - `New-NetFirewallRule -Direction Outbound -Action Block -Program <abs path of PDF Signer.exe>`,
      plus one for every other image in the package's `win-unpacked` directory (any `*.exe`).
-   - Start the DNS-Client and Kernel-Process ETW sessions.
+   - Start the DNS-Client ETW session.
+   - Take a **baseline** of out-of-tree 5156 events to ports 80, 443 and 445 (System PID 4,
+     `svchost`), for the false-negative checks in §5a.
 3. **Positive control (G5).** Launch the packaged app through Playwright, as
-   `verify-packaged.mjs` does. Then make it attempt, from its **main process**:
-   - a TCP connect to `192.0.2.1:443` (TEST-NET-1), closed immediately;
-   - a UDP send to `198.51.100.1:53` (TEST-NET-2);
-   - `dns.lookup('egress-probe.invalid')`.
+   `verify-packaged.mjs` does. The probe mechanism is decision B3. Make the app attempt the
+   following, through **both** network stacks it contains:
+   - **Node, main process:** a TCP connect to `192.0.2.1:443` (TEST-NET-1), closed immediately;
+     a UDP send to `198.51.100.1:53` (TEST-NET-2); and `dns.lookup('egress-probe-node.invalid')`.
+   - **Chromium, network service:**
+     - `session.defaultSession.resolveHost('egress-probe-chromium.invalid')`;
+     - `net.request('http://192.0.2.2/')` from the main process;
+     - a renderer `fetch('http://192.0.2.3/')`. This one is expected to be stopped by CSP and the
+       layer-2 `webRequest` block before any socket is opened, so it is a **negative control**:
+       it must produce **no** WFP event. If it does produce one, a layer above WFP has failed.
+       That is a finding, and the gate fails.
 
-   The gate requires **5157** events for the first two, attributed to the app's PID and image. If
-   B2 is (a), it also requires a DNS-Client event for the third. Missing any of them fails the
-   gate with "control failed". The probe mechanism is decision B3.
+   The gate requires **5157** events for every TEST-NET attempt except the renderer fetch. Each
+   must be attributed to a tree PID, and the Chromium ones must carry the **network-service
+   child's** PID (identified by `--type=utility` in its 4688 command line). If B2 is (a), the gate
+   also requires DNS-Client events for whichever lookups §6 step 3 proved attributable. Any
+   missing event fails the gate with "control failed".
 
 4. **Real run.** Start a fresh launch with `PDFSIGNER_SKIP_VALIDATE=1`, and run the full
    `verify-packaged.mjs` flow: launch, sign, idle, quit.
 5. **Collect and judge** over `[StartTime, now]`:
-   - **Tree** = the PIDs in Kernel-Process start events descending from the launched root. A
+   - **Tree** comes from Security event **4688** (New Process ID, Creator Process ID, New Process
+     Name), which is in the same log the gate already reads. The 5152 page points to 4688 for PID
+     correlation [MS]. This replaces the undocumented Kernel-Process ETW used in the first draft.
+     Tree members are keyed on **(PID, 4688 time)** and closed by 4689 (process exit), so a PID
+     reused by an unrelated process later in the window is not counted as the app's. A network
+     event belongs to the tree only if its PID was a live tree member at the event's time. A
      child whose image is not in the package directory fails the gate (G3), unless it is on an
      explicit allow-list kept in the script. The allow-list starts empty.
    - **Fail** on any 5156, 5157 or 5152 whose `ProcessID` is in the tree and whose destination
-     is not `127.0.0.0/8` or `::1`.
+     is unicast and not `127.0.0.0/8`, `::1` or `::ffff:127.0.0.0/104`.
+   - **Multicast and broadcast are excluded, matching the Linux gate.** The Linux leg drops them
+     with `'not multicast and not broadcast'` (`release-desktop.yml:126-130`), on the reasoning
+     that ND, mDNS and IGMP are stack noise. Windows uses the same rule: destinations in
+     `224.0.0.0/4`, `ff00::/8`, `255.255.255.255` or the subnet broadcast are **logged, not
+     failed**. An app-originated mDNS or SSDP packet is therefore a residual on both platforms,
+     recorded the same way in audit.md.
    - **Fail** on any DNS-Client query from a tree PID (if B2 is (a)).
    - **Log, do not fail**, on 5158 binds. A wildcard UDP bind is not traffic. The 5157 on the
      first send is what counts.
-6. **Disarm** in a `finally` block: remove the rules, restore auditpol, stop the ETW sessions,
+   - **Out-of-tree checks (§5a), per decision B7.**
+6. **Disarm** in a `finally` block: remove the rules, restore auditpol, stop the ETW session,
    and upload the filtered events as an artifact on failure. The runner is ephemeral, but the
    cleanup keeps the step safe to run locally.
 
@@ -190,12 +226,36 @@ only known after launch (open question 2).
 | Electron, Chromium network service                    | Same image, so it is under the rule. No traffic expected: CSP `connect-src 'none'` and the layer-2 `webRequest` block **[repo]**.               | Anything seen is a real finding.                                                           |
 | Chromium component updater, variations, Safe Browsing | Electron does not ship Google's updater or field-trial services **[inferred]**.                                                                 | Any attempt is a real finding. That is the point of SC-004.                                |
 | Crash reporter (crashpad)                             | Same image with `--type=crashpad-handler`. `crashReporter.start()` is absent (release-artifacts layer-5) **[repo]**.                            | Upload attempts would fail the gate, correctly.                                            |
-| Certificate revision (CRL/OCSP, AIA fetch)            | The app does no TLS. Authenticode checks of the unsigned binary are made by the OS (Defender, SmartScreen), not by the app tree **[inferred]**. | Outside the tree by PID. A revocation fetch attributed to the app would be a finding.      |
+| Certificate revocation (CRL/OCSP, AIA fetch)          | The app does no TLS. Authenticode checks of the unsigned binary are made by the OS (Defender, SmartScreen), not by the app tree **[inferred]**. | Outside the tree by PID. A revocation fetch attributed to the app would be a finding.      |
 | SmartScreen and Defender scanning the new `.exe`      | Different processes (`smartscreen.exe`, `MsMpEng.exe`)                                                                                          | Out of tree, so ignored. Logged for evidence.                                              |
 | Dnscache resolving for others                         | `svchost`                                                                                                                                       | Ignored, unless a DNS-Client event attributes the query to a tree PID.                     |
 | Loopback (Playwright CDP/inspector)                   | `127.0.0.1`                                                                                                                                     | Excluded by address. The inspector is how `verify-packaged.mjs` drives the app **[repo]**. |
 | IPv6 router or neighbour discovery, multicast         | Kernel, not the app                                                                                                                             | Out of tree.                                                                               |
 | Runner agent and telemetry                            | `Runner.Worker.exe`, and so on                                                                                                                  | Out of tree. Not blocked, so G3 holds.                                                     |
+
+`electron/main.js:24-27` also sets `disable-background-networking`, `disable-component-update`,
+`disable-domain-reliability` and `disable-breakpad` **[repo]**. So the updater and crash-upload
+rows above are expected to stay silent, and the different-image check should not be tripped by
+crashpad.
+
+## 5a. Known false negatives: egress the app causes but does not send
+
+The per-image block rule and the PID-tree judgement only see traffic **sent by the app's own
+processes**. SC-004 says "any egress", so each case below is either checked or written down as
+out of scope. None of them is stopped by the block rule, so if it happens, the name or request
+still leaves the runner.
+
+| Case                                                                                                                | Who sends it                                                        | Status under B7 (a)                                                                                                                                                                                                                                                                                                  |
+| :------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DNS through the system resolver                                                                                     | Dnscache (`svchost`)                                                | **Checked** through DNS-Client ETW attribution (§3, B2).                                                                                                                                                                                                                                                             |
+| UNC or WebDAV path open (for example `\\host\share\x.pdf` through the file dialog, or a link)                       | SMB redirector (System, PID 4) or the WebClient service (`svchost`) | **Checked**: fail on any new out-of-tree 5156 to port 445, 139 or 80 from PID 4 or the WebClient `svchost` during the window, compared with the baseline from step 2. The gate's own flow opens only local paths, so any such event is a finding **[inferred: the runner may have background SMB; baseline first]**. |
+| Proxy auto-detection (WPAD): the WinHTTP Auto-Proxy service resolving `wpad` or fetching a PAC file                 | `svchost` (WinHttpAutoProxySvc)                                     | **Out of scope, recorded.** It is host behaviour, not attributable to one request. Chromium's own proxy resolution would show up in the tree (same image) and is covered.                                                                                                                                            |
+| A process launched through the shell, `shell.openExternal(REPO_URL)` (`electron/network.js:47`)                     | The default browser, which is not parented to the app               | **Out of scope by design**: it is a disclosed, user-initiated, exact-URL hand-off (FR-020). The gate's flow never clicks the link. The tree check still catches a _child_ process with another image. A shell-brokered launch is not a child, so it is listed here.                                                  |
+| Certificate revocation (CRL, OCSP or AIA) done by the OS for the app's binary or for any certificate the app parses | CryptSvc, `svchost`, or SmartScreen                                 | **Out of scope, recorded.** The app does no TLS. The OS may revoke-check the unsigned binary's environment on its own schedule. A revocation fetch _from a tree PID_ would be caught as a 5157.                                                                                                                      |
+
+Every "out of scope, recorded" row goes into audit.md next to SEC-14, so the Windows claim says
+exactly what it covers. This is the "a claim must not outrun its mechanism" lesson from the 002
+review (CLAUDE.md).
 
 ## 6. Test plan
 
@@ -207,10 +267,16 @@ only known after launch (open question 2).
 2. **Old sampler misses it.** Run the same probe under `windows-egress-check.ps1` and record
    how many of the 20 it misses. This is the before and after number for audit.md SEC-14. A miss
    rate of 0 would mean the sampler's gap is theoretical on this runner; record it either way.
-3. **DNS attribution (B2).** The probe's `egress-probe.invalid` lookup appears in the DNS-Client
-   session with a tree PID: yes or no. This decides whether the DNS check gates or only logs.
-4. **Tree coverage.** The Kernel-Process session shows every child of the root running the same
-   image. Then a test-only probe spawns `cmd.exe /c exit`, a different image, and the gate must
+3. **DNS attribution (B2).** Record, separately for each, whether the Node lookup
+   (`egress-probe-node.invalid`) and the Chromium `resolveHost` lookup
+   (`egress-probe-chromium.invalid`) appear in the DNS-Client session with a tree PID, and which
+   PID: main or network service. Also record whether the Chromium lookup instead shows up as UDP
+   53 from the network-service PID, as a 5157. These results decide B2, per path.
+   - **3a.** **Chromium paths reach WFP.** `net.request` to `192.0.2.2` produces a 5157 from the
+     network-service PID. The renderer `fetch` produces none, because CSP and layer 2 stop it first.
+4. **Tree coverage.** The 4688 events show every child of the root running the same image. A
+   synthetic PID-reuse case is checked: an unrelated process started after a tree member exits,
+   reusing its PID, must not be counted. Then a test-only probe spawns `cmd.exe /c exit`, a different image, and the gate must
    fail with "unexpected image in process tree".
 5. **Pass on the real build (G2).** The full launch, sign, idle and quit run yields zero failing
    events, and the job passes. Do this on 3 consecutive release-workflow runs (a
@@ -227,7 +293,8 @@ Done-when, from issue #23: steps 1 and 5 pass, with step 6 shown to fail closed.
 **B1. Mechanism**
 
 - **(a) Option E: a firewall block rule per packaged image, WFP connection and packet-drop
-  auditing, the PID tree from Kernel-Process ETW, and a positive probe. Recommended.**
+  auditing, the PID tree from Security event 4688, and a positive probe through both network
+  stacks. Recommended.**
 - (b) Option A: our own WFP dynamic-session filter through `Add-Type`. It does not depend on the
   firewall profile state, but it is about 200 more lines to own.
 - (c) Option B: ETW Kernel-Network alone. No blocking, and an undocumented schema.
@@ -235,23 +302,41 @@ Done-when, from issue #23: steps 1 and 5 pass, with step 6 shown to fail closed.
 
 **B2. DNS**
 
-- **(a) DNS-Client ETW as a gating check, if §6 step 3 shows it attributes the probe's lookup;
-  otherwise informational, with the residual gap written in audit.md. Recommended.**
+- **(a) DNS-Client ETW is a gating check for each resolver path (Node getaddrinfo, Chromium host
+  resolver) that §6 step 3 shows it attributes to a tree PID. Any path it cannot attribute is
+  informational, with the residual gap written in audit.md. Recommended.**
 - (b) Always informational.
 - (c) Leave DNS out of scope for Windows.
 
-**B3. How the probe reaches the packaged binary**
+**B3. The inspector fuse, and how the probe reaches the packaged binary**
 
-- **(a) Through the inspector Playwright already attaches.** `enableNodeCliInspectArguments`
-  stays on for `verify-packaged.mjs` **[repo]** `electron-builder.yml`, and the probe is
-  `electronApp.evaluate` in the main process. **Recommended**: it uses the shipped binary itself,
-  and no probe code enters `electron/` (the eslint import allow-list stays intact). **[inferred]**
-  Whether the main-process evaluate context can reach `net` and `dgram` in an ESM main is
-  unknown; if it cannot, fall back to (b).
-- (b) A separate unreleased "probe" package variant, built in the same job, with a probe module
-  outside `electron/`.
-- (c) A standalone probe executable in the package directory. It is covered by the per-image
-  rules, but it proves less about the real binary.
+Today the release binary keeps `enableNodeCliInspectArguments` on (`electron-builder.yml:13-20`
+**[repo]**), because `verify-packaged.mjs` drives the app through the inspector. That means anyone
+who launches the shipped `.exe` with `--inspect` gets code execution in the main process. This
+partly undercuts the burned `runAsNode` and `NODE_OPTIONS` fuses. The exposure **already exists**;
+this RFC does not add it. But option (a) would make a second release gate depend on it.
+
+- (a) **Keep the inspector fuse on, and probe through it** with `electronApp.evaluate` in the
+  main process. The tested binary is byte-for-byte the shipped one, and no probe code enters
+  `electron/`. Cost: the `--inspect` exposure stays for as long as the gates need it.
+  **[inferred]** Whether the evaluate context can reach `net` and `dgram` in an ESM main is
+  unknown.
+- (b) **A separate gate-only probe build, or an environment-gated hook.** The same commit is
+  built a second time with a probe module (outside `electron/`), or with the hook compiled in
+  only when a build flag is set. Both the egress gate and `verify-packaged` can then run against
+  it. Cost: the gated binary differs from the shipped one by the probe (and by a fuse, if (c) is
+  also chosen). An environment-gated hook compiled into the _shipped_ binary is not acceptable,
+  because it is a dormant network path.
+- (c) **Turn the inspector fuse off in release for security, and probe another way**: (b)'s gate
+  build, or a standalone probe `.exe` in the package directory, which is covered by the per-image
+  rules but proves less about the real binary. Cost: `verify-packaged.mjs` must also move to the
+  gate build, or to a driver that does not need the inspector.
+- **Recommended: (b) now, with (c) as a follow-up SEC-03 item.** The probe does not come to
+  depend on the inspector, and turning the fuse off later changes no gate.
+
+Whichever is chosen, a **follow-up**: assert the fuse state the team chose in
+`verify-packaged.mjs` (`@electron/fuses` read on the packaged binary). It is not asserted
+today (`verify-packaged.mjs:37-43`).
 
 **B4. The existing socket sampler**
 
@@ -264,26 +349,40 @@ Done-when, from issue #23: steps 1 and 5 pass, with step 6 shown to fail closed.
   changes runner security settings.
 - (b) Also on `ci.yml` PRs, which adds an electron-builder packaging step to every PR.
 
+**B6. Multicast and broadcast**
+
+- **(a) Log but do not fail, the same rule as the Linux gate (§4 step 5). Recommended**: one
+  rule on both platforms.
+- (b) Fail on them on both platforms. That needs a Linux change too, and it accepts stack noise
+  as a failure risk.
+
+**B7. Egress the app causes but does not send (§5a)**
+
+- **(a) Check DNS and UNC/WebDAV (out-of-tree 5156 to ports 445, 139 and 80 from System or
+  WebClient, compared with a baseline). Record WPAD, shell-launched processes and OS revocation
+  checks as out of scope in audit.md. Recommended.**
+- (b) Only the in-tree checks plus DNS, with every out-of-tree case recorded as a gap.
+- (c) Treat any out-of-tree egress during the window as a failure. Not recommended: the runner's
+  own background traffic would make the gate flaky.
+
 ## 8. Open questions for Kurt
 
 1. Is a 20/20 detection run on one runner image enough evidence, or should it be repeated after
    each `windows-latest` image bump? `windows-latest` moves between Server releases.
 2. Should the portable wrapper `.exe` (not only `win-unpacked`) be monitored? That needs a rule
    on its `%TEMP%` extraction path, discovered after launch.
-3. If B3 (a) works, should the inspector-enabling fuse stay on in release binaries? It is on
-   today for the packaged gate. That is a separate SEC-03 question, but this gate would come to
-   depend on it.
 
 ## 9. Effort
 
-About **3–4 working days [inferred]**:
+About **4–6 working days [inferred]** (raised from 3–4 after review). Alternatively, split it:
+spend one day on runner experiments (§6 steps 1–4 and 6) first, then re-estimate the script.
 
-| Part                                                                               | Estimate  |
-| :--------------------------------------------------------------------------------- | :-------- |
-| `windows-egress-gate.ps1`: arm, judge, disarm, and the event parsing               | 1.5 days  |
-| Probe via Playwright evaluate (or the B3 fallback) and the tree check              | 0.5–1 day |
-| Runner experiments §6 steps 1–4 and 6, with evidence in audit.md                   | 1 day     |
-| Workflow wiring, 3 dry runs, docs (`desktop.md`, release-artifacts SC-004 wording) | 0.5 day   |
+| Part                                                                                                   | Estimate   |
+| :----------------------------------------------------------------------------------------------------- | :--------- |
+| `windows-egress-gate.ps1`: arm, judge with the 4688 tree and PID reuse, disarm, event parsing          | 1.5–2 days |
+| Probes through both stacks (B3 mechanism), the tree check, §5a baseline checks                         | 1–1.5 days |
+| Runner experiments §6 steps 1–4 and 6, with evidence in audit.md                                       | 1–1.5 days |
+| Workflow wiring, 3 dry runs, docs (`desktop.md`, release-artifacts SC-004 wording, audit.md residuals) | 0.5–1 day  |
 
 ## Sources
 
