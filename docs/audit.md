@@ -21,21 +21,38 @@ inherited from the review.
 ### SEC-14: what the Windows no-egress gate checks, and what it does not
 
 Measured on `windows-latest` (Server 2025) in runs 43802298765, 43804844070, 43805710270 and 43806349805;
-details
-in [RFC 23-2 §10](rfc-23-2-windows-egress-gate.md#10-runner-evidence-phase-0-2026-11-16).
+details in [RFC 23-2 §10](rfc-23-2-windows-egress-gate.md#10-runner-evidence-phase-0-2026-11-16).
 
 - **Checked.** Any TCP or UDP connection attempt, allowed or blocked, by any process in the app's
   tree, to a unicast non-loopback address, however short-lived: 20 of 20 deliberate attempts per
   protocol were recorded in each run. The socket sampler it replaces saw 0 of 20 connections to a
   peer that closes at once. Also checked: name lookups by a tree process through the system
-  resolver, a foreign image in the tree, and an SMB or WebDAV client connection during the window.
+  resolver, a foreign image in the tree, and an SMB connection from the system redirector during a
+  window. Every app process must have exited before a window is read, and none may be running when
+  the block rules are removed; before that the gate re-checks that auditing and the rules are still
+  in place. These last checks were added after review and have run only in the self-test, not yet
+  armed on a runner.
+- **WebDAV: coded, never exercised.** The gate also fails on a connection from the WebClient service
+  to port 80 or 443, reading that service's pid again for every window. Whether the WebClient service
+  exists on `windows-latest` is not shown by any run's artifacts; it is inferred to be absent on
+  Windows Server, in which case this half of the check can never fire there.
 - **Subject.** The controls and the sign flow run on the gate-only probe build, which differs from
   the release by one fuse byte (`check-fuses.mjs`). The release exe itself is measured undriven:
-  launch, 15 s idle, quit. Signing on the release binary is therefore inferred from the probe.
+  launch, 15 s idle, quit; a quit that needs a kill fails the gate. In the release workflow that exe
+  is the one unpacked from the shipped portable (`release/portable-extract`), the same tree
+  `check-fuses.mjs` compares with the probe. The four runs above used `release/win-unpacked`
+  instead; the unpacked-portable path has not yet run armed. Signing on the release binary is
+  inferred from the probe. The positive controls are IPv4 only.
+- **Evidence.** The uploaded artifact holds only the events the judge used (tree members, their
+  connection and lookup events, share-client events), without local addresses, accounts, machine
+  names or SIDs, and without the audit-policy backup.
 - **Finding F1, fixed.** The gate showed the app's network service looking up `wpad` on every
   launch, with the resolver sending that query to the DNS server. `electron/main.js` now sets
   `no-proxy-server`; with that line the strict gate passed twice on the runner (throwaway branch).
-  Releases up to v0.2.0 make the lookup. The gate keeps no allow-list, so a regression fails it.
+  Windows builds up to v0.2.0 are expected to make the lookup: they have the same `main.js`
+  switches and Electron line, but this is inferred from the code, not measured on those binaries,
+  and nothing was measured on Linux. The fix ships from the next release. The gate keeps no
+  allow-list, so a regression fails it.
 - **Not checked, recorded.** Multicast and broadcast from the app are logged, not failed, the same
   rule as the Linux gate. The portable wrapper's self-extraction to `%TEMP%` is not monitored; the
   gate runs the unpacked build. A browser opened through the "View source" link is not a child

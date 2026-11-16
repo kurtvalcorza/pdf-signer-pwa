@@ -511,8 +511,38 @@ this one lookup.
 Launching the release exe with `--no-proxy-server` removed the lookup (run 2), and a build with
 `app.commandLine.appendSwitch('no-proxy-server')` in `electron/main.js` passed the strict gate
 (run 3). The owner chose that fix on 2026-11-16 (§8, question 3). It is committed with this work as its
-own change, so `docs/desktop.md`'s statement holds again once it ships. Releases up to v0.2.0
-make the lookup.
+own change, so `docs/desktop.md`'s statement holds again from the next release. Windows builds up
+to v0.2.0 are **expected** to make the lookup: `git diff v0.2.0..a6f4eef` leaves `electron/main.js`
+untouched, so they carry the same switches. That is inferred from the code. It was not measured
+on a v0.2.0 binary, and nothing about `wpad` was measured on Linux.
+
+### Changes after review (2026-11-16), not yet run armed
+
+A review of the drafted gate found no escape in the recorded runs but several places where a
+clean result could have meant less than it said. These are fixed in the script and covered by
+`-SelfTest` (38 checks, each new one shown to fail under mutation). **None of them has run armed
+on a runner**; the first `release-desktop.yml` dry run is their first real test.
+
+- A window fails if any tree member has no exit event, or if a package image is still running
+  when the window is read. A release exe that has to be killed fails the gate. The control
+  driver reports a failed `app.close()` instead of swallowing it.
+- Windows are read with no upper time bound, and window 3 is read a second time just before the
+  rules are removed, after confirming that no package process is left.
+- Before disarm the gate asserts that the four audit subcategories are still set to success and
+  failure, that every block rule is still in place, that no firewall profile was disabled (read
+  from the active store) and that the DNS-Client log is still on.
+- Window 3 runs the exe unpacked from the shipped portable (`release/portable-extract`), the
+  tree `check-fuses.mjs` compares with the probe, not `release/win-unpacked`.
+- The share-client check reads the WebClient pid for every window and includes port 443.
+  Whether WebClient exists on `windows-latest` is **[inferred]** absent: no run artifact shows it.
+- The evidence artifact holds only the events the judge used, reduced to the fields it used;
+  the audit-policy backup is kept out of it. The committed fixture has the runner's DNS suffix,
+  account name and internal addresses replaced. An earlier local commit still holds the original
+  values, so the branch should be squashed when it is merged.
+- Each cleanup step runs on its own; a log that cannot be read stops the gate with that message;
+  the number of attempts the driver reports must equal `-Repeat`.
+- Not done: an IPv6 positive control. An IPv6 attempt by the app is judged like any other, but
+  no control proves the block and audit path for IPv6 on the runner.
 
 ## Sources
 
