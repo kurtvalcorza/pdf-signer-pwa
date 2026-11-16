@@ -1,8 +1,13 @@
 // Per-distribution gate (Principle V): drive the PACKAGED portable .exe — not the unpackaged shell —
 // through a real .p12 sign and validate with pyHanko. This exercises asar packing and the real
 // portable-path resolution the unpackaged E2E cannot. Usage: node electron/verify-packaged.mjs
+//
+// It drives the GATE-ONLY PROBE build (electron-builder.probe.yml, `npm run build:desktop:probe`),
+// not the release: Playwright attaches through the Node inspector, and the release binary has that
+// fuse burned off (issue #33). scripts/check-fuses.mjs --release … --probe … proves the probe packs
+// the release's exact app.asar and differs from it only by that one fuse.
 import { _electron as electron } from 'playwright';
-import fuses from '@electron/fuses';
+import { assertFuses, PROBE } from '../scripts/check-fuses.mjs';
 import { execFileSync } from 'node:child_process';
 import { existsSync, statSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
@@ -22,32 +27,26 @@ const CERT_PASSWORD = 'e2e-pass';
 const exe =
   (process.env.PKG_EXE && resolve(ROOT, process.env.PKG_EXE)) ||
   (process.platform === 'win32'
-    ? resolve(ROOT, 'release/win-unpacked/PDF Signer.exe')
-    : resolve(ROOT, 'release/linux-unpacked/pdf-signer-pwa'));
+    ? resolve(ROOT, 'release-probe/win-unpacked/PDF Signer.exe')
+    : resolve(ROOT, 'release-probe/linux-unpacked/pdf-signer-pwa'));
 if (!existsSync(exe)) {
-  console.error(`No packaged build at ${exe}. Run: npm run build:desktop`);
+  console.error(
+    `No probe build at ${exe}. Run: npm run build:desktop && npm run build:desktop:probe`,
+  );
   process.exit(1);
 }
-execFileSync(process.execPath, [resolve(ROOT, 'scripts/make-e2e-fixtures.mjs')], { stdio: 'inherit' });
+execFileSync(process.execPath, [resolve(ROOT, 'scripts/make-e2e-fixtures.mjs')], {
+  stdio: 'inherit',
+});
 
-// The fuses must be burned into this binary, not merely configured.
-const { FuseV1Options, getCurrentFuseWire } = fuses;
-const wire = await getCurrentFuseWire(exe);
-const [DISABLED, ENABLED] = [48, 49]; // the fuse wire stores ASCII '0' and '1'
-const expected = {
-  RunAsNode: DISABLED,
-  EnableNodeOptionsEnvironmentVariable: DISABLED,
-  OnlyLoadAppFromAsar: ENABLED,
-  EnableEmbeddedAsarIntegrityValidation: ENABLED,
-  GrantFileProtocolExtraPrivileges: DISABLED,
-};
-for (const [name, state] of Object.entries(expected)) {
-  if (wire[FuseV1Options[name]] !== state) {
-    console.error(`[pkg] fuse ${name} is not burned as expected`);
-    process.exit(1);
-  }
+// The fuses must be burned into this binary, not merely configured: the probe set (hardened, inspector
+// on). Pointing this at a release binary fails here, with the inspector reported off.
+try {
+  await assertFuses(exe, PROBE, 'probe');
+} catch (e) {
+  console.error('[pkg]', e.message);
+  process.exit(1);
 }
-console.log('[pkg] fuses burned as configured.');
 
 const downloadDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-dl-'));
 const portableDir = mkdtempSync(join(tmpdir(), 'pdfsigner-pkg-portable-'));

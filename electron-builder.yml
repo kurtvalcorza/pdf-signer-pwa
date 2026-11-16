@@ -10,13 +10,20 @@ files:
   - package.json
 # publish: null — FR-007 is satisfied by the ABSENCE of an update feed, not a flag.
 publish: null
-# Fuses are burned into the shipped binary. enableNodeCliInspectArguments stays on because the
-# packaged gate (verify-packaged.mjs) attaches through the inspector. --no-sandbox has no fuse.
+# Fuses are burned into the shipped binary (issue #33): the Node inspector is now OFF too.
+# enableCookieEncryption stays at Electron's default (off), as on main: hardening it is a separate
+# follow-up, because on Linux it may touch the desktop keyring and that is unverified.
+# enableNodeCliInspectArguments is OFF: the packaged gates attach through the inspector, so they
+# drive the gate-only probe build (electron-builder.probe.yml) instead, never this one.
+# scripts/check-fuses.mjs reads the burned wire back and fails on any drift. --no-sandbox has no fuse.
 electronFuses:
   runAsNode: false
+  enableCookieEncryption: false
   enableNodeOptionsEnvironmentVariable: false
-  onlyLoadAppFromAsar: true
+  enableNodeCliInspectArguments: false
   enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
   grantFileProtocolExtraPrivileges: false
 icon: public/icons/icon-512.png
 directories:

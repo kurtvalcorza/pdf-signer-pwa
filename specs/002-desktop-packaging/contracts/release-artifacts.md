@@ -46,14 +46,19 @@ implementing task and MUST match this list; where they diverge, **this contract 
 into the task mapping.
 
 ```text
-build (per platform)
-   ├─> launch the PACKAGED artifact via Playwright (_electron.launch)
+build (per platform): the release build, then the gate-only PROBE build of the same dist/
+   ├─> FUSES: read the burned wire of BOTH binaries (scripts/check-fuses.mjs):
+   │     release = hardened (Node inspector OFF; cookie encryption left at
+   │     Electron's default, off — separate follow-up); probe = release + inspector ON;
+   │     same app.asar SHA-256, and the two app folders differ in exactly
+   │     ONE byte of the main binary (the inspector fuse)                 [issue #33, RFC 23-2 B3 (b)]
+   ├─> launch the packaged PROBE via Playwright (_electron.launch)
    │     └─> complete a real signing flow → signed PDF
    │           └─> scripts/validate_pdf.py  (pyHanko)                    [FR-010]
    ├─> layer E2E: CSP alive + bypassCSP absent + layer 2 + blob: allowed +
    │     app:// path-traversal REFUSED (T015 step 5) + openExternal reachable
    │     ONLY by the exact repo URL                                       [Principle I, FR-020]
-   ├─> MONITORED-NETWORK run: launch→sign→idle→quit under PACKET-LEVEL
+   ├─> MONITORED-NETWORK run (PROBE): launch→sign→idle→quit under PACKET-LEVEL
    │     monitoring (firewall / packet capture / network namespace over the
    │     WHOLE process tree — NOT a proxy, which sees only configured HTTP(S));
    │     FAIL on ANY egress — any packet/socket, any protocol (TCP/UDP/ICMP/
@@ -91,6 +96,23 @@ Non-negotiable rules:
 - The gate runs against output from **the artifact being shipped** — not the web build, not the other
   platform, not Electron-from-`node_modules` against source. Constitution v1.1.0: *"Sharing an
   implementation makes a passing result likely; it does not make it demonstrated."*
+- **One bounded exception: the Node inspector fuse** (issue #33, RFC 23-2 decision B3 (b), decided by
+  the owner 2026-11-15). The release binary has `EnableNodeCliInspectArguments` burned **off**, so
+  anyone who launches it cannot attach a debugger, and Playwright cannot attach either. The
+  launch-driven gates (sign → pyHanko, monitored-network run) therefore drive a **gate-only probe
+  build** (`electron-builder.probe.yml` → `release-probe/`, `GATE-PROBE` artifact name, never
+  uploaded or published). This is not inheritance by assertion, because the difference is measured on
+  every run: `check-fuses.mjs` fails unless the probe packs the release's byte-identical `app.asar`
+  and the two app folders differ in exactly one byte, the inspector fuse. What the probe gates do NOT
+  demonstrate is the release binary running with that fuse off; per Electron's fuse documentation the
+  fuse decides only whether the `--inspect` family of switches (and SIGUSR1) can start the
+  main-process inspector. The release workflow also fails if any `GATE-PROBE` file
+  reaches the release assets, and the build job refuses an upload that sits under `release-probe/`
+  or is byte-identical to a probe file.
+- **Limits of the fuse gate.** The release workflow reads the fuses from inside the shipped files:
+  the unpacked portable `.exe` (7-Zip) on Windows and the extracted AppImage on Linux. PR CI reads
+  the `--dir` folders only, because it builds no portable or AppImage. The asar integrity fuse is burned on both platforms but Electron enforces it on Windows only; on
+  Linux it has no effect (the AppImage's own squashfs is the only integrity boundary).
 - **No partial releases.** If either platform's gate is red, neither publishes (SC-002). Shipping one
   while the other is broken would imply an equivalence never demonstrated. The user stories'
   "independently shippable" framing means independently **buildable and testable** — never

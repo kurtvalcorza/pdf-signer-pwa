@@ -21,7 +21,9 @@
     "icons": "node scripts/make-icons.mjs",
     "verify:signatures": "node scripts/verify-signatures.mjs",
     "audit:gate": "npm audit --omit=dev --audit-level=high",
-    "perf": "npm run build && playwright test --config playwright.perf.config.ts"
+    "perf": "npm run build && playwright test --config playwright.perf.config.ts",
+    "build:desktop:probe": "electron-builder --config electron-builder.probe.yml --publish never",
+    "check:fuses": "node scripts/check-fuses.mjs"
   },
   "dependencies": {
     "@signpdf/placeholder-pdf-lib": "^3.2.4",

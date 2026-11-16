@@ -5,7 +5,10 @@
 # be missed, and DNS lookups go through the system resolver service, so they are not attributed to the
 # app. Windows packet capture is host-wide and cannot be scoped to one process tree, so a packet-level
 # gate (WFP) remains open in issue #23. Needs no elevation.
-param([string]$Exe = 'release\win-unpacked\PDF Signer.exe')
+#
+# It runs the gate-only probe build (electron-builder.probe.yml): verify-packaged.mjs drives the app
+# through the Node inspector, which the release binary has burned off (issue #33).
+param([string]$Exe = 'release-probe\win-unpacked\PDF Signer.exe')
 
 $ErrorActionPreference = 'Stop'
 $minimumSamples = 5
@@ -39,6 +42,7 @@ if (-not ($control -match '^TCP')) { throw 'Control failed: the sampler did not 
 if (-not ($control -match '^UDP')) { throw 'Control failed: the sampler did not see a UDP socket.' }
 
 $env:PDFSIGNER_SKIP_VALIDATE = '1'
+$env:PKG_EXE = $Exe # the binary verify-packaged drives is the one whose process tree is sampled
 $run = Start-Process node -ArgumentList 'electron/verify-packaged.mjs' -PassThru -NoNewWindow
 $null = $run.Handle # keeps ExitCode readable after the process ends
 
