@@ -1,6 +1,8 @@
 # RFC 23-2: Packet-level no-egress gate on Windows, scoped to the app's process tree
 
-Status: **accepted 2026-11-15, not implemented**. Issue #23, item 2; it came from #12 and SEC-14
+Status: **accepted 2026-11-15; gate drafted and measured on the runner 2026-11-16, not yet merged**
+(evidence in [§10](#10-runner-evidence-phase-0-2026-11-16); one finding, F1, awaits an owner
+decision in [§8](#8-open-questions-for-kurt)). Issue #23, item 2; it came from #12 and SEC-14
 ([audit.md](audit.md)). Owner decisions recorded in [§7](#7-owner-decisions): B1 (a), B2 (a),
 B3 (b) gate-only probe build, B4–B7 (a).
 
@@ -29,7 +31,8 @@ This RFC recommends making the decision **at connect time instead of sampling**:
 
 Evidence labels: **[MS]** is a Microsoft Learn page (see Sources). **[GH]** is GitHub Docs.
 **[repo]** is this repository at `origin/main` `02ef745`. **[inferred]** is reasoning not yet
-run on a runner; the test plan (§6) confirms or refutes each one.
+run on a runner; the test plan (§6) confirms or refutes each one. §10 records what the runner
+showed on 2026-11-16 and takes precedence over an **[inferred]** label wherever they differ.
 
 ## 1. Requirements the gate must meet
 
@@ -374,10 +377,31 @@ today (`verify-packaged.mjs:37-43`).
 
 ## 8. Open questions for Kurt
 
-1. Is a 20/20 detection run on one runner image enough evidence, or should it be repeated after
-   each `windows-latest` image bump? `windows-latest` moves between Server releases.
-2. Should the portable wrapper `.exe` (not only `win-unpacked`) be monitored? That needs a rule
-   on its `%TEMP%` extraction path, discovered after launch.
+1. ~~Is a 20/20 detection run on one runner image enough evidence?~~ **Decided 2026-11-16:**
+   the positive control runs on every release (3 attempts per protocol); the 20/20 run is
+   repeated only when `windows-latest` moves to a new Server release. Evidence so far:
+   20/20 TCP and 20/20 UDP in each of runs 43802298765, 43804844070 and 43805710270, all on
+   Server 2025 (10.0.26100).
+2. ~~Should the portable wrapper `.exe` be monitored?~~ **Decided 2026-11-16:** stay on
+   `win-unpacked`. The wrapper's `%TEMP%` extraction is a named residual in audit.md.
+3. **Open. Finding F1 (§10): the app looks up `wpad` on every launch.** The gate as wired
+   fails every Windows release until this is settled.
+   - **(a) Recommended:** add `app.commandLine.appendSwitch('no-proxy-server')` to
+     `electron/main.js` in its own change. The app makes no requests, so it needs no proxy.
+     Measured: the lookup disappears (run 43804844070) and the strict gate passes
+     (run 43805710270). Not yet checked: the same switch on Linux and the desktop E2E suite.
+   - (b) Allow-list `wpad` in the workflow (`-AllowDnsName 'wpad','wpad.*'`) and record it
+     as a residual in audit.md. The lookup keeps leaving the user's machine, and
+     `docs/desktop.md` must stop saying the build never contacts a network.
+   - (c) Land the gate report-only until (a) ships.
+4. **Open, cannot be answered on a hosted runner.** The runner is elevated, so every result
+   in §10 was obtained as an administrator. Whether the DNS-Client channel can be enabled and
+   read, or the Security log read, from an unelevated session was **not tested**. The gate
+   requires elevation anyway (audit policy and firewall rules), so this only matters if a
+   reduced, unelevated variant is ever wanted, for example on a developer machine.
+5. **Open, minor.** The three-consecutive-dry-run bar of §6 step 5 is not met yet: one strict
+   pass exists (run 43805710270, with the F1 fix applied on a throwaway branch). The other two
+   belong on `release-desktop.yml` dry runs once question 3 is settled.
 
 ## 9. Effort
 
@@ -390,6 +414,95 @@ spend one day on runner experiments (§6 steps 1–4 and 6) first, then re-estim
 | Probes through both stacks (B3 mechanism), the tree check, §5a baseline checks                         | 1–1.5 days |
 | Runner experiments §6 steps 1–4 and 6, with evidence in audit.md                                       | 1–1.5 days |
 | Workflow wiring, 3 dry runs, docs (`desktop.md`, release-artifacts SC-004 wording, audit.md residuals) | 0.5–1 day  |
+
+## 10. Runner evidence (Phase 0, 2026-11-16)
+
+Everything in this section was **measured** on GitHub-hosted `windows-latest`
+(Windows Server 2025, 10.0.26100, image `win25-vs2026` 20261103.298.1), on a throwaway branch
+that has since been deleted. The raw events of run 1 are kept, trimmed, in
+`scripts/fixtures/egress-gate/run-43802298765.json` and replayed by
+`scripts/windows-egress-gate.ps1 -SelfTest`. It replaces the matching **[inferred]** labels above.
+
+| Run | What it ran | Result |
+| :-- | :-- | :-- |
+| [43802298765](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43802298765) | Experiment script: baseline, armed controls, real sign flow, release idle, firewall off, rules removed | All phases completed |
+| [43804844070](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43804844070) | The drafted gate, strict with 20 repeats, then with `wpad` allow-listed, then with firewall profiles off; `--no-proxy-server`; old sampler against a closing peer | Controls 20/20; strict failed on `wpad` only (plus a marker bug, fixed); firewall off failed closed |
+| [43805710270](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43805710270) | The gate, strict with 20 repeats, against a build with `no-proxy-server` added in `electron/main.js` (throwaway branch only) | **Passed**, 0 problems; firewall off failed closed |
+
+### What was confirmed
+
+- **Connect-time decision (G1, §6 step 1).** With the per-image outbound block rule, 20 of 20
+  Node TCP connects to `192.0.2.1` and 20 of 20 UDP sends to `198.51.100.1` each produced a
+  **5157** (and a 5152) carrying the main process's pid and the probe's image path. The connects
+  failed with `EACCES` in 0.3–2.7 ms. Repeated in runs 2 and 3: 60 of 60 for each protocol.
+  A blocked UDP `send` reports success to the caller; only the audit event shows it.
+- **Auditing alone sees permitted short connections.** With the rules removed, 5 of 5 two-millisecond
+  connect attempts and 20 of 20 connect-then-close connections produced a **5156**.
+- **The old sampler misses them (§6 step 2).** Against the same attempts it saw 1 of the 5
+  two-millisecond attempts, and **0 of 20** connections to a peer that closes at once (run 2).
+  In run 1 it saw 20 of 20 only because that peer never closed, which left the sockets lingering.
+- **Children are covered.** The rule is per image, and the GPU, network-service and renderer
+  processes run the same exe. Chromium's attempts were blocked in the network-service child.
+- **Process tree (§6 step 4).** 4688/4689 gave the whole tree: root, GPU, network service,
+  renderer. A `cmd.exe` spawned from the main process appeared with its `conhost.exe` child, so a
+  foreign image is detected. The network service is identified from `app.getAppMetrics()`, so
+  the "include command line" audit policy is **not** needed and the gate does not set it.
+- **Chromium controls (§6 step 3a, the claim this RFC expected to be wrong).**
+  `net.request` on `defaultSession` to `192.0.2.2` ended in `net::ERR_BLOCKED_BY_CLIENT` within
+  2 ms and left **no** WFP event: layer 2 cancels it before a socket exists, so it cannot be a
+  positive control. The same request through `session.fromPartition('egress-gate-control')` ended
+  in `net::ERR_NETWORK_ACCESS_DENIED` and produced a 5157 from the network-service pid. The
+  renderer `fetch` was rejected and left no event. Design as built: partition request positive,
+  `defaultSession` request and renderer `fetch` negative.
+- **Reaching Node from the inspector (B3).** `process.mainModule.require('node:net')` works in
+  `electronApp.evaluate` on the fuse-on probe (Electron 43.8.7, Node 24.22.1), and so does
+  `process.getBuiltinModule`. No probe code is in any binary.
+- **DNS attribution (§3, §6 step 3, B2).** The `Microsoft-Windows-DNS-Client/Operational` channel
+  and a `logman` ETW session both recorded the lookups. Event 3006 is logged in the calling
+  process: the Node `dns.lookup` carried the main pid, the Chromium `resolveHost` the
+  network-service pid. The resolver service's own events (3009, 3010) carry a `ClientPID` field
+  with the same pid, and 3010 names the DNS server the query went to. Chromium **also** tried
+  its built-in client first: 4 UDP 53 attempts from the network service, each a 5157. Both paths
+  are attributable, so B2 (a) gates on both. The gate uses the channel, not `logman`.
+- **Noise.** About one event per second host-wide, all outside the tree: the Azure guest agent,
+  the runner's own agents, Dnscache, Defender, and inbound drops with pid 0. Inside the tree a
+  clean run has only the loopback inspector connection and socket binds. No multicast or
+  broadcast packet came from the app. No SMB or WebDAV client connection appeared in any window.
+- **Fail closed (§6 step 6).** With the firewall profiles disabled the same attempts were
+  **allowed** (5156, filter id 0), so no 5157 exists and the controls fail. The gate stops
+  earlier, at a precondition that names the disabled profiles.
+- **Cleanup (§6 step 7).** No gate rule was left after any run. `auditpol /get /category:* /r`
+  was identical before and after. A restored `auditpol /backup` file is **not** byte-identical
+  when backed up again (two `GlobalSacl` rows are added), so the gate compares the `/get` text.
+- **Preconditions.** The runner is elevated, all three firewall profiles are
+  enabled, and the Security log is 20 MB by default (the gate raises it and restores it).
+
+### Things that differ from the design text
+
+- 4688 names the image as `\Device\HarddiskVolume4\…` and 5156/5157 use the same form in lower
+  case, while 4689 and the file system use `D:\…`. The judge compares the path after the volume.
+- `Get-WinEvent` applies `StartTime` and `EndTime` at whole-second resolution. Windows are
+  therefore read with a settle delay, and the arm markers are read up to "now".
+- The §4 baseline of out-of-tree traffic to ports 80, 443 and 445 is not needed as a
+  subtraction: the judge fails only on ports 445, 139 and 80 from System (pid 4) or the
+  WebClient service, and none occurred. The Azure guest agent's constant port-80 traffic is a
+  different process and is ignored.
+
+### Finding F1: the app looks up `wpad` on every launch
+
+On every launch, of the probe **and of the release exe run undriven**, the network-service
+process calls the system resolver for `wpad` (event 3006, twice at start and again about 8 s
+later). The resolver service then sends a query for `wpad.<connection DNS suffix>` to the
+configured DNS server (event 3010 with the app's `ClientPID`; answer NXDOMAIN). This is Chromium's
+proxy auto-detection, and it is egress attributable to the app's own process, not the
+host-level WinHTTP service that §5a records as out of scope. The old sampler cannot see it.
+`docs/desktop.md` says these builds never contact a network; on Windows that is not yet true for
+this one lookup.
+
+Launching the release exe with `--no-proxy-server` removed the lookup (run 2), and a build with
+`app.commandLine.appendSwitch('no-proxy-server')` in `electron/main.js` passed the strict gate
+(run 3). That change is to shipped code and is **not** part of this work. Until it is decided,
+the gate as wired fails every Windows release on F1, by design. See §8, question 3.
 
 ## Sources
 

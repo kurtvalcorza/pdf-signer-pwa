@@ -16,7 +16,30 @@ inherited from the review.
 | SEC-11 | Claims corrected; `vercel.json` sends CSP and frame protections on documents only. | `tests/e2e-pwa/deploy-headers.spec.ts` applies those rules to the real build. Not yet observed on a deployment. |
 | SEC-12 | Actions pinned, permissions scoped per job. | Runs on the next release. Tag protection is a repository setting. |
 | SEC-13 | New certificates use AES-256 with 12-character passwords. | Opened with OpenSSL-backed `cryptography`. Acrobat import needs a manual check. |
-| SEC-14 | Lint, audit and policy gates in CI. | The Windows gate samples sockets, so a packet-level gate stays open in issue #23. |
+| SEC-14 | Lint, audit and policy gates in CI. | The Windows release gate now decides at connect time (`scripts/windows-egress-gate.ps1`, RFC 23-2): drafted, measured on the runner, not yet merged. Scope and residuals below. |
+
+### SEC-14: what the Windows no-egress gate checks, and what it does not
+
+Measured on `windows-latest` (Server 2025) in runs 43802298765, 43804844070 and 43805710270; details
+in [RFC 23-2 §10](rfc-23-2-windows-egress-gate.md#10-runner-evidence-phase-0-2026-11-16).
+
+- **Checked.** Any TCP or UDP connection attempt, allowed or blocked, by any process in the app's
+  tree, to a unicast non-loopback address, however short-lived: 20 of 20 deliberate attempts per
+  protocol were recorded in each run. The socket sampler it replaces saw 0 of 20 connections to a
+  peer that closes at once. Also checked: name lookups by a tree process through the system
+  resolver, a foreign image in the tree, and an SMB or WebDAV client connection during the window.
+- **Subject.** The controls and the sign flow run on the gate-only probe build, which differs from
+  the release by one fuse byte (`check-fuses.mjs`). The release exe itself is measured undriven:
+  launch, 15 s idle, quit. Signing on the release binary is therefore inferred from the probe.
+- **Open finding (F1).** The app's network service looks up `wpad` on every launch, and the
+  resolver sends that query to the DNS server. The gate fails on it. The fix is an owner decision
+  (RFC 23-2 §8, question 3).
+- **Not checked, recorded.** Multicast and broadcast from the app are logged, not failed, the same
+  rule as the Linux gate. The portable wrapper's self-extraction to `%TEMP%` is not monitored; the
+  gate runs the unpacked build. A browser opened through the "View source" link is not a child
+  process and is not followed. Certificate revocation or SmartScreen checks the OS makes on its
+  own are not attributed to the app. Host-level WPAD by the WinHTTP service is not attributed.
+- **Not tested.** Whether any of this works unelevated: the hosted runner is an administrator.
 
 `audit:gate` fails on any high or critical production advisory, with no exceptions. The `crypto-js`
 chain left production dependencies when `@signpdf/placeholder-plain`, used only by the original spike,

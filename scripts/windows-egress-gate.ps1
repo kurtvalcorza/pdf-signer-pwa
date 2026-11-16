@@ -6,6 +6,7 @@
 #     every connection attempt with its process id, however short-lived;
 #   - the process tree from Security 4688/4689, keyed on (pid, start time) so a reused pid is not counted;
 #   - the DNS-Client Operational log, which attributes system-resolver lookups to the calling pid;
+#   - out-of-tree SMB/WebDAV client connections during a window (a UNC or WebDAV path the app opened);
 #   - in-app positive and negative controls (scripts/egress-control.mjs) that must be seen, or not seen,
 #     before a clean result means anything.
 #
@@ -60,7 +61,10 @@ function Get-AddressExemption([string]$Address, [string[]]$Broadcast = @()) {
 function Get-EgressVerdict {
   param(
     [object[]]$Sec = @(), [object[]]$Dns = @(), [string[]]$PackageDirs,
-    [string[]]$AllowImage = @(), [string[]]$AllowDnsName = @(), [string[]]$Broadcast = @()
+    [string[]]$AllowImage = @(), [string[]]$AllowDnsName = @(), [string[]]$Broadcast = @(),
+    # Out-of-tree senders of egress the app can CAUSE without sending (RFC section 5a, B7 (a)): the SMB
+    # redirector (System, pid 4) and the WebClient service, for a UNC or WebDAV path.
+    [int[]]$ShareClientPids = @()
   )
   $dirTails = @($PackageDirs | ForEach-Object { (Get-PathTail $_).TrimEnd('\') + '\' })
   $inPackage = { param($image) $t = Get-PathTail "$image"; [bool]($dirTails | Where-Object { $t.StartsWith($_) }) }
@@ -94,10 +98,17 @@ function Get-EgressVerdict {
       { $_ -in 5152, 5156, 5157 } {
         $procId = [int]($e.ProcessID ?? $e.ProcessId)
         $inTree = $live.ContainsKey($procId)
-        if (-not $inTree -and -not (& $inPackage $e.Application)) { continue }
         $in = $e.Direction -eq $Inbound
         $remote = $in ? $e.SourceAddress : $e.DestAddress
         $port = $in ? $e.SourcePort : $e.DestPort
+        if (-not $inTree -and $ShareClientPids -contains $procId) {
+          if (-not $in -and [int]$port -in 445, 139, 80 -and -not (Get-AddressExemption $remote $Broadcast)) {
+            $failures.Add([pscustomobject]@{ Kind = 'share'; Time = $e.Time; Pid = $procId; Id = [int]$e.Id; Remote = $remote; Port = [int]$port
+                Detail = "event $($e.Id) from the SMB/WebDAV client to $remote`:$port during the window (a UNC or WebDAV path was opened)" })
+          }
+          continue
+        }
+        if (-not $inTree -and -not (& $inPackage $e.Application)) { continue }
         $row = [pscustomobject]@{
           Kind = 'network'; Time = $e.Time; Pid = $procId; Id = [int]$e.Id; Protocol = [int]$e.Protocol
           Remote = $remote; Port = [int]$port; Inbound = $in; Detail = $null
@@ -242,6 +253,13 @@ if ($SelfTest) {
   Check 'a package image outside the observed tree fails closed' ($v.Failures.Count -eq 1)
   $v = Get-EgressVerdict -Sec @(& $conn 5156 2 778 $other.ToLowerInvariant() '203.0.113.9') -PackageDirs $dirs
   Check 'an out-of-tree, non-package process is ignored' ($v.Failures.Count -eq 0)
+  $smb = & $ev 5156 2 @{ ProcessID = '4'; Application = 'System'; Direction = '%%14593'; SourceAddress = '10.0.0.5'; SourcePort = '50001'; DestAddress = '203.0.113.9'; DestPort = '445'; Protocol = '6' }
+  $v = Get-EgressVerdict -Sec @($smb, (& $conn 5156 2 4 'System' '203.0.113.9')) -PackageDirs $dirs -ShareClientPids 4
+  Check 'an SMB connection from System during the window fails; its other traffic does not' ($v.Failures.Count -eq 1 -and $v.Failures[0].Kind -eq 'share')
+  foreach ($window in 'control', 'realRun', 'releaseIdle') {
+    $v = Get-EgressVerdict -Sec $fx.$window.sec -PackageDirs $dirs -AllowImage 'cmd.exe', 'conhost.exe' -ShareClientPids 4
+    Check "$window`: no SMB/WebDAV client traffic was recorded on the runner" (@($v.Failures | Where-Object Kind -eq 'share').Count -eq 0)
+  }
   $dnsEvents = @(
     [pscustomobject]@{ Id = 3006; Time = (& $t 2); Pid = 100; QueryName = 'example.org' },
     [pscustomobject]@{ Id = 3010; Time = (& $t 2); Pid = 2032; ClientPID = '100'; QueryName = 'example.org' },
@@ -310,6 +328,8 @@ function Read-Events([string]$Log, [int[]]$Ids, [datetime]$From, [datetime]$To) 
 $problems = [Collections.Generic.List[string]]::new()
 $summary = [ordered]@{ started = (Get-Date).ToUniversalTime().ToString('o'); probe = $probeExe; release = $releaseExe; windows = [ordered]@{} }
 $marker = "egress-gate-marker-$PID.invalid"
+$webClient = [int](Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue).ProcessId
+$shareClientPids = @(4) + @($webClient | Where-Object { $_ })
 $state = @{}
 
 # Judge one window. Both logs must still hold the markers written at arm time: if either rolled over,
@@ -327,7 +347,7 @@ function Get-WindowVerdict([string]$Name, [datetime]$From) {
   $armDns = @(Read-Events $dnsLog (3006) $state.armed $to | Where-Object QueryName -eq $marker)
   if (-not $armSec) { $script:problems.Add("${Name}: the Security log no longer holds the arm marker (rolled over, or process auditing is off).") }
   if (-not $armDns) { $script:problems.Add("${Name}: the DNS-Client log no longer holds the arm marker (rolled over, or the channel is off).") }
-  $v = Get-EgressVerdict -Sec $sec -Dns $dns -PackageDirs $packageDirs -AllowImage $AllowImage -AllowDnsName $AllowDnsName -Broadcast $broadcast
+  $v = Get-EgressVerdict -Sec $sec -Dns $dns -PackageDirs $packageDirs -AllowImage $AllowImage -AllowDnsName $AllowDnsName -Broadcast $broadcast -ShareClientPids $shareClientPids
   $script:summary.windows[$Name] = [ordered]@{
     from = $From.ToUniversalTime().ToString('o'); to = $to.ToUniversalTime().ToString('o')
     securityEvents = $sec.Count; dnsEvents = $dns.Count

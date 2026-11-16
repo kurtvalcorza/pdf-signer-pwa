@@ -63,6 +63,10 @@ build (per platform): the release build, then the gate-only PROBE build of the s
    │     WHOLE process tree — NOT a proxy, which sees only configured HTTP(S));
    │     FAIL on ANY egress — any packet/socket, any protocol (TCP/UDP/ICMP/
    │     DNS/QUIC), by name or numeric IP. NOT a protocol list            [SC-004, primary]
+   │     Windows: decided at connect time (per-image block rules + Filtering
+   │     Platform and process auditing + DNS-Client log, with in-app controls);
+   │     the RELEASE exe is also run undriven (launch→idle→quit). Scope and
+   │     residuals: docs/audit.md § SEC-14, docs/rfc-23-2-windows-egress-gate.md
    ├─> layer-3 lint + packaged dependency audit                          [no Node HTTP client]
    ├─> layer-5: crashReporter.start() absent + metrics switches set      [no phone-home; build-time —
    │                                                                      a crash-free monitored run
