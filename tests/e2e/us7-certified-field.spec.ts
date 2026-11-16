@@ -165,6 +165,9 @@ for (const { fixture, message, ineligible } of REFUSED) {
     await page.goto('/');
     await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(resolve(POLICY, fixture));
     await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+    // The sign controls are also disabled while the page renders; wait for it to settle so the
+    // disabled checks below prove the refusal, not the render.
+    await expect(page.locator('canvas')).toHaveAttribute('aria-busy', 'false', { timeout: 20_000 });
 
     const refusal = page.getByTestId('signing-refusal');
     await expect(refusal).toHaveText(message);
