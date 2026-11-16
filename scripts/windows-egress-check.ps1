@@ -1,10 +1,11 @@
 # Windows no-egress gate (SC-004): run the packaged app through a real sign while sampling the sockets
 # of its whole process tree, and fail on anything reaching beyond loopback.
 #
-# This is socket sampling, not packet capture: a connection opened and closed between two samples can
-# be missed, and DNS lookups go through the system resolver service, so they are not attributed to the
-# app. Windows packet capture is host-wide and cannot be scoped to one process tree, so a packet-level
-# gate (WFP) remains open in issue #23. Needs no elevation.
+# This is socket sampling, not a connect-time decision: a connection opened and closed between two
+# samples can be missed (on the runner it saw 1 of 5 two-millisecond attempts, RFC 23-2 section 10),
+# and DNS lookups go through the system resolver service, so they are not attributed to the app.
+# scripts/windows-egress-gate.ps1 is the gate that closes both gaps. This script stays for one
+# release as a second witness (RFC 23-2 B4 (a)) and is then deleted. Needs no elevation.
 #
 # It runs the gate-only probe build (electron-builder.probe.yml): verify-packaged.mjs drives the app
 # through the Node inspector, which the release binary has burned off (issue #33).

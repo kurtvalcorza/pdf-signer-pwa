@@ -64,17 +64,20 @@ jobs:
       - name: Build the gate-only probe (inspector fuse on; NEVER published)
         run: npm run build:desktop:probe
       # Read the fuses from the SHIPPED file: unpack the portable .exe (an NSIS archive; 7-Zip is on the
-      # windows-latest image) and compare its tree against the probe. 7z exit 1 = warning ("data after
-      # the end of archive" is the NSIS stub), anything higher fails.
+      # windows-latest image) and compare its tree against the probe. The NSIS archive holds the app as
+      # a nested $PLUGINSDIR/app-64.7z, so it takes two extractions (a single one yields no exe: run
+      # 43812388020). 7z exit 1 on the outer archive = warning ("data after the end of archive" is the
+      # NSIS stub), anything higher fails; the inner archive must unpack cleanly.
       - name: Fuse state — release hardened, probe = release + inspector only [Windows, unpacked portable]
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set -uo pipefail
           PORTABLE=$(ls release/*.exe | head -1)
-          7z x -y -orelease/portable-extract "$PORTABLE" > /dev/null; rc=$?
+          rc=0; 7z x -y -orelease/portable-stage "$PORTABLE" > /dev/null || rc=$?
           [ "$rc" -le 1 ] || { echo "::error::7z could not unpack $PORTABLE (exit $rc)"; exit 1; }
           set -e
+          7z x -y -orelease/portable-extract 'release/portable-stage/$PLUGINSDIR/app-64.7z' > /dev/null
           node scripts/check-fuses.mjs --release "release/portable-extract/PDF Signer.exe" --probe "release-probe/win-unpacked/PDF Signer.exe"
       # On Linux, check what ships INSIDE each AppImage: extract both and compare the extracted trees.
       - name: Fuse state — release hardened, probe = release + inspector only [Linux, extracted AppImages]
@@ -114,9 +117,9 @@ jobs:
       # run the packaged app with a monitored dummy default route and NO real network, capturing on the
       # namespace's interface. Fail on ANY captured packet over the whole app process tree.
       #
-      # ⚠ KNOWN GAP (explicit, not implicit): this packet capture runs on LINUX only. The Windows leg
-      # below samples the app's sockets instead: per-process, but a very short-lived connection can
-      # fall between samples. A packet-level Windows gate (WFP/pktmon) remains open in issue #23.
+      # This packet capture runs on LINUX only. Windows cannot scope a capture to one process tree, so
+      # its leg below decides at connect time instead (issue #23 item 2, RFC 23-2): per-image block
+      # rules plus Filtering Platform auditing. What that does and does not cover is in docs/audit.md.
       - name: No-egress gate — packet capture over the app process tree (SC-004) [Linux]
         if: runner.os == 'Linux'
         run: |
@@ -161,7 +164,25 @@ jobs:
             exit 1
           fi
 
-      - name: No-egress gate — socket sampling over the app process tree (SC-004) [Windows]
+      # Connection-level gate: block rules on every package image, WFP + process auditing, DNS-Client
+      # log, in-app positive/negative controls, then the real sign flow on the probe and an undriven
+      # launch/idle/quit of the RELEASE exe: the one unpacked from the shipped portable by the fuse
+      # step above, the tree check-fuses compared with the probe. Needs the elevated hosted runner;
+      # restores what it changes. The evidence it uploads holds only the app's own events.
+      - name: No-egress gate — connection-level, over the app process tree (SC-004) [Windows]
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/windows-egress-gate.ps1 -Release 'release\portable-extract\PDF Signer.exe'
+      - name: Keep the egress gate's evidence [Windows]
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-egress-gate-evidence
+          path: egress-gate-out
+          if-no-files-found: ignore
+      # Second witness for one release (RFC 23-2 B4 (a)): the old socket sampler. It cannot see a
+      # short-lived connection or attribute DNS; delete it once the gate above has a release behind it.
+      - name: No-egress gate — socket sampling (second witness) over the app process tree (SC-004) [Windows]
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/windows-egress-check.ps1 # drives release-probe/win-unpacked

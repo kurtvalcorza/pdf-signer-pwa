@@ -25,6 +25,8 @@ app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-component-update');
 app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-breakpad'); // no crash-dump uploader armed at all
+// No proxy autodiscovery: without this Chromium looks up `wpad` in DNS on every launch (issue #23, RFC 23-2 F1).
+app.commandLine.appendSwitch('no-proxy-server');
 
 // --- Runs synchronously at load, before `ready` ---
 registerAppScheme();
