@@ -10,13 +10,21 @@ import { createPlacement, type Placement } from './features/placement/placement'
 import { downloadPdf } from './features/signing/export';
 import { stampVisual } from './features/signing/stampVisual';
 import { signFirst } from './features/signing/signFirst';
-import { signIncremental } from './features/signing/signIncremental';
+import { signIncremental, signIntoField } from './features/signing/signIncremental';
 import {
   BadPasswordError,
   CertificationLockedError,
   MalformedCertificateError,
+  type ObjectId,
   type PlacementInput,
+  type SigningClassification,
 } from './features/signing/types';
+import {
+  FieldList,
+  FieldOutlines,
+  fieldSignedMessage,
+  sameField,
+} from './components/FieldPicker';
 import { CertSheet, type SignRequest } from './components/CertSheet';
 import { CleanupSheet } from './components/CleanupSheet';
 import { clearCertificate, saveCertificate } from './features/persistence/certStore';
@@ -55,8 +63,11 @@ interface Doc {
   /** True if the PDF already carries a signature — drives the invalidation warning
    * and routes certificate-signing through the incremental (non-invalidating) path. */
   hasExistingSignature: boolean;
-  /** Why a certificate signature can't be added without breaking a policy, else null. */
-  signingBlock: string | null;
+  /**
+   * How this PDF may be signed: `ok` (place a signature freely), `fill-only` (certified: only in
+   * a field its author prepared, chosen with the field picker) or `blocked` (with the reason).
+   */
+  signing: SigningClassification;
 }
 
 export default function App() {
@@ -65,6 +76,8 @@ export default function App() {
   const [images, setImages] = useState<Record<string, ImageAsset>>({});
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The prepared field the user picked on a certified PDF. Never set by the app (spec 004, D3).
+  const [pickedField, setPickedField] = useState<ObjectId | null>(null);
   const [pageSize, setPageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -144,8 +157,11 @@ export default function App() {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const info = await loadPdf(bytes);
       if (id !== docSeq.current) return;
-      if (info.signingBlock) {
-        setError(info.signingBlock);
+      if (info.signing.kind === 'blocked') {
+        setError(info.signing.message);
+      } else if (info.signing.kind === 'fill-only') {
+        // Certified: the field picker carries its own notice (FR-017), and the usual
+        // "a field will be appended" heads-up would be untrue here.
       } else if (info.hasExistingSignature) {
         setError(
           'Heads up: this PDF is already signed. Your signature will be appended as a ' +
@@ -159,10 +175,11 @@ export default function App() {
         pageCount: info.pageCount,
         name: file.name,
         hasExistingSignature: info.hasExistingSignature,
-        signingBlock: info.signingBlock,
+        signing: info.signing,
       });
       setPlacements([]);
       setSelectedId(null);
+      setPickedField(null);
       setPageIndex(0);
     } catch (e) {
       if (id === docSeq.current) setError(e instanceof Error ? e.message : String(e));
@@ -181,7 +198,7 @@ export default function App() {
         const id = `img_${++imageSeq.current}`;
         setImages((m) => ({ ...m, [id]: { url, bytes, format, originalBytes: bytes } }));
         const placement = createPlacement(id, pageIndex);
-        setPlacements((ps) => [...ps, placement]);
+        setPlacements((ps) => (doc.signing.kind === 'fill-only' ? [placement] : [...ps, placement]));
         setSelectedId(placement.id);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -206,7 +223,7 @@ export default function App() {
       [id]: { url, bytes: saved.bytes, format: saved.format, originalBytes: saved.bytes },
     }));
     const placement = createPlacement(id, pageIndex);
-    setPlacements((ps) => [...ps, placement]);
+    setPlacements((ps) => (doc.signing.kind === 'fill-only' ? [placement] : [...ps, placement]));
     setSelectedId(placement.id);
   }, [doc, pageIndex]);
 
@@ -275,7 +292,24 @@ export default function App() {
 
         let signed: Uint8Array;
         let note: string | null = null;
-        if (doc.hasExistingSignature) {
+        if (doc.signing.kind === 'fill-only') {
+          // Certified PDF: the only way to sign is INTO a field its author prepared. Nothing
+          // is added to the form or to any page; the engine re-classifies the bytes and
+          // refuses anything else (spec 004, FR-002 / FR-014).
+          const target = doc.signing.fields.find((f) => sameField(pickedField, f.ref));
+          if (!target) throw new Error('Pick one of the outlined signature fields first.');
+          signed = await signIntoField(
+            doc.bytes,
+            {
+              imageBytes: images[crypto.imageId].bytes,
+              format: images[crypto.imageId].format,
+              fieldRef: target.ref,
+            },
+            cert,
+            { label: req.showLabel, date: req.showDate },
+          );
+          note = fieldSignedMessage(target.name);
+        } else if (doc.hasExistingSignature) {
           // The PDF already carries signatures. Append ours as a byte-level incremental
           // update so those earlier signatures stay valid — never re-serialize the signed
           // bytes (Principle III / FR-013). Extra visual-only stamps still can't be
@@ -350,7 +384,7 @@ export default function App() {
         setBusy(false);
       }
     },
-    [doc, placements, images, selectedId],
+    [doc, placements, images, selectedId, pickedField],
   );
 
   const applyCleaned = useCallback(
@@ -393,6 +427,11 @@ export default function App() {
   const selectedPlacement = placements.find((p) => p.id === selectedId) ?? null;
   const selectedAsset = selectedPlacement ? images[selectedPlacement.imageId] : null;
   const pagePlacements = placements.filter((p) => p.pageIndex === pageIndex);
+  const fillOnly = doc?.signing.kind === 'fill-only';
+  // On a certified PDF the one signature image is previewed inside the picked field.
+  const fillAsset =
+    selectedAsset ??
+    (placements.length ? images[placements[placements.length - 1].imageId] : null);
 
   return (
     <div className="relative h-full w-full bg-black" ref={stageRef}>
@@ -408,6 +447,7 @@ export default function App() {
             />
             {pageReady &&
               pageSize.w > 0 &&
+              !fillOnly &&
               pagePlacements.map((p) => (
                 <SignatureOverlay
                   key={p.id}
@@ -421,6 +461,15 @@ export default function App() {
                   onRemove={() => removePlacement(p.id)}
                 />
               ))}
+            {pageReady && pageSize.w > 0 && doc.signing.kind === 'fill-only' && (
+              <FieldOutlines
+                fields={doc.signing.fields}
+                pageIndex={pageIndex}
+                picked={pickedField}
+                onPick={(f) => setPickedField(f.ref)}
+                imageUrl={fillAsset?.url ?? null}
+              />
+            )}
           </div>
         )}
       </DocumentStage>
@@ -469,7 +518,12 @@ export default function App() {
 
         {mode === 'cert' ? (
           <CertSheet
-            canSign={pageReady && placements.length > 0 && !doc.signingBlock}
+            canSign={
+              pageReady &&
+              placements.length > 0 &&
+              (doc.signing.kind === 'ok' ||
+                (doc.signing.kind === 'fill-only' && pickedField !== null))
+            }
             busy={busy}
             onSign={signWithCert}
             onCancel={() => setMode('stamp')}
@@ -482,6 +536,16 @@ export default function App() {
           />
         ) : (
           <div className="flex flex-col gap-2">
+            {doc && doc.signing.kind !== 'ok' && (
+              <FieldList
+                signing={doc.signing}
+                picked={pickedField}
+                onPick={(f) => {
+                  setPickedField(f.ref);
+                  if (f.pageIndex !== null) setPageIndex(f.pageIndex);
+                }}
+              />
+            )}
             <div className="flex gap-2">
               <button
                 type="button"
@@ -576,7 +640,9 @@ export default function App() {
 
             <button
               type="button"
-              disabled={!pageReady || placements.length === 0 || busy}
+              disabled={
+                !pageReady || placements.length === 0 || busy || (fillOnly && pickedField === null)
+              }
               onClick={() => setMode('cert')}
               className="rounded-lg bg-blue-500 px-4 pb-1 pt-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
             >

@@ -331,7 +331,10 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
         return build
 
     def need_appearances(w):
-        form(w)[name("/NeedAppearances")] = generic.BooleanObject(True)
+        # pyHanko drops /NeedAppearances when it signs, so this too has to be a later rewrite.
+        acro = w.root["/AcroForm"]
+        acro[name("/NeedAppearances")] = generic.BooleanObject(True)
+        w.update_container(acro)
 
     def xfa(w):
         form(w)[name("/XFA")] = w.add_object(
@@ -401,7 +404,9 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
             "certified-p2-sigflags-1.pdf": later_revision(
                 certified(MDPPerm.FILL_FORMS, one), sigflags_1
             ),
-            "certified-p2-need-appearances.pdf": built(need_appearances),
+            "certified-p2-need-appearances.pdf": later_revision(
+                certified(MDPPerm.FILL_FORMS, one), need_appearances
+            ),
             "certified-p2-xfa.pdf": built(xfa),
             # Geometry (research.md R6).
             "certified-p2-empty-field-rotated-page.pdf": built(rotate_page),

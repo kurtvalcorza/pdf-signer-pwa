@@ -66,66 +66,19 @@ export function addIncrementalPlaceholder(
   const page = probe.getPages()[pageIndex];
   if (!page) throw new Error(`Signature targets a missing page (index ${pageIndex}).`);
   const ctx = probe.context;
-  const rootRef = ctx.trailerInfo.Root;
-  if (!(rootRef instanceof PDFRef)) {
-    throw new Error('This PDF has no document catalog reference; it cannot be counter-signed.');
-  }
-
-  // NEVER mutate the original bytes: the prior signature's /ByteRange may cover them
-  // (trailing newlines included), so trimming would break that signature's digest even
-  // though the structural re-parse still passes. We only ever append; the "\n" that
-  // `append` writes before each object is the separator from the original content.
-  let out = Buffer.from(signedPdf);
-  const prevXref = lastStartXref(out);
-
-  const originalLargest = opts.originalLargestObjectNumber ?? ctx.largestObjectNumber;
-  let nextObj = ctx.largestObjectNumber + 1;
-  // object number → { byte offset of its header, generation }.
-  const added = new Map<number, { offset: number; gen: number }>();
-
-  // Appending a NEW version of an existing object must reuse that object's number AND
-  // generation — a reader resolves "N g R" and would ignore an "N 0 obj" replacement when
-  // g != 0. New objects (sig/widget/new form) are allocated at generation 0.
-  const append = (objNum: number, gen: number, body: string): void => {
-    added.set(objNum, { offset: out.length + 1, gen });
-    out = Buffer.concat([
-      out,
-      Buffer.from(`\n${objNum} ${gen} obj\n`),
-      Buffer.from(body, 'latin1'),
-      Buffer.from('\nendobj\n'),
-    ]);
-  };
-
-  // --- 0. Any newly embedded appearance resources (image/font) created on the probe.
-  for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
-    if (ref.objectNumber > originalLargest) {
-      append(ref.objectNumber, ref.generationNumber, obj.toString());
-    }
-  }
+  const update = startUpdate(signedPdf, probe, opts.originalLargestObjectNumber);
+  const { append, rootRef } = update;
 
   // --- 1. Signature dictionary + widget (serialized with @signpdf's converter so
   // the /ByteRange and /Contents placeholders are exactly what sign() rewrites). ---
   const existingFieldRefs = acroFormFieldRefs(probe);
-  const sigNum = nextObj++;
+  const sigNum = update.allocate();
   append(
     sigNum,
     0,
-    PDFObject.convert({
-      Type: 'Sig',
-      Filter: 'Adobe.PPKLite',
-      SubFilter: SUBFILTER_ADOBE_PKCS7_DETACHED,
-      ByteRange: [
-        0,
-        DEFAULT_BYTE_RANGE_PLACEHOLDER,
-        DEFAULT_BYTE_RANGE_PLACEHOLDER,
-        DEFAULT_BYTE_RANGE_PLACEHOLDER,
-      ],
-      Contents: Buffer.from(String.fromCharCode(0).repeat(signatureLength)),
-      Reason: new String(reason),
-      M: new Date(),
-    }),
+    signatureDictionary(reason, signatureLength),
   );
-  const widgetNum = nextObj++;
+  const widgetNum = update.allocate();
   append(
     widgetNum,
     0,
@@ -195,7 +148,7 @@ export function addIncrementalPlaceholder(
   } else {
     // No form yet (possible when signature detection fell back to a byte scan):
     // create one and point the rewritten catalog at it.
-    const acroNum = nextObj++;
+    const acroNum = update.allocate();
     append(
       acroNum,
       0,
@@ -215,7 +168,7 @@ export function addIncrementalPlaceholder(
     // A terminal widget field may share ONE indirect array as both the AcroForm
     // /Fields and the page /Annots. If step 2 already appended that object, the
     // widget is in it — pushing again here would duplicate it (and trip the guard).
-    if (!added.has(annotsRaw.objectNumber)) {
+    if (!update.has(annotsRaw.objectNumber)) {
       const arr = page.node.lookup(PDFName.of('Annots'), PDFArray);
       arr.push(widgetRef);
       append(annotsRaw.objectNumber, annotsRaw.generationNumber, arr.toString());
@@ -228,34 +181,177 @@ export function addIncrementalPlaceholder(
   }
 
   // --- 4. Classic cross-reference table + trailer for the appended objects. ---
-  const xrefOffset = out.length + 1;
-  const entries = [...added.entries()].sort((a, b) => a[0] - b[0]);
-  const sections = ['0 1\n0000000000 65535 f '];
-  for (const [objNum, { offset, gen }] of entries) {
-    sections.push(
-      `${objNum} 1\n${String(offset).padStart(10, '0')} ${String(gen).padStart(5, '0')} n `,
-    );
+  return update.finish();
+}
+
+export interface FillFieldOptions {
+  /** The existing, empty signature field to fill (a merged field/widget dictionary). */
+  fieldRef: PDFRef;
+  appearanceRef: PDFRef;
+  reason?: string;
+  signatureLength?: number;
+  originalLargestObjectNumber?: number;
+}
+
+/**
+ * Sign INTO an existing empty signature field, as a byte-level incremental update ready for
+ * @signpdf's `sign()` (spec 004, RFC 23-1 section 2).
+ *
+ * This is the only shape a certified document accepts. The update holds: the appearance
+ * resources newly embedded on the probe, the signature dictionary, and ONE new version of the
+ * field (same object number and generation) whose `/V` points at the signature and whose `/AP`
+ * is `<< /N appearance >>`. `/F` is set to Print only when the field had none. Every other key
+ * of the field is written back as parsed.
+ *
+ * What it deliberately does NOT write: no new field or annotation, no page, no `/Annots`, no
+ * AcroForm (so `/SigFlags` and `/Fields` keep their bytes), no catalog, and no `/Reference` on
+ * the signature (an approval signature, not a certification or a lock). The caller decides
+ * whether the field may be filled at all (signingPolicy.ts) and checks the result (FR-015).
+ */
+export function fillExistingSignatureField(
+  signedPdf: Uint8Array,
+  probe: PDFDocument,
+  opts: FillFieldOptions,
+): Buffer {
+  const field = probe.context.lookup(opts.fieldRef);
+  if (!(field instanceof PDFDict)) {
+    throw new Error('The chosen signature field is missing from this PDF.');
   }
-  // Carry /Info and /ID forward from the file's PREVIOUS trailer, read from the bytes
-  // themselves — not from pdf-lib's trailerInfo, which fabricates an /Info object when
-  // the original had none (that would emit a dangling reference). Dropping /ID would
-  // also break PDF/A and other conformance validators on the counter-signed output.
-  const prev = previousTrailerEntries(out, prevXref);
-  const trailer =
-    '<<\n' +
-    `/Size ${nextObj}\n` +
-    `/Root ${rootRef.objectNumber} ${rootRef.generationNumber} R\n` +
-    (prev.info ? `/Info ${prev.info}\n` : '') +
-    (prev.id ? `/ID ${prev.id}\n` : '') +
-    `/Prev ${prevXref}\n` +
-    '>>';
-  out = Buffer.concat([
-    out,
-    Buffer.from(
-      `\nxref\n${sections.join('\n')}\ntrailer\n${trailer}\nstartxref\n${xrefOffset}\n%%EOF`,
+  const update = startUpdate(signedPdf, probe, opts.originalLargestObjectNumber);
+
+  const sigNum = update.allocate();
+  update.append(
+    sigNum,
+    0,
+    signatureDictionary(
+      opts.reason ?? 'Digitally signed',
+      opts.signatureLength ?? DEFAULT_SIGNATURE_LENGTH,
     ),
-  ]);
-  return out;
+  );
+
+  field.set(PDFName.of('V'), PDFRef.of(sigNum));
+  field.set(PDFName.of('AP'), probe.context.obj({ N: opts.appearanceRef }));
+  if (!field.has(PDFName.of('F'))) {
+    field.set(PDFName.of('F'), probe.context.obj(ANNOTATION_FLAGS.PRINT));
+  }
+  update.append(opts.fieldRef.objectNumber, opts.fieldRef.generationNumber, field.toString());
+
+  return update.finish();
+}
+
+/**
+ * The signature dictionary, serialized with @signpdf's converter so the /ByteRange and
+ * /Contents placeholders are exactly what `sign()` rewrites. No /Reference: approval only.
+ */
+function signatureDictionary(reason: string, signatureLength: number): string {
+  return PDFObject.convert({
+    Type: 'Sig',
+    Filter: 'Adobe.PPKLite',
+    SubFilter: SUBFILTER_ADOBE_PKCS7_DETACHED,
+    ByteRange: [
+      0,
+      DEFAULT_BYTE_RANGE_PLACEHOLDER,
+      DEFAULT_BYTE_RANGE_PLACEHOLDER,
+      DEFAULT_BYTE_RANGE_PLACEHOLDER,
+    ],
+    Contents: Buffer.from(String.fromCharCode(0).repeat(signatureLength)),
+    Reason: new String(reason),
+    M: new Date(),
+  });
+}
+
+/**
+ * The part every incremental update shares: append objects after the original bytes, then one
+ * classic cross-reference section and a trailer whose /Prev points at the previous `startxref`.
+ *
+ * Creating it appends the appearance resources (image, font, form XObject) that were newly
+ * embedded on the probe. The original bytes are never rewritten.
+ */
+function startUpdate(
+  signedPdf: Uint8Array,
+  probe: PDFDocument,
+  originalLargestObjectNumber?: number,
+): {
+  rootRef: PDFRef;
+  /** Append `objNum gen obj … endobj`; a new version of an object reuses its number AND generation. */
+  append: (objNum: number, gen: number, body: string) => void;
+  /** A fresh object number for a new object (generation 0). */
+  allocate: () => number;
+  /** Whether this update already wrote that object number. */
+  has: (objNum: number) => boolean;
+  /** Write the xref section and trailer; returns the whole file. */
+  finish: () => Buffer;
+} {
+  const ctx = probe.context;
+  const rootRef = ctx.trailerInfo.Root;
+  if (!(rootRef instanceof PDFRef)) {
+    throw new Error('This PDF has no document catalog reference; it cannot be counter-signed.');
+  }
+
+  // NEVER mutate the original bytes: the prior signature's /ByteRange may cover them
+  // (trailing newlines included), so trimming would break that signature's digest even
+  // though the structural re-parse still passes. We only ever append; the "\n" that
+  // `append` writes before each object is the separator from the original content.
+  let out = Buffer.from(signedPdf);
+  const prevXref = lastStartXref(out);
+
+  const originalLargest = originalLargestObjectNumber ?? ctx.largestObjectNumber;
+  let nextObj = ctx.largestObjectNumber + 1;
+  // object number → { byte offset of its header, generation }.
+  const added = new Map<number, { offset: number; gen: number }>();
+
+  // Appending a NEW version of an existing object must reuse that object's number AND
+  // generation — a reader resolves "N g R" and would ignore an "N 0 obj" replacement when
+  // g != 0. New objects (sig/widget/new form) are allocated at generation 0.
+  const append = (objNum: number, gen: number, body: string): void => {
+    added.set(objNum, { offset: out.length + 1, gen });
+    out = Buffer.concat([
+      out,
+      Buffer.from(`\n${objNum} ${gen} obj\n`),
+      Buffer.from(body, 'latin1'),
+      Buffer.from('\nendobj\n'),
+    ]);
+  };
+
+  // --- 0. Any newly embedded appearance resources (image/font) created on the probe.
+  for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
+    if (ref.objectNumber > originalLargest) {
+      append(ref.objectNumber, ref.generationNumber, obj.toString());
+    }
+  }
+
+  const finish = (): Buffer => {
+    const xrefOffset = out.length + 1;
+    const entries = [...added.entries()].sort((a, b) => a[0] - b[0]);
+    const sections = ['0 1\n0000000000 65535 f '];
+    for (const [objNum, { offset, gen }] of entries) {
+      sections.push(
+        `${objNum} 1\n${String(offset).padStart(10, '0')} ${String(gen).padStart(5, '0')} n `,
+      );
+    }
+    // Carry /Info and /ID forward from the file's PREVIOUS trailer, read from the bytes
+    // themselves — not from pdf-lib's trailerInfo, which fabricates an /Info object when
+    // the original had none (that would emit a dangling reference). Dropping /ID would
+    // also break PDF/A and other conformance validators on the counter-signed output.
+    const prev = previousTrailerEntries(out, prevXref);
+    const trailer =
+      '<<\n' +
+      `/Size ${nextObj}\n` +
+      `/Root ${rootRef.objectNumber} ${rootRef.generationNumber} R\n` +
+      (prev.info ? `/Info ${prev.info}\n` : '') +
+      (prev.id ? `/ID ${prev.id}\n` : '') +
+      `/Prev ${prevXref}\n` +
+      '>>';
+    out = Buffer.concat([
+      out,
+      Buffer.from(
+        `\nxref\n${sections.join('\n')}\ntrailer\n${trailer}\nstartxref\n${xrefOffset}\n%%EOF`,
+      ),
+    ]);
+    return out;
+  };
+
+  return { rootRef, append, allocate: () => nextObj++, has: (n) => added.has(n), finish };
 }
 
 /**
