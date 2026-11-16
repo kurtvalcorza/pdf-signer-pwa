@@ -7,7 +7,7 @@
  * picker and save dialog). No test APK, no debug build, no WebView DevTools.
  *
  *   node scripts/android-gate.mjs <apk> [--adb <path>] [--network-on] [--large | --large-mb <n>]
- *                                 [--skip-negative] [--backup] [--camera]
+ *                                 [--skip-negative] [--backup] [--camera] [--certified-field]
  *                                 [--upgrade <apk-of-the-next-version>]
  *
  * Cases:
@@ -19,6 +19,10 @@
  *   wrong password  US1 AS4: the shared app's error, and no save dialog opens
  *   cancel          US1 AS5: backing out of the save dialog saves nothing
  *   certified (C11) US1 AS3: a certified "no changes" PDF is refused for certificate signing
+ *   --certified-field  spec 004 US4 (contracts/signature-gate.md): push certified-p2-empty-field.pdf,
+ *                   pick its prepared field, sign, pull the download, and validate it with
+ *                   validate_pdf.py --expect-certification-level FORM_FILLING. Runs with airplane
+ *                   mode on, before --network-on
  *   --large         R7: a 25 MiB PDF (--large-mb <n> to change) signs, saves with a matching
  *                   byte count, and validates. 25, not ~100: research.md G2
  *   --backup        US3: a remembered certificate is refused by backup (bmgr, local transport,
@@ -34,10 +38,22 @@
  * Exits non-zero on the first failure, printing what it saw.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { join, resolve } from 'node:path';
+import {
+  CERTIFICATION_CLAIM,
+  CERTIFICATION_LEVEL,
+  CERTIFIED_FIELD_FIXTURE,
+  CERTIFIED_FIELD_NAME,
+  CERTIFIED_FIELD_PAGE,
+  FILL_ONLY_NOTICE,
+  appendOnlyProblem,
+  exactText,
+  fieldOptionText,
+  fieldSignedText,
+} from './android-gate-certified.mjs';
 
 const PKG = 'io.github.kurtvalcorza.pdfsigner';
 const ACTIVITY = `${PKG}/.MainActivity`;
@@ -72,6 +88,7 @@ const SKIP_NEGATIVE = flag('--skip-negative');
 const NETWORK_ON = flag('--network-on');
 const BACKUP = flag('--backup');
 const CAMERA = flag('--camera');
+const CERTIFIED_FIELD = flag('--certified-field');
 const UPGRADE_OPT = option('--upgrade');
 const UPGRADE = UPGRADE_OPT && resolve(UPGRADE_OPT);
 if (UPGRADE && !existsSync(UPGRADE)) {
@@ -82,7 +99,7 @@ const ADB = option('--adb') || process.env.ADB || 'adb';
 const APK = argv[0] && resolve(argv[0]);
 if (!APK || !existsSync(APK)) {
   console.error(
-    'usage: node scripts/android-gate.mjs <signed-release.apk> [--adb <path>] [--network-on] [--large | --large-mb <n>] [--skip-negative] [--backup] [--camera] [--upgrade <next.apk>]',
+    'usage: node scripts/android-gate.mjs <signed-release.apk> [--adb <path>] [--network-on] [--large | --large-mb <n>] [--skip-negative] [--backup] [--camera] [--certified-field] [--upgrade <next.apk>]',
   );
   process.exit(2);
 }
@@ -397,9 +414,12 @@ async function signAndSaveOpen(input) {
   return { local, name: expected };
 }
 
-function validate(files) {
-  console.log(`  › validate_pdf.py ${files.map((f) => f.split(/[\\/]/).pop()).join(' ')}`);
-  const r = spawnSync(PY, [VALIDATOR, ...files], { stdio: 'inherit', shell: false });
+/** Runs the validator on `files`; `mode` adds a validator mode (e.g. the certification level). */
+function validate(files, mode = []) {
+  console.log(
+    `  › validate_pdf.py ${[...mode, ...files.map((f) => f.split(/[\\/]/).pop())].join(' ')}`,
+  );
+  const r = spawnSync(PY, [VALIDATOR, ...mode, ...files], { stdio: 'inherit', shell: false });
   if ((r.status ?? 1) !== 0) fail('validator rejected the output');
 }
 
@@ -467,6 +487,63 @@ async function caseCertified() {
     if (offered) fail('certificate signing is still offered for a certified PDF');
   }
   console.log('    refused with the shared message; certificate signing not offered');
+}
+
+/**
+ * Spec 004 US4 (contracts/signature-gate.md `--certified-field`): a certified P=2 PDF with one
+ * empty field is signed in that field, and only there. The field is picked by its entry in the
+ * shared app's field list (the on-page outline carries the same text behind "Sign in this field.",
+ * which the exact matcher does not hit). WebView reports aria-pressed unreliably (see
+ * tickRemember), so the pick is proved by its effect: certificate signing becomes available.
+ */
+async function caseCertifiedField() {
+  console.log('▶ certified PDF signed in its prepared field (spec 004 US4, --certified-field)');
+  const fixture = join(POLICY, CERTIFIED_FIELD_FIXTURE);
+  const name = push(fixture);
+  await launchFresh();
+  await openPdf(name);
+  await waitFor('the fill-only notice', find(exactText(FILL_ONLY_NOTICE)), 30000);
+  const option = exactText(fieldOptionText(CERTIFIED_FIELD_NAME, CERTIFIED_FIELD_PAGE));
+  await waitFor(`the prepared field "${CERTIFIED_FIELD_NAME}"`, find(option), 20000);
+
+  // The image places nothing, and certificate signing waits until the field is picked.
+  await waitFor('Add signature enabled', (ns) =>
+    ns.find((n) => /^Add signature$/.test(n.text) && n.enabled),
+  );
+  await tap('Add signature', /^Add signature$/);
+  await pickFile('signature.png');
+  await waitFor(
+    'the image loaded',
+    (ns) => ns.find((n) => /^Clean up background$/.test(n.text) && n.enabled),
+    20000,
+  );
+  const signButton = (ns) => ns.find((n) => /^Sign with a digital certificate/.test(n.text));
+  const before = signButton(dump());
+  if (!before) fail('certificate signing is not shown for a fill-only PDF');
+  if (before.enabled) fail('certificate signing is offered before a field is picked');
+
+  await tap(`the field "${CERTIFIED_FIELD_NAME}"`, option);
+  await waitFor(
+    'certificate signing after picking the field',
+    (ns) => {
+      const b = signButton(ns);
+      return b && b.enabled ? b : null;
+    },
+    20000,
+  );
+  await fillCertificate(PASSWORD);
+  const out = await signAndSaveOpen(name);
+
+  // The app states what it did, and makes no claim about the certification (FR-019).
+  await waitFor('the signed-in-field message', find(exactText(fieldSignedText(CERTIFIED_FIELD_NAME))), 20000);
+  const claim = dump().find((n) => matches(n, CERTIFICATION_CLAIM));
+  if (claim) fail(`the app makes a claim about the certification: ${label(claim)}`);
+
+  const problem = appendOnlyProblem(readFileSync(fixture), readFileSync(out.local), 2);
+  if (problem) fail(`certified-field output: ${problem}`);
+  console.log('    input is a byte prefix of the output; 2 signatures');
+  validate([out.local], ['--expect-certification-level', CERTIFICATION_LEVEL]);
+  shell(`rm -f '${DEVICE_DIR}/${out.name}'`);
 }
 
 /** Minimal PNG decoder for `screencap -p` output: 8-bit RGB/RGBA, non-interlaced. */
@@ -945,6 +1022,8 @@ async function main() {
 
   await caseSignAndCounterSign();
   await caseContentHidden();
+  // Before --network-on, so it runs with airplane mode on like the default cases (contract).
+  if (CERTIFIED_FIELD) await caseCertifiedField();
   if (NETWORK_ON) await caseNetworkOn();
   if (!SKIP_NEGATIVE) {
     await caseWrongPassword();

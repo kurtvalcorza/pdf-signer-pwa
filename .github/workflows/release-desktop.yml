@@ -91,11 +91,19 @@ jobs:
         run: npm test && npm run verify:signatures
 
       # --- Per-distribution gate (Principle V — earns its own pass) ---
-      - name: Desktop E2E (sign -> pyHanko, portable state, layer 2, US3 surfaces) [Windows]
+      - name: Desktop E2E (sign -> pyHanko, certified field, portable state, layer 2, US3 surfaces) [Windows]
         if: runner.os == 'Windows'
+        # Spec 004 T038: a missing pyHanko fails the certified-field validator step instead of
+        # skipping it.
+        env:
+          REQUIRE_PYHANKO: '1'
         run: npx playwright test --config playwright.desktop.config.ts
       - name: Desktop E2E [Linux, xvfb]
         if: runner.os == 'Linux'
+        # Spec 004 T038: a missing pyHanko fails the certified-field validator step instead of
+        # skipping it.
+        env:
+          REQUIRE_PYHANKO: '1'
         run: xvfb-run -a npx playwright test --config playwright.desktop.config.ts
       - name: Packaged probe signs a pyHanko-valid PDF [Windows]
         if: runner.os == 'Windows'
@@ -333,7 +341,7 @@ jobs:
       # Per-distribution gate (Principle V) on the SIGNED APK that is published. The wrapper first
       # asserts the emulator's WebView major equals android/VALIDATED_WEBVIEW. One script line:
       # this action runs each line of `script` as a separate shell.
-      - name: Emulator gate (C8, C10-C12, US1-US3, large files)
+      - name: Emulator gate (C8, C10-C12, US1-US3, large files, certified field)
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 36

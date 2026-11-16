@@ -1,6 +1,6 @@
 import { test, expect, _electron as electron } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
-import { existsSync, statSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, statSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,21 @@ const ROOT = resolve(HERE, '..', '..');
 const MAIN = resolve(ROOT, 'electron/main.js');
 const FIX = resolve(ROOT, 'tests/e2e/fixtures');
 const CERT_PASSWORD = 'e2e-pass';
+const CERTIFIED_PDF = resolve(ROOT, 'tests/signing/fixtures/policy/certified-p2-empty-field.pdf');
+const VALIDATOR = resolve(ROOT, 'scripts/validate_pdf.py');
+// PYTHON env for cross-platform (Windows: `python`; Linux/CI: `python3` or a venv path).
+const PYTHON = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+
+/** Waits for main's 'done' sentinel in the test-only download dir; returns the saved PDF path. */
+async function waitForDownload(downloadDir: string): Promise<string | undefined> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const done = readdirSync(downloadDir).find((f) => f.endsWith('.pdf.done'));
+    if (done) return join(downloadDir, done.replace(/\.done$/, ''));
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return undefined;
+}
 
 /**
  * Drive the real desktop shell through a .p12 sign and validate the output with pyHanko — the
@@ -50,23 +65,12 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
     await page.getByRole('button', { name: /Sign & Download/ }).click();
 
     // Wait for the download to fully complete (sentinel written by main on 'done').
-    const deadline = Date.now() + 30_000;
-    let saved: string | undefined;
-    while (Date.now() < deadline) {
-      const done = readdirSync(downloadDir).find((f) => f.endsWith('.pdf.done'));
-      if (done) {
-        saved = join(downloadDir, done.replace(/\.done$/, ''));
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    const saved = await waitForDownload(downloadDir);
     expect(saved, 'a signed PDF was downloaded').toBeTruthy();
     expect(existsSync(saved!) && statSync(saved!).size > 0).toBe(true);
 
-    // FR-010 gate — pyHanko must validate THIS artifact's output. PYTHON env for cross-platform
-    // (Windows: `python`; Linux/CI: `python3` or a venv path).
-    const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
-    const out = execFileSync(python, [resolve(ROOT, 'scripts/validate_pdf.py'), saved!], {
+    // FR-010 gate — pyHanko must validate THIS artifact's output.
+    const out = execFileSync(PYTHON, [VALIDATOR, saved!], {
       cwd: ROOT,
       encoding: 'utf8',
     });
@@ -82,6 +86,105 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
   } finally {
     await app.close();
     rmSync(portableDir, { recursive: true, force: true });
+    rmSync(downloadDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Spec 004 T039: the desktop shell signs a certified PDF in the field its author prepared, and
+ * the saved file is classed as form filling by the validator's certified-field mode. Same flow
+ * and checks as tests/e2e/us7-certified-field.spec.ts, earned again on this distribution
+ * (Principle V). Without pyHanko the validator step is skipped and annotated, unless
+ * REQUIRE_PYHANKO=1 (set in CI by T038), where a missing validator fails the test.
+ */
+test('desktop: signs a certified PDF in its prepared field, classed as form filling', async () => {
+  const testInfo = test.info();
+  const downloadDir = mkdtempSync(join(tmpdir(), 'pdfsigner-dl-'));
+  const app = await electron.launch({
+    args: [MAIN],
+    cwd: ROOT,
+    env: { ...process.env, PDFSIGNER_HEADLESS: '1', PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(CERTIFIED_PDF);
+    await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 20_000 });
+
+    // The app says what kind of document this is and offers the prepared field, not picked.
+    await expect(
+      page.getByText(
+        'This PDF is certified. It can only be signed in one of the signature fields its author prepared.',
+      ),
+    ).toBeVisible();
+    const outline = page.getByTestId('field-outline');
+    await expect(outline).toHaveCount(1, { timeout: 15_000 });
+    await expect(outline).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('field-option')).toHaveText(
+      'Field name set by the document: "Approver" (page 1)',
+    );
+
+    // Adding the image places nothing, and signing waits until the field is picked.
+    await page
+      .locator('input[type="file"][accept="image/png,image/jpeg"]')
+      .setInputFiles(resolve(FIX, 'signature.png'));
+    await expect(page.getByRole('button', { name: /Clean up background/ })).toBeEnabled({
+      timeout: 10_000,
+    });
+    await expect(page.locator('img[alt="signature"]')).toHaveCount(0);
+    const openCertSheet = page.getByRole('button', { name: /Sign with a digital certificate/ });
+    await expect(openCertSheet).toBeDisabled();
+
+    await outline.click();
+    await expect(outline).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('img[alt="signature"]')).toBeVisible();
+
+    await expect(openCertSheet).toBeEnabled();
+    await openCertSheet.click();
+    await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(resolve(FIX, 'e2e-cert.p12'));
+    await page.getByPlaceholder('Certificate password').fill(CERT_PASSWORD);
+    await page.getByRole('button', { name: /Sign & Download/ }).click();
+
+    const saved = await waitForDownload(downloadDir);
+    expect(saved, 'a signed PDF was downloaded').toBeTruthy();
+
+    // The app states what it did, and makes no claim about the certification.
+    await expect(
+      page.getByText(
+        "Signed in the existing field 'Approver'. No other part of the document was changed.",
+      ),
+    ).toBeVisible();
+    await expect(page.getByText(/still certified|certification preserved|remains valid/i)).toHaveCount(0);
+
+    // The input is a byte prefix of the saved file, which now carries two signatures.
+    const input = readFileSync(CERTIFIED_PDF);
+    const signed = readFileSync(saved!);
+    expect(signed.length).toBeGreaterThan(input.length);
+    expect(signed.subarray(0, input.length).equals(input)).toBe(true);
+    expect((signed.toString('latin1').match(/\/ByteRange/g) ?? []).length).toBe(2);
+
+    // The pinned validator: both signatures pass, and everything after the certification is
+    // classed as form filling.
+    const hasValidator = spawnSync(PYTHON, ['-c', 'import pyhanko'], { shell: false }).status === 0;
+    if (!hasValidator) {
+      expect(
+        process.env.REQUIRE_PYHANKO,
+        'pyHanko is required here but is not installed (scripts/requirements-verify.txt)',
+      ).toBeFalsy();
+      testInfo.annotations.push({
+        type: 'validator-not-run',
+        description: 'pyHanko is not installed, so the saved file was not validated in this run.',
+      });
+      return;
+    }
+    const result = spawnSync(
+      PYTHON,
+      [VALIDATOR, '--expect-certification-level', 'FORM_FILLING', saved!],
+      { cwd: ROOT, shell: false, encoding: 'utf8' },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  } finally {
+    await app.close();
     rmSync(downloadDir, { recursive: true, force: true });
   }
 });
