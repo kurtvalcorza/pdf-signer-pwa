@@ -1,8 +1,8 @@
 # RFC 23-2: Packet-level no-egress gate on Windows, scoped to the app's process tree
 
 Status: **accepted 2026-11-15; gate drafted and measured on the runner 2026-11-16, not yet merged**
-(evidence in [§10](#10-runner-evidence-phase-0-2026-11-16); one finding, F1, awaits an owner
-decision in [§8](#8-open-questions-for-kurt)). Issue #23, item 2; it came from #12 and SEC-14
+(evidence in [§10](#10-runner-evidence-phase-0-2026-11-16); its one finding, F1, is fixed in
+`electron/main.js` by owner decision of 2026-11-16, [§8](#8-open-questions-for-kurt) question 3). Issue #23, item 2; it came from #12 and SEC-14
 ([audit.md](audit.md)). Owner decisions recorded in [§7](#7-owner-decisions): B1 (a), B2 (a),
 B3 (b) gate-only probe build, B4–B7 (a).
 
@@ -385,12 +385,17 @@ today (`verify-packaged.mjs:37-43`).
    Server 2025 (10.0.26100).
 2. ~~Should the portable wrapper `.exe` be monitored?~~ **Decided 2026-11-16:** stay on
    `win-unpacked`. The wrapper's `%TEMP%` extraction is a named residual in audit.md.
-3. **Open. Finding F1 (§10): the app looks up `wpad` on every launch.** The gate as wired
-   fails every Windows release until this is settled.
-   - **(a) Recommended:** add `app.commandLine.appendSwitch('no-proxy-server')` to
+3. ~~Finding F1 (§10): the app looks up `wpad` on every launch.~~ **Decided 2026-11-16: (a).**
+   `electron/main.js` now sets `no-proxy-server` before `ready`, and the desktop E2E asserts the
+   switch. The gate stays strict, with no allow-list. The options are kept as the record.
+   - **(a) Chosen:** add `app.commandLine.appendSwitch('no-proxy-server')` to
      `electron/main.js` in its own change. The app makes no requests, so it needs no proxy.
      Measured: the lookup disappears (run 43804844070) and the strict gate passes
-     (run 43805710270). Not yet checked: the same switch on Linux and the desktop E2E suite.
+     (runs 43805710270 and 43806349805). Checked locally on Windows after the change: lint,
+     type-check, 160 unit tests, 8 desktop E2E tests, `check-fuses` (probe and release still
+     differ by one byte). Linux: the switch is platform-independent Chromium and nothing in the
+     repository configures or reads a proxy, so no effect is expected; the Linux desktop E2E and
+     the namespace gate in CI are what will confirm it.
    - (b) Allow-list `wpad` in the workflow (`-AllowDnsName 'wpad','wpad.*'`) and record it
      as a residual in audit.md. The lookup keeps leaving the user's machine, and
      `docs/desktop.md` must stop saying the build never contacts a network.
@@ -402,7 +407,9 @@ today (`verify-packaged.mjs:37-43`).
    reduced, unelevated variant is ever wanted, for example on a developer machine.
 5. **Open, minor.** The three-consecutive-dry-run bar of §6 step 5 is not met yet: two strict
    passes exist (runs 43805710270 and 43806349805, both with the F1 fix applied on a throwaway
-   branch). The rest belong on `release-desktop.yml` dry runs once question 3 is settled.
+   branch). The rest belong on `release-desktop.yml` dry runs of the branch that carries the fix.
+   Those are also the first time the committed `electron/main.js` line itself goes through the
+   armed gate: runs 3 and 4 used the same one-line change on a throwaway branch.
 
 ## 9. Effort
 
@@ -498,13 +505,14 @@ later). The resolver service then sends a query for `wpad.<connection DNS suffix
 configured DNS server (event 3010 with the app's `ClientPID`; answer NXDOMAIN). This is Chromium's
 proxy auto-detection, and it is egress attributable to the app's own process, not the
 host-level WinHTTP service that §5a records as out of scope. The old sampler cannot see it.
-`docs/desktop.md` says these builds never contact a network; on Windows that is not yet true for
+`docs/desktop.md` says these builds never contact a network; on Windows that was not true for
 this one lookup.
 
 Launching the release exe with `--no-proxy-server` removed the lookup (run 2), and a build with
 `app.commandLine.appendSwitch('no-proxy-server')` in `electron/main.js` passed the strict gate
-(run 3). That change is to shipped code and is **not** part of this work. Until it is decided,
-the gate as wired fails every Windows release on F1, by design. See §8, question 3.
+(run 3). The owner chose that fix on 2026-11-16 (§8, question 3). It is committed with this work as its
+own change, so `docs/desktop.md`'s statement holds again once it ships. Releases up to v0.2.0
+make the lookup.
 
 ## Sources
 

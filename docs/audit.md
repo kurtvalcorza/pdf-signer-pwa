@@ -32,9 +32,10 @@ in [RFC 23-2 §10](rfc-23-2-windows-egress-gate.md#10-runner-evidence-phase-0-20
 - **Subject.** The controls and the sign flow run on the gate-only probe build, which differs from
   the release by one fuse byte (`check-fuses.mjs`). The release exe itself is measured undriven:
   launch, 15 s idle, quit. Signing on the release binary is therefore inferred from the probe.
-- **Open finding (F1).** The app's network service looks up `wpad` on every launch, and the
-  resolver sends that query to the DNS server. The gate fails on it. The fix is an owner decision
-  (RFC 23-2 §8, question 3).
+- **Finding F1, fixed.** The gate showed the app's network service looking up `wpad` on every
+  launch, with the resolver sending that query to the DNS server. `electron/main.js` now sets
+  `no-proxy-server`; with that line the strict gate passed twice on the runner (throwaway branch).
+  Releases up to v0.2.0 make the lookup. The gate keeps no allow-list, so a regression fails it.
 - **Not checked, recorded.** Multicast and broadcast from the app are logged, not failed, the same
   rule as the Linux gate. The portable wrapper's self-extraction to `%TEMP%` is not monitored; the
   gate runs the unpacked build. A browser opened through the "View source" link is not a child
