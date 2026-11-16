@@ -45,7 +45,7 @@ unclassifiable; no distribution-specific branch in the signing path; no network.
 **Scale/Scope**: about 7 source files changed, 2 added; 21 fixtures added to the 11 the spike
 produced; 48 tasks.
 
-**Open (owner)**: FR-008 (`/Info` rewritten by a foreign fill) and FR-009 (revision cap). Each is
+**Decided 2026-11-16 (owner)**: C1 (a) and C2 (a), see the table below. They were: FR-008 (`/Info` rewritten by a foreign fill) and FR-009 (revision cap). Each is
 one condition or one constant in `revisions.ts`; neither changes the structure below.
 
 ## Constitution Check
@@ -129,9 +129,9 @@ touched. `.github/workflows/` is touched only by T038, after the parallel item-2
 4. **US3**: the second-signer chain, app → app and pyHanko → app.
 5. **US4**: desktop and Android evidence, docs, version, Acrobat check, release.
 
-## Open decisions (owner)
+## Owner decisions (answered 2026-11-16: C1 (a), C2 (a))
 
-| # | Question | Recommended | Affects |
+| # | Question | Decision | Affects |
 | :-- | :-- | :-- | :-- |
 | C1 | A foreign fill that also rewrites `/Info` (FR-008) | Accept the trailer's `/Info` rewrite only; refuse XMP and everything else | T007, US3 scenario 3 |
 | C2 | Cap on signed revisions after certification (FR-009) | 8 | T007, T041 |

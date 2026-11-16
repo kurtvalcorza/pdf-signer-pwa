@@ -32,7 +32,7 @@ Rules:
 | `xfa-form` | R10 | new |
 | `changed-after-certification` | R18 | new |
 | `too-many-fields` | T10 | new (above 2,000 form nodes) |
-| `too-many-revisions` | FR-009 | new (above the cap, value pending C2) |
+| `too-many-revisions` | FR-009 | new (above the cap, 8, C2) |
 | `unreadable-policy` | fail-closed | existing "could not be read" message |
 
 R11 (free placement on a certified document) is not a classification value: it is the signing
@@ -87,12 +87,13 @@ Validation:
 - Every byte range starts at 0, has `a < b`, `end ≤ file length`, and a `<…>` gap.
 - Ends are distinct. The smallest belongs to the certification signature. The largest equals the
   file length.
-- At most `MAX_SIGNED_REVISIONS_AFTER_CERTIFICATION` (pending C2) revisions follow the first.
+- At most `MAX_SIGNED_REVISIONS_AFTER_CERTIFICATION` (8, C2) revisions follow the first.
 
 Transition between consecutive revisions (rule 5d): the set of pre-existing objects that differ is
 exactly one field that was empty, was present in the first revision, now holds a new signature
 whose range ends at this revision, and differs only in the fill keys
-`/AP /AS /V /F /DA /Q /Ff /Type`. Pending C1, the trailer's `/Info` dictionary may also differ.
+`/AP /AS /V /F /DA /Q /Ff /Type`. The trailer's `/Info` dictionary may also
+differ (C1); an XMP `/Metadata` stream may not.
 
 ## FieldPlacementInput
 

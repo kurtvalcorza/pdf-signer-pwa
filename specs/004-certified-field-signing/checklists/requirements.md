@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,11 +31,10 @@
 
 ## Notes
 
-- Two `[NEEDS CLARIFICATION]` markers remain, both raised by the revision-parsing spike
-  (research.md R1) and both awaiting the owner: FR-008 (accept or refuse a fill that also rewrites
-  the document information dictionary) and FR-009 (limit on signed revisions after
-  certification). Planning proceeded because neither changes the design's shape: each is one
-  condition or one constant in the revision check.
+- The two `[NEEDS CLARIFICATION]` markers raised by the revision-parsing spike (research.md R1)
+  were answered by the owner on 2026-11-16: FR-008 accepts a foreign fill that also rewrites the
+  trailer `/Info` dictionary only (C1 (a)); FR-009 caps signed revisions after certification at 8,
+  subject to the T041 measurement (C2 (a)).
 - "No implementation details": the spec names the pinned validator and the RFC's rule and row
   numbers. That follows specs 002 and 003, where the validator is part of the requirement
   (constitution Principle V), and keeps the spec traceable to the accepted design.

@@ -69,6 +69,11 @@ no stored data. It is bound by three principles in particular:
   signature field.
 - Q: Acrobat Reader spot-check timing? → A: Before release, not before merge.
 - Q: Release? → A: v0.3.0, one release for the web app, desktop and Android.
+- Q (C1, FR-008): A certified PDF whose first field was filled by another tool that also rewrote
+  the document `/Info` dictionary: accept or refuse? → A: (a) Accept a rewrite of the trailer
+  `/Info` dictionary only. Still refuse XMP `/Metadata` and every other change.
+- Q (C2, FR-009): Cap on signed revisions after certification? → A: (a) 8. T041 measures the
+  largest allowed file and may confirm or lower it.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -261,13 +266,15 @@ validate the file that distribution produced.
 - **FR-008**: Every part of the file after the certified bytes MUST be accounted for by later
   signatures, each of which adds exactly one signature fill of a field that satisfied FR-007, with
   nothing else changed, and the last of which covers the file to its end. Otherwise the document
-  MUST be refused (R18, D9). [NEEDS CLARIFICATION: when such a fill, made by another tool, also
-  rewrites the document information dictionary (its modified date and producer), is the document
-  accepted or refused? The validator's own signing tool does this, so "refused" means a second
-  signer can only follow a first who used this app.]
+  MUST be refused (R18, D9). A later fill made by another tool MAY also rewrite the document
+  information dictionary (the trailer's `/Info`: modified date, producer), and nothing else. A
+  rewritten XMP `/Metadata` stream, or any other change, still refuses the document (C1, decided
+  2026-11-16).
 - **FR-009**: The field walk and the revision check MUST be bounded: the document is refused above
   2,000 form nodes (T10) and above a fixed number of signed revisions after certification.
-  [NEEDS CLARIFICATION: the revision limit. Each one costs a full re-read of the document.]
+  The limit is 8 signed revisions after certification (C2, decided 2026-11-16); each one costs a
+  full re-read of the document, so T041 measures the largest allowed file and may confirm or
+  lower it.
 - **FR-010**: Each ineligible empty field MUST carry one specific reason, shown to the user (R3,
   R5, R6, R12–R17).
 

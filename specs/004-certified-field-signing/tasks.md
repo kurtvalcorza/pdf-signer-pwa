@@ -36,7 +36,7 @@ before the implementation tasks start.
 ## Phase 1: Setup (Shared Infrastructure)
 
 - [ ] T001 Re-run the baseline (`npm run lint`, `npx tsc --noEmit`, `npx vitest run`, `npm run verify:signatures`), capture each real exit code, and confirm it matches the table in specs/004-certified-field-signing/research.md (lint 0, tsc 0, 160 tests plus the 14 spike tests, gate 0)
-- [ ] T002 [OWNER] Answer C1 (foreign fill that rewrites `/Info`) and C2 (cap on signed revisions after certification) from specs/004-certified-field-signing/plan.md; then replace the two `[NEEDS CLARIFICATION]` markers in specs/004-certified-field-signing/spec.md (FR-008, FR-009) and tick the item in specs/004-certified-field-signing/checklists/requirements.md
+- [x] T002 [OWNER] Answer C1 (foreign fill that rewrites `/Info`) and C2 (cap on signed revisions after certification) from specs/004-certified-field-signing/plan.md; then replace the two `[NEEDS CLARIFICATION]` markers in specs/004-certified-field-signing/spec.md (FR-008, FR-009) and tick the item in specs/004-certified-field-signing/checklists/requirements.md — answered 2026-11-16: C1 = (a) accept a trailer `/Info` rewrite only; C2 = (a) cap 8, T041 confirms or lowers it
 
 ---
 
