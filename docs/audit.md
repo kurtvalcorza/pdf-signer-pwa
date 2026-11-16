@@ -20,7 +20,8 @@ inherited from the review.
 
 ### SEC-14: what the Windows no-egress gate checks, and what it does not
 
-Measured on `windows-latest` (Server 2025) in runs 43802298765, 43804844070 and 43805710270; details
+Measured on `windows-latest` (Server 2025) in runs 43802298765, 43804844070, 43805710270 and 43806349805;
+details
 in [RFC 23-2 §10](rfc-23-2-windows-egress-gate.md#10-runner-evidence-phase-0-2026-11-16).
 
 - **Checked.** Any TCP or UDP connection attempt, allowed or blocked, by any process in the app's

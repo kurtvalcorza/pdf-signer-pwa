@@ -380,7 +380,8 @@ today (`verify-packaged.mjs:37-43`).
 1. ~~Is a 20/20 detection run on one runner image enough evidence?~~ **Decided 2026-11-16:**
    the positive control runs on every release (3 attempts per protocol); the 20/20 run is
    repeated only when `windows-latest` moves to a new Server release. Evidence so far:
-   20/20 TCP and 20/20 UDP in each of runs 43802298765, 43804844070 and 43805710270, all on
+   20/20 TCP and 20/20 UDP in each of runs 43802298765, 43804844070, 43805710270 and
+   43806349805, all on
    Server 2025 (10.0.26100).
 2. ~~Should the portable wrapper `.exe` be monitored?~~ **Decided 2026-11-16:** stay on
    `win-unpacked`. The wrapper's `%TEMP%` extraction is a named residual in audit.md.
@@ -399,9 +400,9 @@ today (`verify-packaged.mjs:37-43`).
    read, or the Security log read, from an unelevated session was **not tested**. The gate
    requires elevation anyway (audit policy and firewall rules), so this only matters if a
    reduced, unelevated variant is ever wanted, for example on a developer machine.
-5. **Open, minor.** The three-consecutive-dry-run bar of §6 step 5 is not met yet: one strict
-   pass exists (run 43805710270, with the F1 fix applied on a throwaway branch). The other two
-   belong on `release-desktop.yml` dry runs once question 3 is settled.
+5. **Open, minor.** The three-consecutive-dry-run bar of §6 step 5 is not met yet: two strict
+   passes exist (runs 43805710270 and 43806349805, both with the F1 fix applied on a throwaway
+   branch). The rest belong on `release-desktop.yml` dry runs once question 3 is settled.
 
 ## 9. Effort
 
@@ -428,13 +429,14 @@ that has since been deleted. The raw events of run 1 are kept, trimmed, in
 | [43802298765](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43802298765) | Experiment script: baseline, armed controls, real sign flow, release idle, firewall off, rules removed | All phases completed |
 | [43804844070](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43804844070) | The drafted gate, strict with 20 repeats, then with `wpad` allow-listed, then with firewall profiles off; `--no-proxy-server`; old sampler against a closing peer | Controls 20/20; strict failed on `wpad` only (plus a marker bug, fixed); firewall off failed closed |
 | [43805710270](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43805710270) | The gate, strict with 20 repeats, against a build with `no-proxy-server` added in `electron/main.js` (throwaway branch only) | **Passed**, 0 problems; firewall off failed closed |
+| [43806349805](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43806349805) | The same, with the gate as committed (SMB/WebDAV check added) | **Passed**, 0 problems; firewall off failed closed; 0 rules left |
 
 ### What was confirmed
 
 - **Connect-time decision (G1, §6 step 1).** With the per-image outbound block rule, 20 of 20
   Node TCP connects to `192.0.2.1` and 20 of 20 UDP sends to `198.51.100.1` each produced a
   **5157** (and a 5152) carrying the main process's pid and the probe's image path. The connects
-  failed with `EACCES` in 0.3–2.7 ms. Repeated in runs 2 and 3: 60 of 60 for each protocol.
+  failed with `EACCES` in 0.3–2.7 ms. Repeated in runs 2, 3 and 4: 80 of 80 for each protocol.
   A blocked UDP `send` reports success to the caller; only the audit event shows it.
 - **Auditing alone sees permitted short connections.** With the rules removed, 5 of 5 two-millisecond
   connect attempts and 20 of 20 connect-then-close connections produced a **5156**.
