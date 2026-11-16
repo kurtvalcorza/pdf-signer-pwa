@@ -408,8 +408,8 @@ today (`verify-packaged.mjs:37-43`).
 5. **Open, minor.** The three-consecutive-dry-run bar of §6 step 5 is not met yet: two strict
    passes exist (runs 43805710270 and 43806349805, both with the F1 fix applied on a throwaway
    branch). The rest belong on `release-desktop.yml` dry runs of the branch that carries the fix.
-   Those are also the first time the committed `electron/main.js` line itself goes through the
-   armed gate: runs 3 and 4 used the same one-line change on a throwaway branch.
+   The committed `electron/main.js` line passed the armed gate once, in run 43814441249, in a
+   temporary workflow that invokes the gate as the release workflow does.
 
 ## 9. Effort
 
@@ -437,6 +437,8 @@ that has since been deleted. The raw events of run 1 are kept, trimmed, in
 | [43804844070](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43804844070) | The drafted gate, strict with 20 repeats, then with `wpad` allow-listed, then with firewall profiles off; `--no-proxy-server`; old sampler against a closing peer | Controls 20/20; strict failed on `wpad` only (plus a marker bug, fixed); firewall off failed closed |
 | [43805710270](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43805710270) | The gate, strict with 20 repeats, against a build with `no-proxy-server` added in `electron/main.js` (throwaway branch only) | **Passed**, 0 problems; firewall off failed closed |
 | [43806349805](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43806349805) | The same, with the gate as committed (SMB/WebDAV check added) | **Passed**, 0 problems; firewall off failed closed; 0 rules left |
+| [43812388020](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43812388020) | The final gate, invoked as `release-desktop.yml` invokes it, on the committed `no-proxy-server` line | Stopped **before the gate**: the fuse step, copied from `release-desktop.yml`, found no exe in the unpacked portable (the app is in a nested `app-64.7z`). Fixed by extracting twice |
+| [43814441249](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/43814441249) | The same, with the two-stage extraction | **Passed**, 0 problems: controls 3/3 TCP and 3/3 UDP; sign flow clean; release exe from `release/portable-extract` clean; 0 rules and 0 app processes left |
 
 ### What was confirmed
 
@@ -516,12 +518,16 @@ to v0.2.0 are **expected** to make the lookup: `git diff v0.2.0..a6f4eef` leaves
 untouched, so they carry the same switches. That is inferred from the code. It was not measured
 on a v0.2.0 binary, and nothing about `wpad` was measured on Linux.
 
-### Changes after review (2026-11-16), not yet run armed
+### Changes after review (2026-11-16)
 
 A review of the drafted gate found no escape in the recorded runs but several places where a
 clean result could have meant less than it said. These are fixed in the script and covered by
-`-SelfTest` (38 checks, each new one shown to fail under mutation). **None of them has run armed
-on a runner**; the first `release-desktop.yml` dry run is their first real test.
+`-SelfTest` (38 checks, each new one shown to fail under mutation). They ran armed once, in run
+43814441249, and the gate passed with them. That run shows they do not fail a clean build; it
+does not show each one firing, which only the self-test does. The same run is the first time the
+committed `no-proxy-server` line went through the armed gate, and its uploaded evidence held no
+account, machine name, SID, DNS suffix or private address. The gate has still not run inside
+`release-desktop.yml` itself.
 
 - A window fails if any tree member has no exit event, or if a package image is still running
   when the window is read. A release exe that has to be killed fails the gate. The control

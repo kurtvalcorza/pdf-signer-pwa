@@ -30,8 +30,8 @@ details in [RFC 23-2 §10](rfc-23-2-windows-egress-gate.md#10-runner-evidence-ph
   resolver, a foreign image in the tree, and an SMB connection from the system redirector during a
   window. Every app process must have exited before a window is read, and none may be running when
   the block rules are removed; before that the gate re-checks that auditing and the rules are still
-  in place. These last checks were added after review and have run only in the self-test, not yet
-  armed on a runner.
+  in place. These last checks were added after review; they ran armed once (run 43814441249, gate
+  passed), and each is shown to fire only by the self-test.
 - **WebDAV: coded, never exercised.** The gate also fails on a connection from the WebClient service
   to port 80 or 443, reading that service's pid again for every window. Whether the WebClient service
   exists on `windows-latest` is not shown by any run's artifacts; it is inferred to be absent on
@@ -40,15 +40,15 @@ details in [RFC 23-2 §10](rfc-23-2-windows-egress-gate.md#10-runner-evidence-ph
   the release by one fuse byte (`check-fuses.mjs`). The release exe itself is measured undriven:
   launch, 15 s idle, quit; a quit that needs a kill fails the gate. In the release workflow that exe
   is the one unpacked from the shipped portable (`release/portable-extract`), the same tree
-  `check-fuses.mjs` compares with the probe. The four runs above used `release/win-unpacked`
-  instead; the unpacked-portable path has not yet run armed. Signing on the release binary is
+  `check-fuses.mjs` compares with the probe. The four runs above used `release/win-unpacked`;
+  run 43814441249 used the unpacked portable and passed. Signing on the release binary is
   inferred from the probe. The positive controls are IPv4 only.
 - **Evidence.** The uploaded artifact holds only the events the judge used (tree members, their
   connection and lookup events, share-client events), without local addresses, accounts, machine
   names or SIDs, and without the audit-policy backup.
 - **Finding F1, fixed.** The gate showed the app's network service looking up `wpad` on every
   launch, with the resolver sending that query to the DNS server. `electron/main.js` now sets
-  `no-proxy-server`; with that line the strict gate passed twice on the runner (throwaway branch).
+  `no-proxy-server`; the committed line passed the strict gate on the runner (run 43814441249).
   Windows builds up to v0.2.0 are expected to make the lookup: they have the same `main.js`
   switches and Electron line, but this is inferred from the code, not measured on those binaries,
   and nothing was measured on Linux. The fix ships from the next release. The gate keeps no
