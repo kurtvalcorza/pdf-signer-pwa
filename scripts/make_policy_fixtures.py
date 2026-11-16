@@ -10,10 +10,13 @@ every run and rewriting a committed fixture would change its bytes for no reason
 The signing key is created in memory and discarded, so no private key is ever stored.
 """
 
+import asyncio
 import datetime
+import hashlib
 import re
 import sys
 import tempfile
+import zlib
 from io import BytesIO
 from pathlib import Path
 
@@ -587,6 +590,167 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
         return out.getvalue()
 
     t["certified-p2-xref-rewritten-object.pdf"] = rewritten_object()
+
+    # ---- One hand-written, validly SIGNED fill revision (review round 2). ----
+    # The files above put a crafted section under pyHanko's fill, which makes two sections in one
+    # signed revision. An attacker who signs with their own tool writes one. So: take pyHanko's
+    # fill of "Approver", rebuild its revision by hand as a single cross-reference section, change
+    # one thing, and sign it again (SHA-256 over the new byte range, CMS from the fixture
+    # signer). Every signature in these files verifies. The unchanged rebuild is the control: the
+    # app must offer "Witness" on it and the validator must pass it. Every variant must be
+    # refused by the app.
+    def resigned(change=None, stream_xrefs=False) -> bytes:
+        whole = fill(certified(MDPPerm.FILL_FORMS, two, stream_xrefs), signer, "Approver")
+        cert_end = [m.end() for m in re.finditer(rb"%%EOF\s*", whole)][-2]
+        base = whole[:cert_end]
+        starts = [int(v) for v in re.findall(rb"startxref\s+(\d+)", whole)]
+        first_xref, prev, fill_xref = starts[0], starts[-2], starts[-1]
+        objs = {
+            int(m.group(1)): m.group(0)
+            for m in re.finditer(
+                rb"(?<![0-9])(\d+) 0 obj\n.*?\nendobj\n", whole[cert_end:fill_xref], re.S
+            )
+        }
+        section = whole[fill_xref:]
+        root = re.search(rb"/Root (\d+ \d+ R)", section).group(1)
+        info = re.search(rb"/Info (\d+ \d+ R)", section).group(1)
+        file_id = re.search(rb"/ID (\[.*?\])", section, re.S).group(1)
+        reader = PdfFileReader(BytesIO(base))
+        contents = reader.root["/Pages"]["/Kids"][0].get_object().raw_get("/Contents").idnum
+        plan = {
+            "chunks": [(n, objs[n]) for n in sorted(objs)],  # (number or None, bytes)
+            "size": None,
+            "trailer_head": b"",
+            "before_prev": b"",
+            "decode_parms": b"",
+            "field": next(n for n, data in objs.items() if b"/T (Approver)" in data),
+            "contents": contents,
+            "original_contents": re.search(
+                rb"(?<![0-9])%d 0 obj\n.*?\nendobj\n" % contents, base, re.S
+            ).group(0),
+            "highest": max(objs),
+            "first_xref": first_xref,
+        }
+        if change:
+            change(plan)
+
+        out = base
+        offsets = {}
+        for num, data in plan["chunks"]:
+            data = re.sub(
+                rb"/ByteRange \[[^\]]*\]", b"/ByteRange [0 1000000 1000000 1000000]", data
+            )
+            if num is not None:
+                offsets[num] = len(out)
+            out += data
+        at = len(out)
+        if not stream_xrefs:
+            size = plan["size"] or max(offsets) + 1
+            out += b"xref\n0 1\n0000000000 65535 f \n"
+            out += b"".join(b"%d 1\n%010d 00000 n \n" % (n, offsets[n]) for n in sorted(offsets))
+            out += b"trailer\n<<\n" + plan["trailer_head"]
+            out += b"/Root %s\n/Info %s\n/ID %s\n/Size %d\n" % (root, info, file_id, size)
+            out += plan["before_prev"] + b"/Prev %d\n>>\nstartxref\n%d\n%%%%EOF\n" % (prev, at)
+        else:
+            own = max(offsets) + 1
+            rows = [(0, 0, 0, 65535)] + [(n, 1, offsets[n], 0) for n in sorted(offsets)]
+            rows.append((own, 1, at, 0))
+            table = b"".join(
+                bytes([kind]) + second.to_bytes(4, "big") + third.to_bytes(2, "big")
+                for _, kind, second, third in rows
+            )
+            packed = zlib.compress(table)
+            index = b" ".join(b"%d 1" % n for n, *_ in rows)
+            out += b"%d 0 obj\n<<\n/Type /XRef\n/W [ 1 4 2 ]\n/Index [ %s ]\n" % (own, index)
+            out += b"/Filter /FlateDecode\n" + plan["decode_parms"]
+            out += b"/Root %s\n/Info %s\n/ID %s\n/Size %d\n" % (root, info, file_id, own + 1)
+            out += b"/Prev %d\n/Length %d\n>>\nstream\n" % (prev, len(packed))
+            out += packed + b"\nendstream\nendobj\n\nstartxref\n%d\n%%%%EOF\n" % at
+
+        # Point the new signature's /ByteRange at the rebuilt file and sign it.
+        gap = re.search(rb"/Contents <([0-9A-Fa-f]+)>", out[cert_end:])
+        a = cert_end + gap.start(1) - 1
+        b = cert_end + gap.end(1) + 1
+        declared = re.search(rb"/ByteRange \[[^\]]*\]", out[cert_end:])
+        actual = b"/ByteRange [0 %d %d %d]" % (a, b, len(out) - b)
+        assert len(actual) <= len(declared.group(0))
+        actual = actual[:-1] + b" " * (len(declared.group(0)) - len(actual)) + b"]"
+        out = out[: cert_end + declared.start()] + actual + out[cert_end + declared.end() :]
+        digest = hashlib.sha256(out[:a] + out[b:]).digest()
+        cms = asyncio.run(signer.async_sign(digest, "sha256")).dump().hex().upper().encode()
+        width = b - a - 2
+        assert len(cms) <= width
+        return out[: a + 1] + cms + b"0" * (width - len(cms)) + out[b - 1 :]
+
+    def plain_stream(num, data):
+        return b"%d 0 obj\n<<\n/Length %d\n>>\nstream\n%s\nendstream\nendobj\n" % (
+            num,
+            len(data),
+            data,
+        )
+
+    def replace_chunk(plan, num, change):
+        plan["chunks"] = [(n, change(d) if n == num else d) for n, d in plan["chunks"]]
+
+    def repeated_key_field(plan):
+        # The field's dictionary names /Rect twice: first the whole page, last the real box.
+        replace_chunk(
+            plan,
+            plan["field"],
+            lambda d: d.replace(b"<<\n", b"<<\n/Rect [ 0 0 612 792 ]\n", 1),
+        )
+
+    def repeated_key_root(plan):
+        # The trailer names /Root twice: first a catalog of the signer's own, last the real one.
+        h = plan["highest"]
+        plan["chunks"] += [
+            (h + 1, b"%d 0 obj\n<<\n/Type /Catalog\n/Pages %d 0 R\n>>\nendobj\n" % (h + 1, h + 2)),
+            (
+                h + 2,
+                b"%d 0 obj\n<<\n/Type /Pages\n/Count 1\n/Kids [ %d 0 R ]\n>>\nendobj\n"
+                % (h + 2, h + 3),
+            ),
+            (
+                h + 3,
+                b"%d 0 obj\n<<\n/Type /Page\n/MediaBox [ 0 0 612 792 ]\n/Contents %d 0 R\n"
+                b"/Parent %d 0 R\n>>\nendobj\n" % (h + 3, h + 4, h + 2),
+            ),
+            (h + 4, plain_stream(h + 4, b"0 0 612 792 re f")),
+        ]
+        plan["trailer_head"] = b"/Root %d 0 R\n" % (h + 1)
+
+    def repeated_key_prev(plan):
+        # /Prev twice: first the section written before certification, last the certified one.
+        plan["before_prev"] = b"/Prev %d\n" % plan["first_xref"]
+
+    def size_low(plan):
+        plan["size"] = 3  # a reader ignores every object numbered 3 or above
+
+    def size_short(plan):
+        plan["size"] = plan["highest"]  # one short: the new signature itself is ignored
+
+    def decode_parms(plan):
+        # The rows are written plain, but the stream declares a PNG predictor: a reader that
+        # applies it reads a different table from the one a reader that does not.
+        plan["decode_parms"] = b"/DecodeParms << /Predictor 12 /Columns 7 >>\n"
+
+    def glued_definitions(plan):
+        # An altered page content and a byte copy of the original, both glued to the previous
+        # `endobj` (no white space before the object number) and both left out of the xref.
+        num, last = plan["chunks"][-1]
+        n = plan["contents"]
+        glued = last[:-1] + plain_stream(n, b"0 0 612 792 re f")[:-1] + plan["original_contents"]
+        plan["chunks"][-1] = (num, glued)
+
+    t["certified-p2-signed-xref-control.pdf"] = resigned()
+    t["certified-p2-signed-xref-control-xref-stream.pdf"] = resigned(stream_xrefs=True)
+    t["certified-p2-signed-xref-repeated-key-field.pdf"] = resigned(repeated_key_field)
+    t["certified-p2-signed-xref-repeated-key-root.pdf"] = resigned(repeated_key_root)
+    t["certified-p2-signed-xref-repeated-key-prev.pdf"] = resigned(repeated_key_prev)
+    t["certified-p2-signed-xref-size-low.pdf"] = resigned(size_low)
+    t["certified-p2-signed-xref-size-short.pdf"] = resigned(size_short)
+    t["certified-p2-signed-xref-decode-parms.pdf"] = resigned(decode_parms, stream_xrefs=True)
+    t["certified-p2-signed-xref-glued-definitions.pdf"] = resigned(glued_definitions)
     return t
 
 

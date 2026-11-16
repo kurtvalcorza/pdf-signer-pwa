@@ -26,7 +26,7 @@ import {
   signatureFieldKeys,
   walkFormNodes,
 } from './revisions';
-import { checkRevisionXref, initialXrefState } from './xrefSections';
+import { checkRevisionXref, findRepeatedKeys, initialXrefState } from './xrefSections';
 
 /**
  * Tier B — a subsequent cryptographic signature added as a BYTE-LEVEL INCREMENTAL
@@ -304,6 +304,8 @@ export async function checkFill(
     if (!result.ok) return result.detail;
     if (refKey(result.field) !== refKey(fieldRef)) return 'another-field-changed';
 
+    const repeated = await findRepeatedKeys(output, input.length, output.length);
+    if (repeated) return repeated.detail;
     const initial = initialXrefState(input, before);
     if (!initial.ok) return initial.detail;
     const reader = checkRevisionXref(output, before, after, initial.state, {

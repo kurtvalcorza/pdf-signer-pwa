@@ -443,3 +443,23 @@ describe('refusals that need the bytes or the earlier trailer', () => {
     });
   });
 });
+
+describe('a dictionary that repeats a key (review round 2)', () => {
+  it('inside the certified bytes makes the document unreadable for this purpose', async () => {
+    const bytes = load('certified-p2-empty-field.pdf');
+    const doc = await parse(bytes);
+    // Same length, so every offset and the signature gap stay where they are: the field's
+    // /Type key becomes a second /Rect.
+    const text = Buffer.from(bytes).toString('latin1');
+    const at = text.indexOf('/Type /Annot');
+    expect(at).toBeGreaterThan(0);
+    const patched = new Uint8Array(
+      Buffer.from(text.slice(0, at) + '/Rect /Annot' + text.slice(at + 12), 'latin1'),
+    );
+    // pdf-lib reads it without complaint, last value wins.
+    await expect(loadRevision(patched)).resolves.toBeDefined();
+    const analysis = await analyzeRevisions(doc, patched);
+    expect(analysis).toMatchObject({ ok: false, reason: 'xref-unreadable' });
+    expect(!analysis.ok && analysis.detail).toMatch(/^repeated-key:\d+$/);
+  });
+});

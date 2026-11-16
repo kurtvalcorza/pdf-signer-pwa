@@ -1,5 +1,6 @@
 import {
   PDFArray,
+  PDFCatalog,
   PDFContext,
   PDFDict,
   PDFDocument,
@@ -7,6 +8,9 @@ import {
   PDFNumber,
   PDFObject,
   PDFObjectParser,
+  PDFObjectStreamParser,
+  PDFPageLeaf,
+  PDFPageTree,
   PDFRawStream,
   PDFRef,
   decodePDFRawStream,
@@ -38,6 +42,19 @@ import {
  *    applies;
  *  - the `N G obj` headers found in the revision's bytes are exactly the in-use entries, once
  *    each, and nothing pdf-lib registered from this revision is missing from them.
+ *
+ * Three more things two readers can disagree on are refused outright (review round 2):
+ *
+ *  - a dictionary that repeats a key. ISO 32000-1 7.3.7 leaves its value undefined; pdf-lib
+ *    keeps the last, other readers the first. Every trailer and definition read here goes
+ *    through a parser that throws on a repeated key, and `findRepeatedKeys` applies the same
+ *    parser to every object of a certified file, object streams included;
+ *  - a trailer `/Size` that is not the section's highest object number plus one, or that
+ *    shrinks: a reader ignores objects numbered at or above `/Size`;
+ *  - a cross-reference stream with `/DecodeParms` or any filter but plain FlateDecode: pdf-lib
+ *    applies no predictor, every other reader does, so the two would read different tables.
+ *
+ * Object numbers above 8388607 and generations above 65535 (ISO 32000-1 Annex C) are refused.
  *
  * Entries of type 2 (objects inside an object stream) are refused: no signing tool this project
  * can run writes a fill that way, so the shape could not be tested, and an untested acceptance
@@ -155,13 +172,16 @@ export function objectHeaderAt(
 
 /**
  * Every `N G obj` header in `bytes[from .. to)`, in file order: one linear pass, a header being
- * tried only at a digit on a token boundary (the same scan `reserveExistingObjectNumbers` uses).
+ * tried at the first digit of every digit run. Deliberately over-inclusive: a header-looking run
+ * inside a string or a stream counts, which can only refuse more.
  */
 export function scanObjectHeaders(bytes: Uint8Array, from: number, to: number): ObjectHeader[] {
   const found: ObjectHeader[] = [];
   let i = from;
   while (i < to) {
-    const boundary = i === 0 || isWs(bytes[i - 1]) || isDelimiter(bytes[i - 1]);
+    // pdf-lib starts an object wherever a header parses, glued to `endobj` included, so the
+    // only thing that rules a digit out here is being the middle of a longer number.
+    const boundary = i === 0 || !isDigit(bytes[i - 1]);
     if (!isDigit(bytes[i]) || !boundary) {
       i++;
       continue;
@@ -177,19 +197,86 @@ export function scanObjectHeaders(bytes: Uint8Array, from: number, to: number): 
   return found;
 }
 
-/** Parse one PDF value at `start` with pdf-lib's own object parser; `end` is where it stopped. */
+/** Thrown by the strict parser when a dictionary names a key twice. */
+export class RepeatedKeyError extends Error {
+  constructor() {
+    super('A dictionary repeats a key.');
+    this.name = 'RepeatedKeyError';
+  }
+}
+
+/** ISO 32000-1 Annex C: the largest object number and generation a conforming file uses. */
+const MAX_OBJECT_NUMBER = 8388607;
+const MAX_GENERATION = 65535;
+
+interface ParserInternals {
+  bytes: {
+    assertNext(c: number): number;
+    done(): boolean;
+    peek(): number;
+    peekAhead(n: number): number;
+    offset(): number;
+  };
+  context: PDFContext;
+  skipWhitespaceAndComments(): void;
+  parseName(): PDFName;
+  parseObject(): PDFObject;
+  parseDict: () => PDFDict;
+}
+
+/**
+ * Make a pdf-lib object parser refuse a dictionary that repeats a key, at any depth (stream
+ * dictionaries included). The method is pdf-lib 1.17.1's `parseDict` with that one check added;
+ * it replaces the method on this instance, and the parser's own recursion goes through it.
+ */
+function makeStrict<T extends PDFObjectParser>(parser: T): T {
+  const p = parser as unknown as ParserInternals;
+  p.parseDict = () => {
+    p.bytes.assertNext(0x3c);
+    p.bytes.assertNext(0x3c);
+    p.skipWhitespaceAndComments();
+    const dict = new Map<PDFName, PDFObject>();
+    while (!p.bytes.done() && p.bytes.peek() !== 0x3e && p.bytes.peekAhead(1) !== 0x3e) {
+      const key = p.parseName();
+      const value = p.parseObject();
+      // PDFName is interned after #xx decoding, so /Rect and /#52ect are the same key here.
+      if (dict.has(key)) throw new RepeatedKeyError();
+      dict.set(key, value);
+      p.skipWhitespaceAndComments();
+    }
+    p.skipWhitespaceAndComments();
+    p.bytes.assertNext(0x3e);
+    p.bytes.assertNext(0x3e);
+    const type = dict.get(N('Type'));
+    if (type === N('Catalog')) return PDFCatalog.fromMapWithContext(dict, p.context);
+    if (type === N('Pages')) return PDFPageTree.fromMapWithContext(dict, p.context);
+    if (type === N('Page')) return PDFPageLeaf.fromMapWithContext(dict, p.context);
+    return PDFDict.fromMapWithContext(dict, p.context);
+  };
+  return parser;
+}
+
+/**
+ * Parse one PDF value at `start` with pdf-lib's own object parser, made strict; `end` is where
+ * it stopped. Throws RepeatedKeyError on a repeated dictionary key.
+ */
 function parseValueAt(
   bytes: Uint8Array,
   start: number,
   limit: number,
 ): { object: PDFObject; end: number } {
-  const parser = PDFObjectParser.forBytes(bytes.subarray(start, limit), PDFContext.create());
+  const parser = makeStrict(
+    PDFObjectParser.forBytes(bytes.subarray(start, limit), PDFContext.create()),
+  );
   const object = parser.parseObject();
-  const consumed = (parser as unknown as { bytes: { offset(): number } }).bytes.offset();
+  const consumed = (parser as unknown as ParserInternals).bytes.offset();
   return { object, end: start + consumed };
 }
 
-/** The indirect object defined at `offset`: header, value, `endobj`. Null when it is not one. */
+/**
+ * The indirect object defined at `offset`: header, value, `endobj`. Null when it is not one.
+ * Throws RepeatedKeyError when it is one whose dictionary repeats a key.
+ */
 export function parseObjectAt(
   bytes: Uint8Array,
   offset: number,
@@ -203,9 +290,43 @@ export function parseObjectAt(
     const tail = skipWsAndComments(bytes, end, limit);
     if (!matches(bytes, tail, 'endobj') || tail + 6 > limit) return null;
     return { header, object, end: tail + 6 };
-  } catch {
+  } catch (err) {
+    if (err instanceof RepeatedKeyError) throw err;
     return null;
   }
+}
+
+/**
+ * The first object in `bytes[from .. to)` whose dictionary repeats a key, at any depth, or null.
+ *
+ * Every definition the header scan finds is parsed strictly, and so is every object stored in an
+ * object stream. This is how the objects a decision reads in the CERTIFIED revision (the catalog,
+ * `/Perms`, the form, fields and widgets, pages) are covered: rather than pick them out, all of
+ * them are checked. A header-looking run that does not parse as an object is skipped; an object
+ * stream that cannot be read strictly is reported, because what it holds was never checked.
+ */
+export async function findRepeatedKeys(
+  bytes: Uint8Array,
+  from: number,
+  to: number,
+): Promise<{ offset: number; detail: string } | null> {
+  for (const header of scanObjectHeaders(bytes, from, to)) {
+    let parsed: ReturnType<typeof parseObjectAt>;
+    try {
+      parsed = parseObjectAt(bytes, header.offset, to);
+    } catch {
+      return { offset: header.offset, detail: `repeated-key:${header.num}` };
+    }
+    if (!parsed || !(parsed.object instanceof PDFRawStream)) continue;
+    if (parsed.object.dict.lookup(N('Type')) !== N('ObjStm')) continue;
+    try {
+      await makeStrict(PDFObjectStreamParser.forStream(parsed.object)).parseIntoContext();
+    } catch (err) {
+      const kind = err instanceof RepeatedKeyError ? 'repeated-key' : 'object-stream-unreadable';
+      return { offset: header.offset, detail: `${kind}:${header.num}` };
+    }
+  }
+  return null;
 }
 
 /** The final `startxref N %%EOF` of `bytes[0 .. end)`: where the keyword is and what it names. */
@@ -346,6 +467,13 @@ export function readSection(
     }
     const entries: XrefEntry[] = [];
     if (withEntries) {
+      // pdf-lib inflates but applies no predictor, and every other reader does: with
+      // /DecodeParms the two would read different tables from one stream. Refused until a
+      // predictor is implemented and tested; so is every filter but plain FlateDecode.
+      const filter = dict.get(N('Filter'));
+      if (dict.has(N('DecodeParms')) || (filter !== undefined && filter !== N('FlateDecode'))) {
+        return fail('xref-stream-filter');
+      }
       const w = dict.lookup(N('W'));
       const size = dict.lookup(N('Size'));
       if (!(w instanceof PDFArray) || w.size() !== 3 || !(size instanceof PDFNumber)) {
@@ -410,8 +538,8 @@ export function readSection(
       ok: true,
       section: { form: 'stream', at, keywordAt, entries, trailer: dict, own: obj.header },
     };
-  } catch {
-    return fail('xref-unreadable');
+  } catch (err) {
+    return fail(err instanceof RepeatedKeyError ? 'repeated-key' : 'xref-unreadable');
   }
 }
 
@@ -446,6 +574,8 @@ export interface XrefState {
   known: Set<number>;
   /** The `startxref` value of the revision just before: the next `/Prev` must equal it. */
   startxref: number;
+  /** The `/Size` of the revision just before (0 when it had none): `/Size` never shrinks. */
+  size: number;
 }
 
 export type XrefStateResult = { ok: true; state: XrefState } | { ok: false; detail: string };
@@ -464,7 +594,15 @@ export function initialXrefState(bytes: Uint8Array, revision: Revision): XrefSta
   const known = new Set<number>();
   for (const key of revision.objects.keys()) known.add(Number(key.split(' ')[0]));
   for (const header of scanObjectHeaders(bytes, 0, revision.end)) known.add(header.num);
-  return { ok: true, state: { known, startxref: read.section.at } };
+  const size = read.section.trailer.get(N('Size'));
+  return {
+    ok: true,
+    state: {
+      known,
+      startxref: read.section.at,
+      size: size instanceof PDFNumber && Number.isInteger(size.asNumber()) ? size.asNumber() : 0,
+    },
+  };
 }
 
 export interface XrefAllowance {
@@ -517,7 +655,12 @@ export function checkRevisionXref(
     }
 
     const inUse = new Map<number, XrefEntry>();
+    let highest = section.own ? section.own.num : 0;
     for (const entry of section.entries) {
+      if (entry.num > MAX_OBJECT_NUMBER || entry.gen > MAX_GENERATION) {
+        return fail(`xref-number-range:${entry.num}`);
+      }
+      highest = Math.max(highest, entry.num);
       if (entry.kind === 'free') {
         if (entry.num !== 0) return fail(`xref-free-entry:${entry.num}`);
         continue;
@@ -554,9 +697,23 @@ export function checkRevisionXref(
         return fail(`xref-preexisting-object:${section.own.num}`);
     }
 
+    // A reader ignores every object numbered at or above /Size (ISO 32000-1 7.5.5), so /Size
+    // must be exactly one past the highest number this section lists, and must not shrink.
+    const size = trailer.get(N('Size'));
+    if (
+      !(size instanceof PDFNumber) ||
+      size.asNumber() !== highest + 1 ||
+      size.asNumber() < state.size
+    ) {
+      return fail('xref-size');
+    }
+
     // The bytes of the revision define exactly the listed objects, once each.
     const seen = new Set<number>();
     for (const header of scanObjectHeaders(bytes, from, after.end)) {
+      if (header.num > MAX_OBJECT_NUMBER || header.gen > MAX_GENERATION) {
+        return fail(`xref-number-range:${header.num}`);
+      }
       if (seen.has(header.num)) return fail(`xref-duplicate-definition:${header.num}`);
       seen.add(header.num);
       const entry = inUse.get(header.num);
@@ -581,8 +738,8 @@ export function checkRevisionXref(
     const known = new Set(state.known);
     for (const num of inUse.keys()) known.add(num);
     if (section.own) known.add(section.own.num);
-    return { ok: true, state: { known, startxref: section.at } };
-  } catch {
-    return fail('xref-unreadable');
+    return { ok: true, state: { known, startxref: section.at, size: size.asNumber() } };
+  } catch (err) {
+    return fail(err instanceof RepeatedKeyError ? 'repeated-key' : 'xref-unreadable');
   }
 }

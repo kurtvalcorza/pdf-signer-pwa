@@ -24,6 +24,7 @@ import {
 } from '../../src/features/signing/revisions';
 import {
   checkRevisionXref,
+  findRepeatedKeys,
   initialXrefState,
   readSection,
   readStartxref,
@@ -52,6 +53,8 @@ interface SectionOptions {
   root?: string;
   info?: string;
   extra?: string;
+  /** Replaces the default /Size (highest listed object number plus one). */
+  size?: number;
   /** Raw bytes placed between the trailer and `startxref`. */
   unreached?: string;
   /** Raw bytes placed after the objects, before the section a reader reaches. */
@@ -104,9 +107,11 @@ function appendSection(pdf: Uint8Array, objects: Obj[], opts: SectionOptions = {
   }
   out = Buffer.concat([out, Buffer.from(opts.before ?? '', 'latin1')]);
   const at = out.length;
+  const size =
+    opts.size ?? 1 + Math.max(0, ...objects.filter((o) => o.listed !== false).map((o) => o.num));
   const prev = opts.prev ?? `/Prev ${readStartxref(pdf, pdf.length)!.target}`;
   const trailer =
-    `<< /Size 99 ${opts.root ?? `/Root ${root}`} ${opts.info ?? `/Info ${info}`} ` +
+    `<< /Size ${size} ${opts.root ?? `/Root ${root}`} ${opts.info ?? `/Info ${info}`} ` +
     `${prev} ${opts.extra ?? ''} >>`;
   return new Uint8Array(
     Buffer.concat([
@@ -334,7 +339,7 @@ describe('a later revision whose section is a cross-reference stream', () => {
       Buffer.concat([
         out,
         Buffer.from(
-          `\n${own} 0 obj\n<< /Type /XRef /W [ 1 4 1 ] /Index [ ${index} ] /Size 99 ` +
+          `\n${own} 0 obj\n<< /Type /XRef /W [ 1 4 1 ] /Index [ ${index} ] /Size ${1 + Math.max(...entries.map(([num]) => num))} ` +
             `/Root ${root} /Info ${info} /Prev ${prevStartxref} /Length ${data.length} >>\nstream\n`,
           'latin1',
         ),
@@ -412,6 +417,14 @@ describe('the committed xref-level fixtures (intact signatures) are refused for 
     ['certified-p2-xref-hybrid.pdf', 'xref-sections:2'],
     ['certified-p2-xref-double-trailer.pdf', 'xref-sections:2'],
     ['certified-p2-xref-rewritten-object.pdf', /^xref-preexisting-object:\d+$/],
+    // Single signed sections: each stops at the guard it was built for.
+    ['certified-p2-signed-xref-repeated-key-field.pdf', /^repeated-key:\d+$/],
+    ['certified-p2-signed-xref-repeated-key-root.pdf', /^repeated-key$/],
+    ['certified-p2-signed-xref-repeated-key-prev.pdf', /^repeated-key$/],
+    ['certified-p2-signed-xref-size-low.pdf', /^xref-size$/],
+    ['certified-p2-signed-xref-size-short.pdf', /^xref-size$/],
+    ['certified-p2-signed-xref-decode-parms.pdf', /^xref-stream-filter$/],
+    ['certified-p2-signed-xref-glued-definitions.pdf', /^xref-unlisted-definition:\d+$/],
   ])('%s', async (name, detail) => {
     const bytes = load(name);
     const doc = await PDFDocument.load(bytes, { updateMetadata: false });
@@ -477,6 +490,11 @@ describe('strict reading: each malformed section is refused for its own reason',
     [
       'junk after the count',
       (r: string) => `xref\n${r.replace('0 1\n', '0 1 x\n')}`,
+      'xref-table-malformed',
+    ],
+    [
+      'a subsection header and its first row on one line',
+      (r: string) => `xref\n${r.replace('0 1\n', '0 1 ')}`,
       'xref-table-malformed',
     ],
     [
@@ -574,7 +592,7 @@ describe('strict reading: each malformed section is refused for its own reason',
         out,
         Buffer.from(
           `\n${own} 0 obj\n<< /Type /${change.type ?? 'XRef'} /W ${change.w ?? '[ 1 4 1 ]'} ` +
-            `/Index ${index} /Size 99 /Root ${root} /Info ${info} /Prev ${prevStartxref} ` +
+            `/Index ${index} /Size ${1 + Math.max(...entries.map(([num]) => num))} /Root ${root} /Info ${info} /Prev ${prevStartxref} ` +
             `/Length ${data.length} >>\nstream\n`,
           'latin1',
         ),
@@ -606,6 +624,16 @@ describe('strict reading: each malformed section is refused for its own reason',
     ['an /Index that holds a fraction', { index: '[ 0 1.5 ]' }, 'xref-stream-malformed'],
     ['data that is not a whole number of rows', { extraData: 1 }, 'xref-stream-malformed'],
     ['an entry of an unknown type', { entryType: 3 }, 'xref-stream-malformed'],
+    [
+      'a predictor (/DecodeParms)',
+      { w: '[ 1 4 1 ] /DecodeParms << /Predictor 12 /Columns 6 >>' },
+      'xref-stream-filter',
+    ],
+    [
+      'a filter that is not plain FlateDecode',
+      { w: '[ 1 4 1 ] /Filter [ /FlateDecode ]' },
+      'xref-stream-filter',
+    ],
   ])('a cross-reference stream with %s', (_label, change, detail) => {
     expect(read(streamed(change))).toBe(detail);
   });
@@ -619,5 +647,137 @@ describe('strict reading: each malformed section is refused for its own reason',
     expect(await refused(streamed({ own: n, listOwn: false }))).toBe(
       `xref-preexisting-object:${n}`,
     );
+  });
+});
+
+describe('what two readers can disagree on is refused (review round 2)', () => {
+  const dupRect = () => fieldBody.replace('<<', '<< /Rect [ 0 0 612 792 ]');
+
+  it('control: the helpers used below build an accepted section', async () => {
+    expect(await refused(appendSection(base, fill()))).toBe('accepted');
+  });
+
+  it.each([
+    [
+      'the field dictionary',
+      () => [
+        { num: field.objectNumber, body: dupRect() },
+        { num: NEW, body: SIG },
+      ],
+      {},
+    ],
+    [
+      'the field dictionary, one key written with a #xx escape',
+      () => [
+        { num: field.objectNumber, body: fieldBody.replace('<<', '<< /#52ect [ 0 0 612 792 ]') },
+        { num: NEW, body: SIG },
+      ],
+      {},
+    ],
+    [
+      'a nested dictionary of a new object',
+      () => [
+        { num: field.objectNumber, body: fieldBody },
+        { num: NEW, body: '<< /Type /Sig /ByteRange [ 0 1 2 3 ] /Prop << /A 1 /A 2 >> >>' },
+      ],
+      {},
+    ],
+    ['the reached trailer (/Root)', () => fill(), { extra: '/Root 30 0 R' }],
+    ['the reached trailer (/Prev)', () => fill(), { extra: '/Prev 1000' }],
+    ['the reached trailer (/Size)', () => fill(), { extra: '/Size 3' }],
+  ] as Array<[string, () => Obj[], SectionOptions]>)(
+    'a repeated key in %s',
+    async (_label, objects, opts) => {
+      const bytes = appendSection(base, objects(), opts);
+      // pdf-lib itself reads the file without complaint and keeps the last value.
+      await expect(loadRevision(bytes)).resolves.toBeDefined();
+      expect(await refused(bytes)).toBe('repeated-key');
+    },
+  );
+
+  it('finds a repeated key in any object of a file, object streams included', async () => {
+    expect(await findRepeatedKeys(base, 0, base.length)).toBeNull();
+    const streamed = load('certified-p2-empty-field-xref-stream.pdf');
+    expect(await findRepeatedKeys(streamed, 0, streamed.length)).toBeNull();
+
+    const plain = appendSection(base, [{ num: 51, body: '<< /A 1 /B << /C 1 /C 2 >> >>' }]);
+    expect(await findRepeatedKeys(plain, 0, plain.length)).toMatchObject({
+      detail: 'repeated-key:51',
+    });
+    expect(await findRepeatedKeys(plain, 0, base.length)).toBeNull();
+
+    const inner = '<< /A 1 /A 2 >>';
+    const objStm = (content: string, n = 1) =>
+      `<< /Type /ObjStm /N ${n} /First 5 /Length ${5 + content.length} >>\nstream\n70 0 ${content}\nendstream`;
+    const packed = appendSection(base, [{ num: 51, body: objStm(inner) }]);
+    expect(await findRepeatedKeys(packed, 0, packed.length)).toMatchObject({
+      detail: 'repeated-key:51',
+    });
+    const clean = appendSection(base, [{ num: 51, body: objStm('<< /A 1 /B 2 >>') }]);
+    expect(await findRepeatedKeys(clean, 0, clean.length)).toBeNull();
+    const broken = appendSection(base, [{ num: 51, body: objStm('<< /A 1', 3) }]);
+    expect(await findRepeatedKeys(broken, 0, broken.length)).toMatchObject({
+      detail: 'object-stream-unreadable:51',
+    });
+  });
+
+  it.each([
+    ['far too small (objects at or above it are ignored by a reader)', 3],
+    ['one short (the new signature itself is ignored)', NEW],
+    ['larger than the highest object number plus one', NEW + 2],
+  ])('a trailer /Size that is %s', async (_label, size) => {
+    expect(await refused(appendSection(base, fill(), { size }))).toBe('xref-size');
+  });
+
+  it('a trailer /Size that shrinks, or is missing', async () => {
+    // Only the field is listed, so "highest + 1" is below the previous /Size.
+    const onlyField = appendSection(base, [{ num: field.objectNumber, body: fieldBody }]);
+    expect(await refused(onlyField)).toBe('xref-size');
+    const text = Buffer.from(appendSection(base, fill())).toString('latin1');
+    const noSize = new Uint8Array(
+      Buffer.from(text.replace(`/Size ${NEW + 1} `, `/Sizf ${NEW + 1} `), 'latin1'),
+    );
+    expect(await refused(noSize)).toBe('xref-size');
+  });
+
+  it('object numbers and generations beyond what a conforming file uses', async () => {
+    const big = 8388608;
+    const bytes = appendSection(base, [...fill(), { num: big, body: '<< /A 1 >>' }]);
+    expect(await refused(bytes)).toBe(`xref-number-range:${big}`);
+    const gen = appendSection(base, [...fill(), { num: 51, gen: 65536, body: '<< /A 1 >>' }]);
+    expect(await refused(gen)).toBe('xref-number-range:51');
+  });
+
+  it('a definition glued to the previous endobj is seen: unlisted, it refuses', async () => {
+    // pdf-lib starts an object wherever a header parses, so this one is in its graph.
+    const glued = `${SIG}\nendobj51 0 obj\n<< /Hidden true >>`;
+    const bytes = appendSection(base, [
+      { num: field.objectNumber, body: fieldBody },
+      { num: NEW, body: glued },
+    ]);
+    expect((await loadRevision(bytes)).objects.has('51 0')).toBe(true);
+    expect(await refused(bytes)).toBe('xref-unlisted-definition:51');
+
+    // The same bytes with the glued object listed: both views agree, so it is accepted.
+    const at = Buffer.from(bytes).indexOf('endobj51 0 obj') + 6;
+    const listed = appendSection(
+      base,
+      [
+        { num: field.objectNumber, body: fieldBody },
+        { num: NEW, body: glued },
+      ],
+      { rows: `51 1\n${String(at).padStart(10, '0')} 00000 n \n`, size: 52 },
+    );
+    expect(await refused(listed)).toBe('accepted');
+  });
+
+  it('an altered copy of an existing object glued to endobj, followed by the original', async () => {
+    const n = contents.objectNumber;
+    const hidden = `${SIG}\nendobj${n} 0 obj\n${EVIL}\nendobj${n} 0 obj\n${originalContents()}`;
+    const bytes = appendSection(base, [
+      { num: field.objectNumber, body: fieldBody },
+      { num: NEW, body: hidden },
+    ]);
+    expect(await refused(bytes)).toBe(`xref-unlisted-definition:${n}`);
   });
 });

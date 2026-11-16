@@ -10,7 +10,14 @@ import {
   PDFRef,
   PDFString,
 } from 'pdf-lib';
-import { checkRevisionXref, initialXrefState, refKey, sameBytes, serialize } from './xrefSections';
+import {
+  checkRevisionXref,
+  findRepeatedKeys,
+  initialXrefState,
+  refKey,
+  sameBytes,
+  serialize,
+} from './xrefSections';
 
 export { refKey };
 
@@ -413,6 +420,19 @@ export async function analyzeRevisions(
     if (ends[ends.length - 1] !== bytes.length) return { ok: false, reason: 'unsigned-tail' };
     if (ends.length - 1 > MAX_SIGNED_REVISIONS_AFTER_CERTIFICATION) {
       return { ok: false, reason: 'too-many-revisions' };
+    }
+
+    // A dictionary that repeats a key means different things to different readers (pdf-lib
+    // keeps the last value, others the first), so no decision may rest on one. Checked for
+    // every object of the file: inside the certified bytes it makes the document unreadable
+    // for this purpose, after them it is a change this app cannot classify.
+    const repeated = await findRepeatedKeys(bytes, 0, bytes.length);
+    if (repeated) {
+      return {
+        ok: false,
+        reason: repeated.offset < ends[0] ? 'xref-unreadable' : 'not-a-single-fill',
+        detail: repeated.detail,
+      };
     }
 
     const certified = await loadRevision(bytes, ends[0]);

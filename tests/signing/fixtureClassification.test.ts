@@ -85,6 +85,17 @@ const EXPECTED: Record<string, Expected> = {
   'certified-p2-xref-hybrid.pdf': blocked('changed-after-certification'),
   'certified-p2-xref-double-trailer.pdf': blocked('changed-after-certification'),
   'certified-p2-xref-rewritten-object.pdf': blocked('changed-after-certification'),
+  // One hand-written fill revision, signed again so every signature verifies (review round 2).
+  // The two controls are that rebuild unchanged; each variant changes one thing.
+  'certified-p2-signed-xref-control.pdf': { kind: 'fill-only', fields: ['Witness'] },
+  'certified-p2-signed-xref-control-xref-stream.pdf': { kind: 'fill-only', fields: ['Witness'] },
+  'certified-p2-signed-xref-repeated-key-field.pdf': blocked('changed-after-certification'),
+  'certified-p2-signed-xref-repeated-key-root.pdf': blocked('changed-after-certification'),
+  'certified-p2-signed-xref-repeated-key-prev.pdf': blocked('changed-after-certification'),
+  'certified-p2-signed-xref-size-low.pdf': blocked('changed-after-certification'),
+  'certified-p2-signed-xref-size-short.pdf': blocked('changed-after-certification'),
+  'certified-p2-signed-xref-decode-parms.pdf': blocked('changed-after-certification'),
+  'certified-p2-signed-xref-glued-definitions.pdf': blocked('changed-after-certification'),
 
   // R3 and the per-field rows.
   'certified-p2-empty-field-lock.pdf': noEligible({ Approver: 'locked' }), // R5
