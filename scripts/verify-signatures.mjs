@@ -14,7 +14,7 @@
  * Exits non-zero on any failure. Prerequisite: `pip install --require-hashes -r scripts/requirements-verify.txt`.
  */
 import { spawnSync } from 'node:child_process';
-import { readdirSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
@@ -77,6 +77,19 @@ if (run(PY, [VALIDATOR, '--expect-certification-level', 'FORM_FILLING', ...fills
   process.exit(1);
 }
 
+// Assumption 1 on the INPUT side: every fixture the app is willing to sign into (classified
+// fill-only by tests/signing/fixtureClassification.test.ts in this run) must itself pass the
+// validator as it stands. An input the app accepts and the validator rejects is the failure
+// this feature must never have (review finding R1).
+const fillOnlyList = resolve(OUT, 'fill-only-inputs.json');
+const fillOnly = existsSync(fillOnlyList) ? JSON.parse(readFileSync(fillOnlyList, 'utf8')) : [];
+if (fillOnly.length === 0) {
+  console.error('✗ no fill-only input recorded by the classification tests');
+  process.exit(1);
+}
+console.log(`› Validating ${fillOnly.length} input(s) the app would sign into — expect VALID…`);
+if (run(PY, [VALIDATOR, ...fillOnly.map((f) => resolve(POLICY, f))]) !== 0) process.exit(1);
+
 const tampered = pdfsIn(TAMPERED);
 if (tampered.length === 0) {
   console.error('✗ no tampered PDF to validate (SC-007 would pass vacuously)');
@@ -96,8 +109,22 @@ const violations = [
   'certified-p2-later-annotation.pdf',
   'certified-p3-later-annotation.pdf',
   'certified-p3-annotation-then-fill.pdf',
+  // Changes made through the cross-reference data, under intact signatures (spec 004, R1).
+  'certified-p2-xref-duplicate-object.pdf',
+  'certified-p2-xref-free-entry.pdf',
+  'certified-p2-xref-double-trailer.pdf',
 ].map((f) => resolve(POLICY, f));
 if (run(PY, [VALIDATOR, '--expect-policy-violation', ...violations]) !== 0) process.exit(1);
+
+// These two the validator will not even read in strict mode; the app refuses them as well.
+// They must never validate.
+console.log('› Malformed cross-reference data must not validate…');
+for (const f of ['certified-p2-xref-generation-bump.pdf', 'certified-p2-xref-hybrid.pdf']) {
+  if (run(PY, [VALIDATOR, resolve(POLICY, f)]) === 0) {
+    console.error(`✗ ${f} wrongly validated`);
+    process.exit(1);
+  }
+}
 
 // Negative controls written by the tests (FR-021): the append-a-field path forced onto a
 // certified PDF, and a fill output with one more disallowed revision. If either passed, the
