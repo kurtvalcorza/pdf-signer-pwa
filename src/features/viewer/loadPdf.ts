@@ -1,13 +1,17 @@
 import { PDFDocument, PDFName, PDFDict, PDFArray } from 'pdf-lib';
-import { signingPolicyBlock } from '../signing/signingPolicy';
+import { classifySigning } from '../signing/signingPolicy';
+import type { SigningClassification } from '../signing/types';
 import { assertPageCount } from '../../lib/limits';
 
 export interface LoadedPdf {
   bytes: Uint8Array;
   pageCount: number;
   hasExistingSignature: boolean;
-  /** Why a signature cannot be added without breaking an existing policy, else null. */
-  signingBlock: string | null;
+  /**
+   * How this PDF may be signed: freely (`ok`), only in a field its author prepared
+   * (`fill-only`, a certified document), or not at all (`blocked`, with the reason).
+   */
+  signing: SigningClassification;
 }
 
 /**
@@ -32,17 +36,9 @@ export async function loadPdf(bytes: Uint8Array): Promise<LoadedPdf> {
     bytes,
     pageCount: doc.getPageCount(),
     hasExistingSignature: detectSignature(doc, bytes),
-    signingBlock: policyBlock(doc),
+    // Never throws: a structure that cannot be walked is `blocked` (unreadable-policy).
+    signing: await classifySigning(doc, bytes),
   };
-}
-
-/** A structure that cannot be walked cannot be shown to permit signing, so it blocks. */
-function policyBlock(doc: PDFDocument): string | null {
-  try {
-    return signingPolicyBlock(doc);
-  } catch {
-    return 'This PDF’s signature policy could not be read, so it cannot be signed here.';
-  }
 }
 
 /**

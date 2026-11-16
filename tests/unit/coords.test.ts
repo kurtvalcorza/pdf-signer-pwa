@@ -11,6 +11,11 @@ import {
   type NormBox,
   type DrawParams,
 } from '../../src/lib/coords';
+import {
+  fieldAppearanceLayout,
+  fieldRectToNormBox,
+  type PageBox,
+} from '../../src/features/placement/placement';
 
 describe('screenToNormalized', () => {
   const rect = { left: 100, top: 50, width: 400, height: 800 };
@@ -207,4 +212,89 @@ describe('appearanceLayout', () => {
       expect(Math.max(...ys)).toBeCloseTo(swap ? w : h, 6);
     },
   );
+});
+
+describe('a prepared signature field: /Rect to layout box (spec 004, D6)', () => {
+  const rect: [number, number, number, number] = [72, 500, 272, 550]; // 200 x 50 pt
+  const page = (rotation: PageBox['rotation'], x = 0, y = 0): PageBox => ({
+    x,
+    y,
+    width: 612,
+    height: 792,
+    rotation,
+  });
+  const close = (a: number, b: number) => expect(a).toBeCloseTo(b, 9);
+
+  it('maps the rect to the box the unrotated page displays', () => {
+    const box = fieldRectToNormBox(rect, page(0));
+    close(box.nx, 72 / 612);
+    close(box.ny, (792 - 550) / 792); // top edge, measured from the top
+    close(box.nw, 200 / 612);
+    close(box.nh, 50 / 792);
+  });
+
+  it.each([0, 90, 180, 270] as const)(
+    'is the exact inverse of normalizedBoxToPdfRect at /Rotate %i',
+    (rotation) => {
+      const box = fieldRectToNormBox(rect, page(rotation));
+      const back = normalizedBoxToPdfRect(box, { widthPt: 612, heightPt: 792, rotation });
+      close(back.x, 72);
+      close(back.y, 500);
+      close(back.w, 200);
+      close(back.h, 50);
+      expect(isWithinPage(box)).toBe(true);
+    },
+  );
+
+  it('swaps the displayed width and height on a quarter turn', () => {
+    const upright = fieldRectToNormBox(rect, page(0));
+    const turned = fieldRectToNormBox(rect, page(90));
+    close(upright.nw * 612, 200);
+    close(turned.nw * 792, 50); // the display is 792 wide; the field shows 50 wide, 200 tall
+    close(turned.nh * 612, 200);
+  });
+
+  it('measures from the CropBox origin, and accepts a rect given corner-reversed', () => {
+    const shifted = fieldRectToNormBox([172, 600, 372, 650], page(0, 100, 100));
+    const plain = fieldRectToNormBox(rect, page(0));
+    close(shifted.nx, plain.nx);
+    close(shifted.ny, plain.ny);
+    expect(fieldRectToNormBox([272, 550, 72, 500], page(0))).toEqual(plain);
+  });
+
+  it.each([
+    [0, 200, 50],
+    [90, 50, 200],
+    [180, 200, 50],
+    [270, 50, 200],
+  ] as const)('lays the upright content out at /Rotate %i as %i x %i pt', (rotation, w, h) => {
+    const layout = fieldAppearanceLayout(rect, page(rotation));
+    close(layout.widthPt, w);
+    close(layout.heightPt, h);
+    expect(layout.matrix).toEqual(
+      appearanceLayout(fieldRectToNormBox(rect, page(rotation)), {
+        widthPt: 612,
+        heightPt: 792,
+        rotation,
+      }).matrix,
+    );
+  });
+
+  it('keeps the image aspect ratio inside the field box, centred', () => {
+    // A wide image (4:1) in a tall box (50 x 200): full width, letterboxed top and bottom.
+    const tall = fieldAppearanceLayout(rect, page(90));
+    const wideInTall = containIn(tall.widthPt, tall.heightPt, 400, 100);
+    close(wideInTall.width, 50);
+    close(wideInTall.height, 12.5);
+    close(wideInTall.dx, 0);
+    close(wideInTall.dy, (200 - 12.5) / 2);
+
+    // A tall image (1:4) in a wide box (200 x 50): full height, pillarboxed left and right.
+    const wide = fieldAppearanceLayout(rect, page(0));
+    const tallInWide = containIn(wide.widthPt, wide.heightPt, 100, 400);
+    close(tallInWide.height, 50);
+    close(tallInWide.width, 12.5);
+    close(tallInWide.dx, (200 - 12.5) / 2);
+    close(tallInWide.dy, 0);
+  });
 });

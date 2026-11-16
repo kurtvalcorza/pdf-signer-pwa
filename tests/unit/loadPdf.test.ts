@@ -34,6 +34,16 @@ describe('loadPdf — existing-signature detection', () => {
     expect((await loadPdf(await makePdf())).hasExistingSignature).toBe(false);
   });
 
+  it('classifies an unsigned PDF and an app-signed PDF as freely signable', async () => {
+    expect((await loadPdf(await makePdf())).signing).toEqual({ kind: 'ok' });
+    const p12 = makeSelfSignedP12('test-pass');
+    const signed = await signFirst(await makePdf(), placement(), {
+      p12Bytes: p12,
+      password: 'test-pass',
+    });
+    expect((await loadPdf(signed)).signing).toEqual({ kind: 'ok' });
+  }, 30000);
+
   it('flags a genuinely signed PDF (AcroForm signature field with a /ByteRange value)', async () => {
     const p12 = makeSelfSignedP12('test-pass');
     const signed = await signFirst(await makePdf(), placement(), {
