@@ -158,7 +158,8 @@ export default function App() {
       const info = await loadPdf(bytes);
       if (id !== docSeq.current) return;
       if (info.signing.kind === 'blocked') {
-        setError(info.signing.message);
+        // The refusal is shown by the field list for as long as this document is open
+        // (spec 004 T032), not as a passing error that the next action would clear.
       } else if (info.signing.kind === 'fill-only') {
         // Certified: the field picker carries its own notice (FR-017), and the usual
         // "a field will be appended" heads-up would be untrue here.
@@ -428,6 +429,8 @@ export default function App() {
   const selectedAsset = selectedPlacement ? images[selectedPlacement.imageId] : null;
   const pagePlacements = placements.filter((p) => p.pageIndex === pageIndex);
   const fillOnly = doc?.signing.kind === 'fill-only';
+  // Refused (spec 004 US2): no free placement, no image to place, nothing to sign.
+  const refused = doc?.signing.kind === 'blocked';
   // On a certified PDF the one signature image is previewed inside the picked field.
   const fillAsset =
     selectedAsset ??
@@ -447,7 +450,7 @@ export default function App() {
             />
             {pageReady &&
               pageSize.w > 0 &&
-              !fillOnly &&
+              doc.signing.kind === 'ok' &&
               pagePlacements.map((p) => (
                 <SignatureOverlay
                   key={p.id}
@@ -556,7 +559,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                disabled={!pageReady}
+                disabled={!pageReady || refused}
                 onClick={() => imgInput.current?.click()}
                 className="flex-1 rounded-lg bg-white/10 px-4 py-3 font-medium hover:bg-white/15 disabled:opacity-40"
               >
@@ -567,7 +570,7 @@ export default function App() {
             <div className="flex gap-2">
               <button
                 type="button"
-                disabled={!pageReady}
+                disabled={!pageReady || refused}
                 onClick={() => camInput.current?.click()}
                 className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
               >
@@ -587,7 +590,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={!pageReady}
+                  disabled={!pageReady || refused}
                   onClick={useSavedSignature}
                   className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
                 >
@@ -641,7 +644,11 @@ export default function App() {
             <button
               type="button"
               disabled={
-                !pageReady || placements.length === 0 || busy || (fillOnly && pickedField === null)
+                !pageReady ||
+                refused ||
+                placements.length === 0 ||
+                busy ||
+                (fillOnly && pickedField === null)
               }
               onClick={() => setMode('cert')}
               className="rounded-lg bg-blue-500 px-4 pb-1 pt-3 font-semibold hover:bg-blue-400 disabled:opacity-40"
