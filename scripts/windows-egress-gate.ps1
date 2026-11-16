@@ -348,7 +348,7 @@ if ($SelfTest) {
   Check 'a missing subcategory row: not armed' (@(Test-AuditArmed -Rows $rows[0..2] -Guids $AuditGuids).Count -eq 2)
   $v = Get-EgressVerdict -Sec $fx.control.sec -Dns $fx.control.dns -PackageDirs $dirs
   $text = $v.Evidence | ConvertTo-Json -Depth 4 -Compress
-  Check 'evidence holds no out-of-tree process, account, SID or local address' ($text -notmatch 'guestagent|svchost|runner|SubjectUser|S-1-5-|SourceAddress|10\.1\.0\.32' -and $text -match '192\.0\.2\.1')
+  Check 'evidence holds no out-of-tree process, account, SID or local address' ($text -notmatch 'guestagent|svchost|runner|SubjectUser|S-1-5-|SourceAddress|10\.0\.0\.4' -and $text -match '192\.0\.2\.1')
 
   if ($failed) { throw "windows-egress-gate self-test: $failed check(s) failed" }
   Write-Host 'windows-egress-gate self-test: all checks passed'

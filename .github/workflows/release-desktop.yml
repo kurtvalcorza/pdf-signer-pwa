@@ -74,7 +74,7 @@ jobs:
         run: |
           set -uo pipefail
           PORTABLE=$(ls release/*.exe | head -1)
-          7z x -y -orelease/portable-stage "$PORTABLE" > /dev/null; rc=$?
+          rc=0; 7z x -y -orelease/portable-stage "$PORTABLE" > /dev/null || rc=$?
           [ "$rc" -le 1 ] || { echo "::error::7z could not unpack $PORTABLE (exit $rc)"; exit 1; }
           set -e
           7z x -y -orelease/portable-extract 'release/portable-stage/$PLUGINSDIR/app-64.7z' > /dev/null
