@@ -51,7 +51,9 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
     await page.waitForLoadState('domcontentloaded');
     await expect(page).toHaveTitle(/PDF Signer/);
 
-    await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(resolve(FIX, 'sample.pdf'));
+    await page
+      .locator('input[type="file"][accept=".pdf"]')
+      .setInputFiles(resolve(FIX, 'sample.pdf'));
     await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 20_000 });
 
     await page
@@ -60,7 +62,9 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
     await page.locator('img[alt="signature"]').waitFor({ state: 'visible', timeout: 10_000 });
 
     await page.getByRole('button', { name: /Sign with a digital certificate/ }).click();
-    await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(resolve(FIX, 'e2e-cert.p12'));
+    await page
+      .locator('input[type="file"][accept=".p12,.pfx"]')
+      .setInputFiles(resolve(FIX, 'e2e-cert.p12'));
     await page.getByPlaceholder('Certificate password').fill(CERT_PASSWORD);
     await page.getByRole('button', { name: /Sign & Download/ }).click();
 
@@ -80,7 +84,8 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
     expect(existsSync(join(portableDir, 'pdf-signer-data'))).toBe(true);
     const appData = process.env.APPDATA;
     if (appData) {
-      const leaked = existsSync(join(appData, 'pdf-signer-pwa')) || existsSync(join(appData, 'PDF Signer'));
+      const leaked =
+        existsSync(join(appData, 'pdf-signer-pwa')) || existsSync(join(appData, 'PDF Signer'));
       expect(leaked, 'no state leaked to %APPDATA%').toBe(false);
     }
   } finally {
@@ -141,7 +146,9 @@ test('desktop: signs a certified PDF in its prepared field, classed as form fill
 
     await expect(openCertSheet).toBeEnabled();
     await openCertSheet.click();
-    await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(resolve(FIX, 'e2e-cert.p12'));
+    await page
+      .locator('input[type="file"][accept=".p12,.pfx"]')
+      .setInputFiles(resolve(FIX, 'e2e-cert.p12'));
     await page.getByPlaceholder('Certificate password').fill(CERT_PASSWORD);
     await page.getByRole('button', { name: /Sign & Download/ }).click();
 
@@ -154,7 +161,9 @@ test('desktop: signs a certified PDF in its prepared field, classed as form fill
         "Signed in the existing field 'Approver'. No other part of the document was changed.",
       ),
     ).toBeVisible();
-    await expect(page.getByText(/still certified|certification preserved|remains valid/i)).toHaveCount(0);
+    await expect(
+      page.getByText(/still certified|certification preserved|remains valid/i),
+    ).toHaveCount(0);
 
     // The input is a byte prefix of the saved file, which now carries two signatures.
     const input = readFileSync(CERTIFIED_PDF);
@@ -207,7 +216,8 @@ test('desktop: the renderer is sandboxed and page script has no Node', async () 
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
     const seen = await page.evaluate(() => ({
-      sandboxed: (window as unknown as { desktopShell: { sandboxed: boolean } }).desktopShell.sandboxed,
+      sandboxed: (window as unknown as { desktopShell: { sandboxed: boolean } }).desktopShell
+        .sandboxed,
       bridgeKeys: Object.keys((window as unknown as { desktopShell: object }).desktopShell).sort(),
       require: typeof (window as unknown as { require?: unknown }).require,
       process: typeof (window as unknown as { process?: unknown }).process,
@@ -224,15 +234,23 @@ test('desktop: the renderer is sandboxed and page script has no Node', async () 
 });
 
 test('desktop: layer-5 no-phone-home switches are set (not just crashReporter absent)', async () => {
-  const app = await electron.launch({ args: [MAIN], cwd: ROOT, env: { ...process.env, PDFSIGNER_HEADLESS: '1' } });
+  const app = await electron.launch({
+    args: [MAIN],
+    cwd: ROOT,
+    env: { ...process.env, PDFSIGNER_HEADLESS: '1' },
+  });
   try {
     await app.firstWindow();
     // A build-time/runtime assertion: a live run that happens to make no request proves nothing about
     // whether these are set. Read them directly from the command line (network-policy.md § layer 5).
     const set = await app.evaluate(({ app: a }) =>
-      ['disable-background-networking', 'disable-component-update', 'disable-domain-reliability', 'disable-breakpad', 'no-proxy-server'].map(
-        (s) => a.commandLine.hasSwitch(s),
-      ),
+      [
+        'disable-background-networking',
+        'disable-component-update',
+        'disable-domain-reliability',
+        'disable-breakpad',
+        'no-proxy-server',
+      ].map((s) => a.commandLine.hasSwitch(s)),
     );
     expect(set).toEqual([true, true, true, true, true]);
   } finally {
@@ -241,7 +259,11 @@ test('desktop: layer-5 no-phone-home switches are set (not just crashReporter ab
 });
 
 test('desktop: a remote https request is cancelled by webRequest, not CSP (layer 2)', async () => {
-  const app = await electron.launch({ args: [MAIN], cwd: ROOT, env: { ...process.env, PDFSIGNER_HEADLESS: '1' } });
+  const app = await electron.launch({
+    args: [MAIN],
+    cwd: ROOT,
+    env: { ...process.env, PDFSIGNER_HEADLESS: '1' },
+  });
   try {
     await app.firstWindow(); // ensure whenReady ran (installNetworkLocks is installed)
     const rejected = await app.evaluate(async ({ session }) => {

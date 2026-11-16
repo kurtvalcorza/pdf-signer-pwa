@@ -30,9 +30,6 @@ export const CERTIFICATION_CLAIM = /still certified|certification preserved|rema
 /** A regex matching exactly `s` (the accessibility tree carries the visible text verbatim). */
 export const exactText = (s) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
 
-/** The save dialog's proposed name for a signed `input` (App.tsx download name). */
-export const signedName = (input) => `${input.replace(/\.pdf$/i, '')}-signed.pdf`;
-
 /**
  * Checks the saved file against its input without a validator: the input bytes are a strict
  * prefix of the output (no existing byte rewritten), and the output carries `signatures`
@@ -44,6 +41,7 @@ export function appendOnlyProblem(input, output, signatures) {
   if (!output.subarray(0, input.length).equals(input))
     return 'the input is not a byte prefix of the output: existing bytes were rewritten';
   const found = (output.toString('latin1').match(/\/ByteRange/g) ?? []).length;
-  if (found !== signatures) return `the output has ${found} /ByteRange entries, expected ${signatures}`;
+  if (found !== signatures)
+    return `the output has ${found} /ByteRange entries, expected ${signatures}`;
   return null;
 }

@@ -499,7 +499,8 @@ async function caseCertified() {
 async function caseCertifiedField() {
   console.log('▶ certified PDF signed in its prepared field (spec 004 US4, --certified-field)');
   const fixture = join(POLICY, CERTIFIED_FIELD_FIXTURE);
-  const name = push(fixture);
+  // The gate- prefix lets the startup sweep remove it from a reused emulator.
+  const name = push(fixture, `gate-${CERTIFIED_FIELD_FIXTURE}`);
   await launchFresh();
   await openPdf(name);
   await waitFor('the fill-only notice', find(exactText(FILL_ONLY_NOTICE)), 30000);
@@ -535,7 +536,11 @@ async function caseCertifiedField() {
   const out = await signAndSaveOpen(name);
 
   // The app states what it did, and makes no claim about the certification (FR-019).
-  await waitFor('the signed-in-field message', find(exactText(fieldSignedText(CERTIFIED_FIELD_NAME))), 20000);
+  await waitFor(
+    'the signed-in-field message',
+    find(exactText(fieldSignedText(CERTIFIED_FIELD_NAME))),
+    20000,
+  );
   const claim = dump().find((n) => matches(n, CERTIFICATION_CLAIM));
   if (claim) fail(`the app makes a claim about the certification: ${label(claim)}`);
 

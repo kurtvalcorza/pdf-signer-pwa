@@ -11,13 +11,8 @@ import {
   exactText,
   fieldOptionText,
   fieldSignedText,
-  signedName,
 } from '../../scripts/android-gate-certified.mjs';
-import {
-  FILL_ONLY_NOTICE,
-  fieldLabel,
-  fieldSignedMessage,
-} from '../../src/components/FieldPicker';
+import { FILL_ONLY_NOTICE, fieldLabel, fieldSignedMessage } from '../../src/components/FieldPicker';
 import type { CandidateField } from '../../src/features/signing/types';
 
 /**
@@ -28,7 +23,10 @@ import type { CandidateField } from '../../src/features/signing/types';
 describe('android-gate --certified-field helpers', () => {
   it('matches the shared app’s notice, field label and signed message exactly', () => {
     expect(GATE_NOTICE).toBe(FILL_ONLY_NOTICE);
-    const field = { name: CERTIFIED_FIELD_NAME, pageIndex: CERTIFIED_FIELD_PAGE - 1 } as CandidateField;
+    const field = {
+      name: CERTIFIED_FIELD_NAME,
+      pageIndex: CERTIFIED_FIELD_PAGE - 1,
+    } as CandidateField;
     expect(fieldOptionText(CERTIFIED_FIELD_NAME, CERTIFIED_FIELD_PAGE)).toBe(fieldLabel(field));
     expect(fieldSignedText(CERTIFIED_FIELD_NAME)).toBe(fieldSignedMessage(CERTIFIED_FIELD_NAME));
     expect(CERTIFICATION_CLAIM.test(fieldSignedMessage(CERTIFIED_FIELD_NAME))).toBe(false);
@@ -38,14 +36,12 @@ describe('android-gate --certified-field helpers', () => {
     const option = exactText(fieldOptionText('Approver', 1));
     expect(option.test('Field name set by the document: "Approver" (page 1)')).toBe(true);
     // The on-page outline's label embeds the same text; the matcher must not hit it.
-    expect(option.test('Sign in this field. Field name set by the document: "Approver" (page 1)')).toBe(false);
+    expect(
+      option.test('Sign in this field. Field name set by the document: "Approver" (page 1)'),
+    ).toBe(false);
     expect(option.test('Field name set by the document: "Approver" (page 10)')).toBe(false);
     expect(exactText('a.b').test('axb')).toBe(false);
     expect(exactText(GATE_NOTICE).test(FILL_ONLY_NOTICE)).toBe(true);
-  });
-
-  it('proposes the app’s download name', () => {
-    expect(signedName(CERTIFIED_FIELD_FIXTURE)).toBe('certified-p2-empty-field-signed.pdf');
   });
 
   it('names the fixture that exists in the policy set', () => {
@@ -54,7 +50,13 @@ describe('android-gate --certified-field helpers', () => {
     );
     expect(existsSync(path)).toBe(true);
     // The fixture itself carries exactly one signature: the certification.
-    expect((readFileSync(path).toString('latin1').match(/\/ByteRange/g) ?? []).length).toBe(1);
+    expect(
+      (
+        readFileSync(path)
+          .toString('latin1')
+          .match(/\/ByteRange/g) ?? []
+      ).length,
+    ).toBe(1);
   });
 
   it('accepts an append-only output with the expected signatures, and nothing else', () => {

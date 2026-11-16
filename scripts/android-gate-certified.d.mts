@@ -8,7 +8,6 @@ export declare const CERTIFICATION_CLAIM: RegExp;
 export declare function fieldOptionText(name: string, page: number): string;
 export declare function fieldSignedText(name: string): string;
 export declare function exactText(s: string): RegExp;
-export declare function signedName(input: string): string;
 export declare function appendOnlyProblem(
   input: Buffer,
   output: Buffer,
