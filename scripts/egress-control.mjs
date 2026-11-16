@@ -151,10 +151,16 @@ try {
 } catch (e) {
   out.error = String(e && e.stack ? e.stack : e);
 } finally {
+  // A close that fails leaves app processes running past the gate's window: report it, never hide it.
+  try {
+    await app.close();
+  } catch (e) {
+    out.closeError = String(e && e.message ? e.message : e);
+  }
   out.finished = new Date().toISOString();
   writeFileSync(outFile, JSON.stringify(out, null, 2));
-  await app.close().catch(() => {});
   rmSync(portableDir, { recursive: true, force: true });
 }
-console.log(`[egress-control] ${out.error ? 'FAILED: ' + out.error : 'attempts made'} -> ${outFile}`);
-process.exit(out.error ? 1 : 0);
+const failure = out.error || (out.closeError && 'app did not close: ' + out.closeError);
+console.log(`[egress-control] ${failure ? 'FAILED: ' + failure : 'attempts made'} -> ${outFile}`);
+process.exit(failure ? 1 : 0);

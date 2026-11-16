@@ -163,11 +163,13 @@ jobs:
 
       # Connection-level gate: block rules on every package image, WFP + process auditing, DNS-Client
       # log, in-app positive/negative controls, then the real sign flow on the probe and an undriven
-      # launch/idle/quit of the RELEASE exe. Needs the elevated hosted runner; restores what it changes.
+      # launch/idle/quit of the RELEASE exe: the one unpacked from the shipped portable by the fuse
+      # step above, the tree check-fuses compared with the probe. Needs the elevated hosted runner;
+      # restores what it changes. The evidence it uploads holds only the app's own events.
       - name: No-egress gate — connection-level, over the app process tree (SC-004) [Windows]
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/windows-egress-gate.ps1
+        run: ./scripts/windows-egress-gate.ps1 -Release 'release\portable-extract\PDF Signer.exe'
       - name: Keep the egress gate's evidence [Windows]
         if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -8,7 +8,11 @@
 #   - the DNS-Client Operational log, which attributes system-resolver lookups to the calling pid;
 #   - out-of-tree SMB/WebDAV client connections during a window (a UNC or WebDAV path the app opened);
 #   - in-app positive and negative controls (scripts/egress-control.mjs) that must be seen, or not seen,
-#     before a clean result means anything.
+#     before a clean result means anything. The controls are IPv4 only: there is no IPv6 positive
+#     control, although an IPv6 attempt by the app is judged like any other.
+#
+# Every app process must have exited before a window is read, and nothing of the app may be running
+# when the block rules come off. The evidence directory holds only the events the judge used.
 #
 # Three windows are judged: the controls and the real sign flow on the GATE-ONLY PROBE build, and an
 # undriven launch/idle/quit of the RELEASE build (the probe differs from it by one fuse byte,
@@ -21,6 +25,8 @@
 [CmdletBinding()]
 param(
   [string]$Probe = 'release-probe\win-unpacked\PDF Signer.exe',
+  # The release workflow passes release\portable-extract\PDF Signer.exe: the unpacked SHIPPED portable,
+  # the tree check-fuses.mjs compares with the probe. The default is for a local --dir pack.
   [string]$Release = 'release\win-unpacked\PDF Signer.exe',
   [string]$EvidenceDir = 'egress-gate-out',
   # Attempts per Node TCP/UDP control. 3 on every release; 20 for the evidence run (RFC section 6.1).
@@ -37,6 +43,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $RulePrefix = 'pdfsigner-egress-gate'
 $Inbound = '%%14592'
+$AuditGuids = @(
+  '{0CCE9225-69AE-11D9-BED3-505054503030}' # Filtering Platform Packet Drop  (5152)
+  '{0CCE9226-69AE-11D9-BED3-505054503030}' # Filtering Platform Connection   (5156, 5157)
+  '{0CCE922B-69AE-11D9-BED3-505054503030}' # Process Creation                (4688)
+  '{0CCE922C-69AE-11D9-BED3-505054503030}' # Process Termination             (4689)
+)
 
 # ----------------------------------------------------------------------------------------------------
 # Judge: pure functions over plain event records, so -SelfTest can replay recorded runner events.
@@ -64,7 +76,10 @@ function Get-EgressVerdict {
     [string[]]$AllowImage = @(), [string[]]$AllowDnsName = @(), [string[]]$Broadcast = @(),
     # Out-of-tree senders of egress the app can CAUSE without sending (RFC section 5a, B7 (a)): the SMB
     # redirector (System, pid 4) and the WebClient service, for a UNC or WebDAV path.
-    [int[]]$ShareClientPids = @()
+    [int[]]$ShareClientPids = @(),
+    # Fail on a tree member with no exit event: a process still running when the window is read can
+    # act after it, in no window. The gate always sets this; synthetic tests may leave it off.
+    [switch]$RequireExit
   )
   $dirTails = @($PackageDirs | ForEach-Object { (Get-PathTail $_).TrimEnd('\') + '\' })
   $inPackage = { param($image) $t = Get-PathTail "$image"; [bool]($dirTails | Where-Object { $t.StartsWith($_) }) }
@@ -102,7 +117,7 @@ function Get-EgressVerdict {
         $remote = $in ? $e.SourceAddress : $e.DestAddress
         $port = $in ? $e.SourcePort : $e.DestPort
         if (-not $inTree -and $ShareClientPids -contains $procId) {
-          if (-not $in -and [int]$port -in 445, 139, 80 -and -not (Get-AddressExemption $remote $Broadcast)) {
+          if (-not $in -and [int]$port -in 445, 139, 80, 443 -and -not (Get-AddressExemption $remote $Broadcast)) {
             $failures.Add([pscustomobject]@{ Kind = 'share'; Time = $e.Time; Pid = $procId; Id = [int]$e.Id; Remote = $remote; Port = [int]$port
                 Detail = "event $($e.Id) from the SMB/WebDAV client to $remote`:$port during the window (a UNC or WebDAV path was opened)" })
           }
@@ -119,6 +134,12 @@ function Get-EgressVerdict {
         $row.Detail = $inTree ? "event $($e.Id) to $remote`:$port" : "event $($e.Id) to $remote`:$port from a package image outside the observed tree"
         $failures.Add($row)
       }
+    }
+  }
+
+  if ($RequireExit) {
+    foreach ($m in @($members | Where-Object { -not $_.End })) {
+      $failures.Add([pscustomobject]@{ Kind = 'alive'; Time = $m.Start; Pid = $m.Pid; Detail = "no exit event (4689) for $(Split-Path (Get-PathTail $m.Image) -Leaf) started at $($m.Start): still running when the window was read" })
     }
   }
 
@@ -139,15 +160,23 @@ function Get-EgressVerdict {
     $seen[$key] = $row
     if ($AllowDnsName | Where-Object { $name -like $_ }) { $logged.Add($row) } else { $failures.Add($row) }
   }
-  [pscustomobject]@{ Members = $members; Failures = $failures; Logged = $logged }
+  # Evidence: only what the judge used, already reduced (no local address, account, machine or SID).
+  [pscustomobject]@{ Members = $members; Failures = $failures; Logged = $logged; Evidence = [ordered]@{ members = @($members); failures = @($failures); logged = @($logged) } }
 }
 
 # The controls: every positive attempt must have been blocked AND recorded with the right pid, and
 # the negative ones must have left no trace. Returns the list of problems (empty = controls hold).
 function Test-EgressControls {
-  param($Verdict, $Report)
+  param($Verdict, $Report, [int]$Repeat = 0)
   $problems = [Collections.Generic.List[string]]::new()
   if ($Report.error) { $problems.Add("control failed: the driver errored: $($Report.error)") ; return $problems }
+  if ($Report.closeError) { $problems.Add("control failed: the app did not close cleanly after the controls: $($Report.closeError)") }
+  if ($Repeat -gt 0) {
+    foreach ($kind in 'nodeTcp', 'nodeUdp') {
+      $made = @($Report.attempts.$kind).Count
+      if ($made -ne $Repeat) { $problems.Add("control failed: the driver reports $made $kind attempt(s), expected $Repeat") }
+    }
+  }
   $net = @($Verdict.Failures | Where-Object Kind -eq 'network')
   $dns = @($Verdict.Failures | Where-Object Kind -eq 'dns')
   $blocked = { param($procId, $proto, $hostAddr, $port)
@@ -177,6 +206,23 @@ function Test-EgressControls {
   if (-not ($dns | Where-Object { $_.Pid -eq $main -and $_.Name -eq $Report.attempts.nodeDns.name })) { $problems.Add("control failed: the Node lookup of $($Report.attempts.nodeDns.name) was not attributed to the main process") }
   if (-not ($dns | Where-Object { $_.Pid -eq $ns -and $_.Name -eq $Report.attempts.chromiumDns.name })) { $problems.Add("control failed: the Chromium lookup of $($Report.attempts.chromiumDns.name) was not attributed to the network service") }
   $problems
+}
+
+# Processes whose image lies under a package directory. Pure: the caller supplies the process list.
+function Get-RunningPackageProcesses {
+  param([object[]]$Processes = @(), [string[]]$PackageDirs)
+  $dirTails = @($PackageDirs | ForEach-Object { (Get-PathTail $_).TrimEnd('\') + '\' })
+  @($Processes | Where-Object { $_.ExecutablePath -and ($t = Get-PathTail $_.ExecutablePath) -and ($dirTails | Where-Object { $t.StartsWith($_) }) })
+}
+
+# The four audit subcategories must be set to success AND failure (value 3 in an `auditpol /backup`
+# file, which is locale-independent). Returns the list of problems.
+function Test-AuditArmed {
+  param([object[]]$Rows = @(), [string[]]$Guids)
+  foreach ($g in $Guids) {
+    $row = $Rows | Where-Object { $_.'Subcategory GUID' -eq $g } | Select-Object -First 1
+    if (-not $row -or "$($row.'Setting Value')" -ne '3') { "audit subcategory $g is not set to success and failure (value '$($row.'Setting Value')'); the gate was not observing." }
+  }
 }
 
 function Format-Failure($f) { "pid $($f.Pid) at $($f.Time): $($f.Detail)" }
@@ -254,7 +300,8 @@ if ($SelfTest) {
   $v = Get-EgressVerdict -Sec @(& $conn 5156 2 778 $other.ToLowerInvariant() '203.0.113.9') -PackageDirs $dirs
   Check 'an out-of-tree, non-package process is ignored' ($v.Failures.Count -eq 0)
   $smb = & $ev 5156 2 @{ ProcessID = '4'; Application = 'System'; Direction = '%%14593'; SourceAddress = '10.0.0.5'; SourcePort = '50001'; DestAddress = '203.0.113.9'; DestPort = '445'; Protocol = '6' }
-  $v = Get-EgressVerdict -Sec @($smb, (& $conn 5156 2 4 'System' '203.0.113.9')) -PackageDirs $dirs -ShareClientPids 4
+  $smbOther = & $ev 5156 2 @{ ProcessID = '4'; Application = 'System'; Direction = '%%14593'; SourceAddress = '10.0.0.5'; SourcePort = '50003'; DestAddress = '203.0.113.9'; DestPort = '8080'; Protocol = '6' }
+  $v = Get-EgressVerdict -Sec @($smb, $smbOther) -PackageDirs $dirs -ShareClientPids 4
   Check 'an SMB connection from System during the window fails; its other traffic does not' ($v.Failures.Count -eq 1 -and $v.Failures[0].Kind -eq 'share')
   foreach ($window in 'control', 'realRun', 'releaseIdle') {
     $v = Get-EgressVerdict -Sec $fx.$window.sec -PackageDirs $dirs -AllowImage 'cmd.exe', 'conhost.exe' -ShareClientPids 4
@@ -268,6 +315,40 @@ if ($SelfTest) {
   )
   $v = Get-EgressVerdict -Sec $sec -Dns $dnsEvents -PackageDirs $dirs -Broadcast '10.0.0.255'
   Check 'an in-tree DNS lookup fails once, marked as sent; others are ignored' ($v.Failures.Count -eq 1 -and $v.Failures[0].Name -eq 'example.org' -and $v.Failures[0].Sent)
+
+  # 6. Review round: exits, leftovers, counts, share client on 443, armed state, evidence content.
+  $v = Get-EgressVerdict -Sec @($sec[0]) -PackageDirs $dirs -RequireExit
+  Check 'a tree member with no exit event fails when exits are required' ($v.Failures.Count -eq 1 -and $v.Failures[0].Kind -eq 'alive')
+  $v = Get-EgressVerdict -Sec @($sec[0], $sec[5]) -PackageDirs $dirs -RequireExit
+  Check 'a tree member with its exit event does not' ($v.Failures.Count -eq 0)
+  foreach ($window in 'control', 'realRun', 'releaseIdle', 'firewallOff') {
+    $v = Get-EgressVerdict -Sec $fx.$window.sec -PackageDirs $dirs -RequireExit
+    Check "$window`: every recorded tree member has its exit event" (@($v.Failures | Where-Object Kind -eq 'alive').Count -eq 0)
+  }
+  $running = @(
+    [pscustomobject]@{ ProcessId = 11; ExecutablePath = 'D:\a\pdf-signer-pwa\pdf-signer-pwa\release\win-unpacked\PDF Signer.exe' },
+    [pscustomobject]@{ ProcessId = 12; ExecutablePath = 'C:\Windows\System32\svchost.exe' },
+    [pscustomobject]@{ ProcessId = 13; ExecutablePath = $null }
+  )
+  $left = @(Get-RunningPackageProcesses -Processes $running -PackageDirs $dirs)
+  Check 'a package image still running is found; other processes are not' ($left.Count -eq 1 -and $left[0].ProcessId -eq 11)
+  $report = $fx.control.report | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+  $v = Get-EgressVerdict -Sec $fx.control.sec -Dns $fx.control.dns -PackageDirs $dirs -AllowImage 'cmd.exe', 'conhost.exe' -RequireExit
+  Check 'recorded controls hold with the attempt count checked' (@(Test-EgressControls $v $report -Repeat 20).Count -eq 0)
+  Check 'a driver that made fewer attempts than asked fails the controls' (@(Test-EgressControls $v $report -Repeat 21 | Where-Object { $_ -like '*expected 21' }).Count -eq 2)
+  $report | Add-Member closeError 'Error: electronApplication.close: timeout'
+  Check 'an app that did not close after the controls fails them' (@(Test-EgressControls $v $report -Repeat 20 | Where-Object { $_ -like '*did not close cleanly*' }).Count -eq 1)
+  $dav = & $ev 5156 2 @{ ProcessID = '900'; Application = $other.ToLowerInvariant(); Direction = '%%14593'; SourceAddress = '10.0.0.5'; SourcePort = '50002'; DestAddress = '203.0.113.9'; DestPort = '443'; Protocol = '6' }
+  $v = Get-EgressVerdict -Sec @($dav) -PackageDirs $dirs -ShareClientPids 4, 900
+  Check 'a WebDAV-over-HTTPS connection from the WebClient service fails' ($v.Failures.Count -eq 1 -and $v.Failures[0].Kind -eq 'share' -and $v.Failures[0].Port -eq 443)
+  $rows = $AuditGuids | ForEach-Object { [pscustomobject]@{ 'Subcategory GUID' = $_; 'Setting Value' = '3' } }
+  Check 'all four audit subcategories on: armed' (@(Test-AuditArmed -Rows $rows -Guids $AuditGuids).Count -eq 0)
+  $rows[1].'Setting Value' = '1'
+  Check 'connection auditing reduced to success only: not armed' (@(Test-AuditArmed -Rows $rows -Guids $AuditGuids).Count -eq 1)
+  Check 'a missing subcategory row: not armed' (@(Test-AuditArmed -Rows $rows[0..2] -Guids $AuditGuids).Count -eq 2)
+  $v = Get-EgressVerdict -Sec $fx.control.sec -Dns $fx.control.dns -PackageDirs $dirs
+  $text = $v.Evidence | ConvertTo-Json -Depth 4 -Compress
+  Check 'evidence holds no out-of-tree process, account, SID or local address' ($text -notmatch 'guestagent|svchost|runner|SubjectUser|S-1-5-|SourceAddress|10\.1\.0\.32' -and $text -match '192\.0\.2\.1')
 
   if ($failed) { throw "windows-egress-gate self-test: $failed check(s) failed" }
   Write-Host 'windows-egress-gate self-test: all checks passed'
@@ -288,8 +369,10 @@ if (-not ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Pri
 foreach ($svc in 'mpssvc', 'BFE', 'Dnscache') {
   if ((Get-Service $svc).Status -ne 'Running') { throw "Precondition: service $svc is not running; the gate cannot observe anything." }
 }
-$disabled = @(Get-NetFirewallProfile | Where-Object { -not $_.Enabled })
-if ($disabled) { throw "control failed (precondition): firewall profile(s) $($disabled.Name -join ', ') are disabled, so the block rules would not apply." }
+# ActiveStore is what the firewall enforces (local settings merged with group policy), not what is saved.
+function Get-DisabledProfiles { @(Get-NetFirewallProfile -PolicyStore ActiveStore | Where-Object { -not $_.Enabled } | ForEach-Object Name) }
+$disabled = Get-DisabledProfiles
+if ($disabled) { throw "control failed (precondition): firewall profile(s) $($disabled -join ', ') are disabled, so the block rules would not apply." }
 
 $probeExe = (Resolve-Path $Probe).Path
 $releaseExe = (Resolve-Path $Release).Path
@@ -304,52 +387,67 @@ $broadcast = @(Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object {
   })
 
 $dnsLog = 'Microsoft-Windows-DNS-Client/Operational'
-$auditGuids = @(
-  '{0CCE9225-69AE-11D9-BED3-505054503030}' # Filtering Platform Packet Drop  (5152)
-  '{0CCE9226-69AE-11D9-BED3-505054503030}' # Filtering Platform Connection   (5156, 5157)
-  '{0CCE922B-69AE-11D9-BED3-505054503030}' # Process Creation                (4688)
-  '{0CCE922C-69AE-11D9-BED3-505054503030}' # Process Termination             (4689)
-)
 function Remove-GateRules { Get-NetFirewallRule -DisplayName "$RulePrefix*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule }
 function Get-LogSetting([string]$Log, [string]$Name) { ((wevtutil gl $Log) -match "^\s*$Name\s*:") -replace '^.*:\s*', '' | Select-Object -First 1 }
 function Invoke-Native([string]$What, [scriptblock]$Command) {
   & $Command | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "$What failed (exit $LASTEXITCODE)." }
 }
-function Read-Events([string]$Log, [int[]]$Ids, [datetime]$From, [datetime]$To) {
-  $events = @(Get-WinEvent -FilterHashtable @{ LogName = $Log; Id = $Ids; StartTime = $From; EndTime = $To } -ErrorAction SilentlyContinue)
+# Reads from $From to the newest event. There is deliberately no upper bound: Get-WinEvent applies its
+# time bounds at whole-second resolution (seen on the runner: an EndTime of hh:mm:30.37 excluded an event
+# at hh:mm:30.24), so an EndTime of "now" would leave up to a second unread. "No events" is a result;
+# any other failure to read is an error and stops the gate, because silence would then mean nothing.
+function Read-Events([string]$Log, [int[]]$Ids, [datetime]$From) {
+  try {
+    $events = @(Get-WinEvent -FilterHashtable @{ LogName = $Log; Id = $Ids; StartTime = $From } -ErrorAction Stop)
+  } catch {
+    if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return }
+    throw "could not read the $Log log, so the gate cannot judge anything: $($_.Exception.Message)"
+  }
   foreach ($e in $events) {
     $row = [ordered]@{ Id = $e.Id; Time = $e.TimeCreated.ToUniversalTime().ToString('o'); Rec = $e.RecordId; Pid = $e.ProcessId }
     foreach ($d in ([xml]$e.ToXml()).Event.EventData.Data) { $row[$d.Name] = $d.'#text' }
     [pscustomobject]$row
   }
 }
+function Get-PackageProcesses {
+  Get-RunningPackageProcesses -Processes @(Get-CimInstance Win32_Process | Select-Object ProcessId, ExecutablePath) -PackageDirs $packageDirs
+}
+# Pid 4 is the SMB redirector. WebClient (WebDAV) is trigger-started, so its pid is read again for
+# every window rather than once at arm time.
+function Get-ShareClientPids {
+  $webClient = [int](Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue).ProcessId
+  if ($webClient) { [void]$state.webClientPids.Add($webClient) }
+  @(4) + @($state.webClientPids)
+}
 
 $problems = [Collections.Generic.List[string]]::new()
 $summary = [ordered]@{ started = (Get-Date).ToUniversalTime().ToString('o'); probe = $probeExe; release = $releaseExe; windows = [ordered]@{} }
 $marker = "egress-gate-marker-$PID.invalid"
-$webClient = [int](Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue).ProcessId
-$shareClientPids = @(4) + @($webClient | Where-Object { $_ })
-$state = @{}
+$state = @{ webClientPids = [Collections.Generic.HashSet[int]]::new() }
 
 # Judge one window. Both logs must still hold the markers written at arm time: if either rolled over,
-# a clean result would mean nothing.
+# a clean result would mean nothing. Every app process must be gone when the window is read.
 function Get-WindowVerdict([string]$Name, [datetime]$From) {
   Start-Sleep -Seconds 3 # let the last events reach the logs
-  $to = Get-Date
-  $sec = @(Read-Events 'Security' (4688, 4689, 5152, 5156, 5157) $From $to)
-  $dns = @(Read-Events $dnsLog (3006, 3009, 3010) $From $to)
-  $sec | ConvertTo-Json -Depth 3 -Compress | Set-Content (Join-Path $EvidenceDir "events-$Name-security.json")
-  $dns | ConvertTo-Json -Depth 3 -Compress | Set-Content (Join-Path $EvidenceDir "events-$Name-dns.json")
-  # Get-WinEvent compares these bounds at whole-second resolution (seen on the runner: an EndTime of
-  # hh:mm:30.37 excluded an event at hh:mm:30.24), so the marker is read up to now, not up to $From.
-  $armSec = @(Read-Events 'Security' (4688) $state.armed $to | Where-Object { [Convert]::ToInt32($_.NewProcessId, 16) -eq $state.markerPid })
-  $armDns = @(Read-Events $dnsLog (3006) $state.armed $to | Where-Object QueryName -eq $marker)
+  $alive = @(Get-PackageProcesses)
+  if ($alive) {
+    $script:problems.Add("${Name}: $($alive.Count) package process(es) still running when the window closed (pid $($alive.ProcessId -join ', ')); what they do next would be in no window.")
+    $alive | ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null | Out-Null }
+    Start-Sleep -Seconds 2
+  }
+  $sec = @(Read-Events 'Security' (4688, 4689, 5152, 5156, 5157) $From)
+  $dns = @(Read-Events $dnsLog (3006, 3009, 3010) $From)
+  $armSec = @(Read-Events 'Security' (4688) $state.armed | Where-Object { [Convert]::ToInt32($_.NewProcessId, 16) -eq $state.markerPid })
+  $armDns = @(Read-Events $dnsLog (3006) $state.armed | Where-Object QueryName -eq $marker)
   if (-not $armSec) { $script:problems.Add("${Name}: the Security log no longer holds the arm marker (rolled over, or process auditing is off).") }
   if (-not $armDns) { $script:problems.Add("${Name}: the DNS-Client log no longer holds the arm marker (rolled over, or the channel is off).") }
-  $v = Get-EgressVerdict -Sec $sec -Dns $dns -PackageDirs $packageDirs -AllowImage $AllowImage -AllowDnsName $AllowDnsName -Broadcast $broadcast -ShareClientPids $shareClientPids
+  $v = Get-EgressVerdict -Sec $sec -Dns $dns -PackageDirs $packageDirs -AllowImage $AllowImage -AllowDnsName $AllowDnsName -Broadcast $broadcast -ShareClientPids (Get-ShareClientPids) -RequireExit
+  # Evidence is uploaded from a public repository: only the events the judge used, reduced to the
+  # fields it used. No other process on the host, no account, machine, SID or local address.
+  $v.Evidence | ConvertTo-Json -Depth 3 -Compress | Set-Content (Join-Path $EvidenceDir "events-$Name.json")
   $script:summary.windows[$Name] = [ordered]@{
-    from = $From.ToUniversalTime().ToString('o'); to = $to.ToUniversalTime().ToString('o')
+    from = $From.ToUniversalTime().ToString('o'); read = (Get-Date).ToUniversalTime().ToString('o')
     securityEvents = $sec.Count; dnsEvents = $dns.Count
     tree = @($v.Members | ForEach-Object { "$($_.Pid) <- $($_.Parent) $(Split-Path (Get-PathTail $_.Image) -Leaf)" })
     failures = @($v.Failures); logged = @($v.Logged | Group-Object Kind, Detail | ForEach-Object { "$($_.Count) x $($_.Name)" })
@@ -361,26 +459,46 @@ function Assert-Clean([string]$Name, $Verdict) {
   if (-not ($Verdict.Members | Where-Object Root)) { $script:problems.Add("${Name}: no app process was observed, so the window proves nothing.") }
   foreach ($f in $Verdict.Failures) { $script:problems.Add("${Name}: EGRESS: $(Format-Failure $f)") }
 }
+# Windows 2 and 3 pass on the ABSENCE of events, so the instruments must still be on when they end.
+function Assert-StillArmed([string]$When) {
+  $probeFile = Join-Path ([IO.Path]::GetTempPath()) "pdfsigner-egress-auditpol-$PID-check.csv"
+  try {
+    Invoke-Native 'auditpol /backup (armed check)' { auditpol /backup "/file:$probeFile" }
+    Test-AuditArmed -Rows @(Import-Csv $probeFile) -Guids $AuditGuids | ForEach-Object { $script:problems.Add("${When}: $_") }
+  } finally { Remove-Item $probeFile -Force -ErrorAction SilentlyContinue }
+  $rules = @(Get-NetFirewallRule -DisplayName "$RulePrefix*" -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' -and $_.Action -eq 'Block' -and $_.Direction -eq 'Outbound' })
+  if ($rules.Count -ne $state.imageCount) { $script:problems.Add("${When}: $($rules.Count) of $($state.imageCount) block rules are in place; the windows were not fully blocked.") }
+  $off = Get-DisabledProfiles
+  if ($off) { $script:problems.Add("${When}: firewall profile(s) $($off -join ', ') were disabled during the gate.") }
+  if ((Get-LogSetting $dnsLog 'enabled') -ne 'true') { $script:problems.Add("${When}: the DNS-Client log was switched off during the gate.") }
+}
+# Each cleanup step runs on its own, so one failure cannot skip the restores after it.
+function Invoke-Cleanup([string]$What, [scriptblock]$Step) {
+  try { & $Step } catch { $script:problems.Add("cleanup: $What failed: $($_.Exception.Message)") }
+}
 
 try {
   # ---- arm ----
   Remove-GateRules # leftovers from a killed run
-  $state.auditBackup = Join-Path $EvidenceDir 'auditpol-backup.csv'
+  # The backup holds the machine name, so it stays out of the evidence directory and is deleted.
+  $state.auditBackup = Join-Path ([IO.Path]::GetTempPath()) "pdfsigner-egress-auditpol-$PID.csv"
   Invoke-Native 'auditpol /backup' { auditpol /backup "/file:$($state.auditBackup)" }
   $state.auditBefore = (auditpol /get /category:* /r) -join "`n"
   $state.secLogSize = Get-LogSetting 'Security' 'maxSize'
   $state.dnsLogEnabled = Get-LogSetting $dnsLog 'enabled'
   Invoke-Native 'Security log resize' { wevtutil sl Security /ms:268435456 }
-  foreach ($g in $auditGuids) { Invoke-Native "auditpol /set $g" { auditpol /set "/subcategory:$g" /success:enable /failure:enable } }
+  foreach ($g in $AuditGuids) { Invoke-Native "auditpol /set $g" { auditpol /set "/subcategory:$g" /success:enable /failure:enable } }
   $images = @(Get-ChildItem $packageDirs -Recurse -Filter *.exe | ForEach-Object FullName)
   $i = 0
   foreach ($image in $images) { $i++; New-NetFirewallRule -DisplayName "$RulePrefix $i" -Direction Outbound -Action Block -Program $image -Profile Any | Out-Null }
+  $state.imageCount = $images.Count
   Invoke-Native 'DNS-Client channel enable' { wevtutil sl $dnsLog /e:true }
   $summary.rules = $images
   $state.armed = Get-Date
   Start-Sleep -Milliseconds 500
   $m = Start-Process cmd.exe -ArgumentList '/c', 'exit' -PassThru -WindowStyle Hidden; $state.markerPid = $m.Id; $m.WaitForExit()
   try { $null = [Net.Dns]::GetHostAddresses($marker) } catch { $null = $_ } # a .invalid name: the lookup itself is the marker
+  Assert-StillArmed 'arm'
   Write-Host "armed: $($images.Count) block rule(s), Filtering Platform + process auditing, DNS-Client log"
 
   # ---- window 1: controls on the probe ----
@@ -390,12 +508,13 @@ try {
   node scripts/egress-control.mjs $controlFile $Repeat | Out-Host
   $controlExit = $LASTEXITCODE
   $v = Get-WindowVerdict 'control' $from
-  if ($controlExit -ne 0 -or -not (Test-Path $controlFile)) { $problems.Add("control failed: the control driver exited $controlExit.") }
+  if (-not (Test-Path $controlFile)) { $problems.Add("control failed: the control driver exited $controlExit and wrote no report.") }
   else {
     $report = Get-Content $controlFile -Raw | ConvertFrom-Json
-    $controlProblems = @(Test-EgressControls $v $report)
+    if ($controlExit -ne 0) { $problems.Add("control failed: the control driver exited $controlExit.") }
+    $controlProblems = @(Test-EgressControls $v $report -Repeat $Repeat)
     $controlProblems | ForEach-Object { $problems.Add($_) }
-    @($v.Failures | Where-Object Kind -eq 'image') | ForEach-Object { $problems.Add("control: $(Format-Failure $_)") }
+    @($v.Failures | Where-Object { $_.Kind -in 'image', 'alive', 'share' }) | ForEach-Object { $problems.Add("control: $(Format-Failure $_)") }
     $summary.controls = [ordered]@{ repeat = $Repeat; problems = $controlProblems; report = $report }
     if (-not $controlProblems) { Write-Host "controls hold: $Repeat/$Repeat TCP and $Repeat/$Repeat UDP attempts blocked and attributed; Chromium partition request blocked in the network service; both lookups attributed; negatives silent" }
   }
@@ -418,26 +537,42 @@ try {
     if ($p.HasExited) { $problems.Add("release-idle: the release exe exited on its own (exit $($p.ExitCode)) before the idle period ended.") }
     else {
       $null = $p.CloseMainWindow()
-      if (-not $p.WaitForExit(10000)) { taskkill /PID $p.Id /T /F | Out-Null; Write-Host 'release-idle: the app did not quit on window close; killed (quit path not measured).' }
+      if (-not $p.WaitForExit(10000)) {
+        taskkill /PID $p.Id /T /F | Out-Null
+        $problems.Add('release-idle: the release exe did not quit when its window was closed and had to be killed, so the quit path was not measured.')
+      }
     }
   } finally {
     Remove-Item Env:PORTABLE_EXECUTABLE_DIR -ErrorAction SilentlyContinue
     Remove-Item $idleData.FullName -Recurse -Force -ErrorAction SilentlyContinue
   }
+  $null = Get-WindowVerdict 'release-idle' $from
+
+  # ---- last look, then disarm ----
+  # The block rules are about to go. Confirm nothing of the app is left to use the network once they
+  # do, check the instruments stayed on, and read window 3 once more so its final second is covered.
+  Start-Sleep -Seconds 1
+  $left = @(Get-PackageProcesses)
+  if ($left) { $problems.Add("before disarm: $($left.Count) package process(es) still running (pid $($left.ProcessId -join ', ')); refusing to call the run clean.") }
+  Assert-StillArmed 'before disarm'
   Assert-Clean 'release-idle' (Get-WindowVerdict 'release-idle' $from)
 } finally {
-  # ---- disarm: always, and verify ----
-  Remove-GateRules
-  if ($state.auditBackup -and (Test-Path $state.auditBackup)) {
-    auditpol /restore "/file:$($state.auditBackup)" | Out-Null
-    # Compared as `auditpol /get /r` text: a restored backup re-exports with two extra GlobalSacl rows.
-    if (((auditpol /get /category:* /r) -join "`n") -ne $state.auditBefore) { $problems.Add('cleanup: audit policy differs from its state before the gate.') }
+  # ---- disarm: always, each step on its own, and verify ----
+  Invoke-Cleanup 'removing the firewall rules' { Remove-GateRules }
+  Invoke-Cleanup 'restoring the audit policy' {
+    if ($state.auditBackup -and (Test-Path $state.auditBackup)) {
+      Invoke-Native 'auditpol /restore' { auditpol /restore "/file:$($state.auditBackup)" }
+      # Compared as `auditpol /get /r` text: a restored backup re-exports with two extra GlobalSacl rows.
+      if (((auditpol /get /category:* /r) -join "`n") -ne $state.auditBefore) { throw 'audit policy differs from its state before the gate' }
+    }
   }
-  if ($state.secLogSize) { wevtutil sl Security "/ms:$($state.secLogSize)" | Out-Null }
-  if ($state.dnsLogEnabled -eq 'false') { wevtutil sl $dnsLog /e:false | Out-Null }
-  if (Get-NetFirewallRule -DisplayName "$RulePrefix*" -ErrorAction SilentlyContinue) { $problems.Add('cleanup: a gate firewall rule is still present.') }
+  Invoke-Cleanup 'deleting the audit policy backup' { if ($state.auditBackup) { Remove-Item $state.auditBackup -Force -ErrorAction SilentlyContinue } }
+  Invoke-Cleanup 'restoring the Security log size' { if ($state.secLogSize) { Invoke-Native 'wevtutil sl Security' { wevtutil sl Security "/ms:$($state.secLogSize)" } } }
+  Invoke-Cleanup 'restoring the DNS-Client channel' { if ($state.dnsLogEnabled -eq 'false') { Invoke-Native 'wevtutil sl DNS-Client' { wevtutil sl $dnsLog /e:false } } }
+  Invoke-Cleanup 'checking that no gate rule is left' { if (Get-NetFirewallRule -DisplayName "$RulePrefix*" -ErrorAction SilentlyContinue) { throw 'a gate firewall rule is still present' } }
+  $problems = [Collections.Generic.List[string]]@($problems | Select-Object -Unique)
   $summary.problems = @($problems)
-  $summary | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $EvidenceDir 'verdict.json')
+  Invoke-Cleanup 'writing verdict.json' { $summary | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $EvidenceDir 'verdict.json') }
 }
 
 if ($problems.Count -gt 0) {
