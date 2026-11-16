@@ -149,6 +149,13 @@ jobs:
         shell: bash
         run: node scripts/check-fuses.mjs --release "${{ matrix.release_exe }}" --probe "${{ matrix.probe_exe }}"
 
+      # Issue #23 item 2: the release-only Windows egress gate cannot arm here, but its judge can be
+      # replayed over events recorded on the runner. Also proves the script parses.
+      - name: Windows egress gate — judge self-test over recorded events [Windows]
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/windows-egress-gate.ps1 -SelfTest
+
       - name: Packaged probe signs a pyHanko-valid PDF [Linux, xvfb]
         if: runner.os == 'Linux'
         run: xvfb-run -a node electron/verify-packaged.mjs

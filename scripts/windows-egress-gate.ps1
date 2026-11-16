@@ -321,8 +321,10 @@ function Get-WindowVerdict([string]$Name, [datetime]$From) {
   $dns = @(Read-Events $dnsLog (3006, 3009, 3010) $From $to)
   $sec | ConvertTo-Json -Depth 3 -Compress | Set-Content (Join-Path $EvidenceDir "events-$Name-security.json")
   $dns | ConvertTo-Json -Depth 3 -Compress | Set-Content (Join-Path $EvidenceDir "events-$Name-dns.json")
-  $armSec = @(Read-Events 'Security' (4688) $state.armed $From | Where-Object { [Convert]::ToInt32($_.NewProcessId, 16) -eq $state.markerPid })
-  $armDns = @(Read-Events $dnsLog (3006) $state.armed $From | Where-Object QueryName -eq $marker)
+  # Get-WinEvent compares these bounds at whole-second resolution (seen on the runner: an EndTime of
+  # hh:mm:30.37 excluded an event at hh:mm:30.24), so the marker is read up to now, not up to $From.
+  $armSec = @(Read-Events 'Security' (4688) $state.armed $to | Where-Object { [Convert]::ToInt32($_.NewProcessId, 16) -eq $state.markerPid })
+  $armDns = @(Read-Events $dnsLog (3006) $state.armed $to | Where-Object QueryName -eq $marker)
   if (-not $armSec) { $script:problems.Add("${Name}: the Security log no longer holds the arm marker (rolled over, or process auditing is off).") }
   if (-not $armDns) { $script:problems.Add("${Name}: the DNS-Client log no longer holds the arm marker (rolled over, or the channel is off).") }
   $v = Get-EgressVerdict -Sec $sec -Dns $dns -PackageDirs $packageDirs -AllowImage $AllowImage -AllowDnsName $AllowDnsName -Broadcast $broadcast

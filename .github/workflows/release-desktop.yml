@@ -114,9 +114,9 @@ jobs:
       # run the packaged app with a monitored dummy default route and NO real network, capturing on the
       # namespace's interface. Fail on ANY captured packet over the whole app process tree.
       #
-      # ⚠ KNOWN GAP (explicit, not implicit): this packet capture runs on LINUX only. The Windows leg
-      # below samples the app's sockets instead: per-process, but a very short-lived connection can
-      # fall between samples. A packet-level Windows gate (WFP/pktmon) remains open in issue #23.
+      # This packet capture runs on LINUX only. Windows cannot scope a capture to one process tree, so
+      # its leg below decides at connect time instead (issue #23 item 2, RFC 23-2): per-image block
+      # rules plus Filtering Platform auditing. What that does and does not cover is in docs/audit.md.
       - name: No-egress gate — packet capture over the app process tree (SC-004) [Linux]
         if: runner.os == 'Linux'
         run: |
@@ -161,7 +161,23 @@ jobs:
             exit 1
           fi
 
-      - name: No-egress gate — socket sampling over the app process tree (SC-004) [Windows]
+      # Connection-level gate: block rules on every package image, WFP + process auditing, DNS-Client
+      # log, in-app positive/negative controls, then the real sign flow on the probe and an undriven
+      # launch/idle/quit of the RELEASE exe. Needs the elevated hosted runner; restores what it changes.
+      - name: No-egress gate — connection-level, over the app process tree (SC-004) [Windows]
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/windows-egress-gate.ps1
+      - name: Keep the egress gate's evidence [Windows]
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-egress-gate-evidence
+          path: egress-gate-out
+          if-no-files-found: ignore
+      # Second witness for one release (RFC 23-2 B4 (a)): the old socket sampler. It cannot see a
+      # short-lived connection or attribute DNS; delete it once the gate above has a release behind it.
+      - name: No-egress gate — socket sampling (second witness) over the app process tree (SC-004) [Windows]
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/windows-egress-check.ps1 # drives release-probe/win-unpacked
