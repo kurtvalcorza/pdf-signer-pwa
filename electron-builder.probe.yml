@@ -1,0 +1,36 @@
+# GATE-ONLY PROBE BUILD: NEVER PUBLISHED (issue #33, RFC 23-2 decision B3 (b)).
+#
+# The same commit's app, packed a second time with ONE difference: the Node inspector fuse is on, so
+# Playwright (_electron.launch) can drive it through the packaged gates (electron/verify-packaged.mjs,
+# scripts/windows-egress-check.ps1). The release build (electron-builder.yml) has that fuse off.
+#
+# Build it AFTER `npm run build:desktop`, without rebuilding dist/ or build-info.json, so both builds
+# pack the same files: `npm run build:desktop:probe`. scripts/check-fuses.mjs --release … --probe …
+# then asserts the two app.asar archives are byte-identical and that only the inspector fuse differs.
+#
+# Kept apart from the release so it cannot be mistaken for one: its own output folder (release-probe/,
+# which no publish step globs), a GATE-PROBE artifact name, and Windows builds only the unpacked folder.
+extends: electron-builder.yml
+directories:
+  output: release-probe
+artifactName: ${name}-GATE-PROBE-not-for-release-${version}-${arch}.${ext}
+# Repeated in full rather than inherited, so the probe's fuse set does not depend on how `extends`
+# merges nested keys. check-fuses.mjs fails if this ever differs from the release by more than the
+# inspector.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: true
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
+win:
+  # The gates drive win-unpacked; a portable wrapper would only be one more thing to mistake for the
+  # release.
+  target: dir
+linux:
+  # The Linux gates drive the EXTRACTED AppImage (FR-002a extract-and-run path), so the probe is an
+  # AppImage too.
+  target: AppImage

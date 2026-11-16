@@ -293,7 +293,8 @@ Done-when, from issue #23: steps 1 and 5 pass, with step 6 shown to fail closed.
 
 **Decided 2026-11-15 by the owner:** B1 (a), B2 (a), B3 (b), B4 (a), B5 (a), B6 (a), B7 (a). Turning
 the inspector fuse off in release builds, and asserting the fuse state in `verify-packaged.mjs`, is
-tracked as a separate security follow-up. The options below are kept as the record of what was
+tracked as a separate security follow-up (issue #33: the release now has the fuse off, the packaged
+gates drive a gate-only probe build, and `scripts/check-fuses.mjs` asserts both fuse sets). The options below are kept as the record of what was
 weighed.
 
 **B1. Mechanism**

@@ -88,8 +88,11 @@ can need replacing well before the notice appears. Check the releases page if th
 
 ## Hardening
 
-The binary has Electron fuses burned in: it will not run as plain Node, ignores `NODE_OPTIONS`, loads
-the app only from its archive, and gives `file:` no extra privileges. On Windows that archive's
+The binary has Electron fuses burned in: it will not run as plain Node, ignores `NODE_OPTIONS`,
+ignores `--inspect` (no debugger can attach to it), loads the app only from its archive, and gives
+`file:` no extra privileges. The release gate reads these fuses back from the published binary.
+The automated launch-and-sign checks need a debugger attached, so they run on a separate test build of
+the same code that differs only in that one fuse, and that test build is never published. On Windows that archive's
 integrity is also checked at startup; Electron has no such check on Linux. The renderer sandbox can
 still be turned off by whoever launches the app (`--no-sandbox`); Electron has no fuse for that, and
 that person already controls your session.

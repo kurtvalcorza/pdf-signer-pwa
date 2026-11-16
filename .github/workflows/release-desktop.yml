@@ -57,6 +57,24 @@ jobs:
           sudo apt-get update && sudo apt-get install -y xvfb
       - name: Build desktop artifact (portable .exe / AppImage) from this commit
         run: npm run build:desktop
+      # Issue #33 / RFC 23-2 B3 (b): the release has the Node inspector fuse OFF, so Playwright cannot
+      # drive it. The packaged gates below drive this gate-only probe instead: the same dist/ and
+      # build-info.json packed again with only that fuse on, into release-probe/, which no upload or
+      # publish step globs. It is never published.
+      - name: Build the gate-only probe (inspector fuse on; NEVER published)
+        run: npm run build:desktop:probe
+      - name: Fuse state — release hardened, probe = release + inspector only [Windows]
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node scripts/check-fuses.mjs --release "release/win-unpacked/PDF Signer.exe" --probe "release-probe/win-unpacked/PDF Signer.exe"
+      # On Linux, check what ships INSIDE each AppImage: extract both and compare the extracted trees.
+      - name: Fuse state — release hardened, probe = release + inspector only [Linux, extracted AppImages]
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          ( cd release && chmod +x *.AppImage && ./*.AppImage --appimage-extract >/dev/null )
+          ( cd release-probe && chmod +x *.AppImage && ./*.AppImage --appimage-extract >/dev/null )
+          node scripts/check-fuses.mjs --release release/squashfs-root/pdf-signer-pwa --probe release-probe/squashfs-root/pdf-signer-pwa
       - name: Web gates untouched (SC-008/FR-019)
         run: npm test && npm run verify:signatures
 
@@ -67,22 +85,21 @@ jobs:
       - name: Desktop E2E [Linux, xvfb]
         if: runner.os == 'Linux'
         run: xvfb-run -a npx playwright test --config playwright.desktop.config.ts
-      - name: Packaged artifact signs a pyHanko-valid PDF [Windows]
+      - name: Packaged probe signs a pyHanko-valid PDF [Windows]
         if: runner.os == 'Windows'
-        run: node electron/verify-packaged.mjs
-      # Gate the ACTUAL AppImage, not linux-unpacked: extract it (the extract-and-run fallback path,
-      # FR-002a) and drive the extracted binary, so a broken wrapper / APPIMAGE data-location regression
-      # is caught before publish.
-      - name: Packaged AppImage signs a pyHanko-valid PDF [Linux, extract-and-run, xvfb]
+        run: node electron/verify-packaged.mjs # drives release-probe/win-unpacked
+      # Gate an AppImage, not linux-unpacked: the probe AppImage, extracted above (the extract-and-run
+      # fallback path, FR-002a), so a broken wrapper / APPIMAGE data-location regression is caught
+      # before publish. The fuse step proved its tree equals the release's but for one fuse byte.
+      - name: Packaged probe AppImage signs a pyHanko-valid PDF [Linux, extract-and-run, xvfb]
         if: runner.os == 'Linux'
         run: |
           set -e
-          APPIMAGE_PATH=$(ls release/*.AppImage | head -1)
-          ( cd release && chmod +x *.AppImage && ./*.AppImage --appimage-extract >/dev/null )
+          APPIMAGE_PATH=$(ls release-probe/*.AppImage | head -1)
           # PKG_APPIMAGE drives the real Linux APPIMAGE data-location branch (dirname(APPIMAGE)), not
           # the Windows PORTABLE_EXECUTABLE_DIR path — so an AppImage-specific persistence regression
           # is exercised.
-          PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE="$APPIMAGE_PATH" \
+          PKG_EXE=release-probe/squashfs-root/pdf-signer-pwa PKG_APPIMAGE="$APPIMAGE_PATH" \
             xvfb-run -a node electron/verify-packaged.mjs
       # SC-004 no-egress gate (network-namespace method, contracts/release-artifacts.md § Verification):
       # run the packaged app with a monitored dummy default route and NO real network, capturing on the
@@ -110,13 +127,13 @@ jobs:
           # packets in its stdio buffer past our read window and report a false COUNT=0.
           sudo ip netns exec appns tcpdump -i any -nn -U -w /tmp/egress.pcap 'not (host 127.0.0.1 or host ::1)' &
           sleep 2
-          # Same APPIMAGE data-location branch as the signing gate above, for consistency.
-          APPIMAGE_PATH=$(ls release/*.AppImage | head -1)
+          # Same probe and APPIMAGE data-location branch as the signing gate above, for consistency.
+          APPIMAGE_PATH=$(ls release-probe/*.AppImage | head -1)
           # Skip pyHanko here: this run's job is egress monitoring, and pyHanko validation (a) needs a
           # network and (b) could itself emit traffic and pollute the capture. The artifact's signature
           # is validated in the step above, with the network available.
           sudo ip netns exec appns su "$USER" -c \
-            "PKG_EXE=release/squashfs-root/pdf-signer-pwa PKG_APPIMAGE='$APPIMAGE_PATH' PDFSIGNER_SKIP_VALIDATE=1 ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs"
+            "PKG_EXE=release-probe/squashfs-root/pdf-signer-pwa PKG_APPIMAGE='$APPIMAGE_PATH' PDFSIGNER_SKIP_VALIDATE=1 ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a node electron/verify-packaged.mjs"
           sleep 2
           # Stop the capture cleanly (SIGINT makes tcpdump flush + exit) BEFORE reading the pcap.
           sudo pkill -INT -f 'tcpdump.*egress.pcap' || true
@@ -138,7 +155,7 @@ jobs:
       - name: No-egress gate — socket sampling over the app process tree (SC-004) [Windows]
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/windows-egress-check.ps1
+        run: ./scripts/windows-egress-check.ps1 # drives release-probe/win-unpacked
 
       # --- Checksums + provenance for the shipped artifact ---
       # PER-PLATFORM name so the two matrix legs don't both upload a file literally named SHA256SUMS
@@ -310,6 +327,14 @@ jobs:
       # T032a — gate the required USER-FACING disclosures before publishing. The unsigned-binary
       # warning promises a verification path and the FUSE-less fallback is the only no-root Linux path,
       # so publishing without them is an overclaim. (Assets are gated by upload-artifact if-no-files.)
+      # Issue #33: the gate-only probe must never reach a release. Uploads glob release/ only; this
+      # catches a future glob or rename that would let one through.
+      - name: No gate-only probe among the release files
+        run: |
+          if find dist-artifacts -iname '*GATE-PROBE*' | grep .; then
+            echo "::error::a gate-only probe build reached the release artifacts"
+            exit 1
+          fi
       - name: Gate release disclosures present (FR-014/015/018a/002a)
         run: |
           set -e

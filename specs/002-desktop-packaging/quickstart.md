@@ -18,6 +18,16 @@ constitution before publishing. This is a validation guide; implementation lives
 ```bash
 npm run build              # the existing web build → dist/  (unchanged; FR-019)
 npm run build:desktop      # electron-builder → release/ (portable .exe / AppImage per host)
+npm run build:desktop:probe # gate-only probe → release-probe/ (same dist/, inspector fuse ON; never ship it)
+```
+
+The release binary has the Node inspector fuse burned off (issue #33), so Playwright cannot drive it.
+`electron/verify-packaged.mjs` and `scripts/windows-egress-check.ps1` drive the probe. Prove the
+probe is the release plus one fuse before trusting either:
+
+```bash
+npm run check:fuses -- --release "release/win-unpacked/PDF Signer.exe" --probe "release-probe/win-unpacked/PDF Signer.exe"
+node electron/verify-packaged.mjs   # packaged probe: real sign → pyHanko
 ```
 
 ## The gate — run this before believing anything

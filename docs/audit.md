@@ -9,7 +9,7 @@ inherited from the review.
 | :--- | :--- | :--- |
 | SEC-01, 06 | Forge 1.4.3 from v0.1.1. The v0.1.0 binaries carry 1.4.0 and should not be used. | Zero-iteration fixture accepted by 1.4.0 under any password, rejected now (`p12Malformed.test.ts`). |
 | SEC-02 | Fixed. Every certified PDF is refused, because appending a field breaks certification at every /P. | pyHanko fixtures and `validate_pdf.py`. |
-| SEC-03, 07 | Sandbox on; Electron 43.8.7; fuses burned. | Desktop E2E on Windows and Linux in CI, and `verify-packaged.mjs` on the Windows binary. `--no-sandbox` has no fuse, and the archive integrity fuse has no effect on Linux. |
+| SEC-03, 07 | Sandbox on; Electron 43.8.7; all 8 fuses burned hardened, the Node inspector off (#33). | Desktop E2E on Windows and Linux in CI; `check-fuses.mjs` reads the release and gate-only probe binaries on both OSes (CI and release); `verify-packaged.mjs` drives the probe, which differs from the release only by the inspector fuse byte. `--no-sandbox` has no fuse, and the archive integrity fuse has no effect on Linux. |
 | SEC-04, 05 | Fixed. | `us2-remember-cert.spec.ts`, with the consent test shown to fail without the fix. |
 | SEC-08, 09 | Limits and cancellable, atomic rendering. | `sec-limits-render.spec.ts`. Main-thread parsing of an accepted file cannot be cancelled. |
 | SEC-10 | Heartbeat written into the lock, nonce and a reclaim mutex; an old lock with a live PID is watched for one beat. | Eight simultaneous launches on a stale lock produce one winner, and a live holder keeps the folder. |

@@ -48,3 +48,6 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+
+# Gate-only probe build (electron-builder.probe.yml) — never published
+release-probe/

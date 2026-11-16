@@ -2,8 +2,10 @@ name: CI
 
 # Ordinary CI: web build, lint, dependency audit, unit + signing tests, signature policy gate, browser
 # E2E, the desktop shell (renderer sandbox included) run unpackaged on Windows and Linux, and the
-# Android shell built unsigned with its static APK checks. Packaged desktop artifacts, fuses, APK
-# signing and the emulator gates run only in release-desktop.yml.
+# Android shell built unsigned with its static APK checks. The desktop job also packs the release and
+# the gate-only probe as unpacked folders, asserts their burned fuses (issue #33) and signs through the
+# probe. The portable/AppImage artifacts, the egress gates, APK signing and the emulator gates run
+# only in release-desktop.yml.
 on:
   push:
     branches: [main]
@@ -93,7 +95,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            release_exe: release/linux-unpacked/pdf-signer-pwa
+            probe_exe: release-probe/linux-unpacked/pdf-signer-pwa
+          - os: windows-latest
+            release_exe: release/win-unpacked/PDF Signer.exe
+            probe_exe: release-probe/win-unpacked/PDF Signer.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -126,6 +134,28 @@ jobs:
       - name: Desktop E2E [Windows]
         if: runner.os == 'Windows'
         run: npm run e2e:desktop
+
+      # Issue #33: the release binary has the Node inspector fuse off; the gate-only probe (same dist/,
+      # same build-info.json, inspector on) is what Playwright drives. Unpacked folders only here.
+      - name: Pack the release and the gate-only probe (unpacked) from this commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/gen-build-info.mjs
+          npx electron-builder --config electron-builder.yml --dir
+          npx electron-builder --config electron-builder.probe.yml --dir
+
+      - name: Fuse state — release hardened, probe = release + inspector only
+        shell: bash
+        run: node scripts/check-fuses.mjs --release "${{ matrix.release_exe }}" --probe "${{ matrix.probe_exe }}"
+
+      - name: Packaged probe signs a pyHanko-valid PDF [Linux, xvfb]
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node electron/verify-packaged.mjs
+
+      - name: Packaged probe signs a pyHanko-valid PDF [Windows]
+        if: runner.os == 'Windows'
+        run: node electron/verify-packaged.mjs
 
   # Feature 003: the Android shell, unsigned. No secrets and no environment: the release key is
   # only readable by the release job (R12). C3 (signing certificate) and the emulator gates
