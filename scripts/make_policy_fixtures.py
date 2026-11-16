@@ -11,6 +11,7 @@ The signing key is created in memory and discarded, so no private key is ever st
 """
 
 import datetime
+import re
 import sys
 import tempfile
 from io import BytesIO
@@ -23,6 +24,7 @@ from cryptography.x509.oid import NameOID
 from pyhanko.keys import load_cert_from_pemder, load_private_key_from_pemder
 from pyhanko.pdf_utils import generic
 from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+from pyhanko.pdf_utils.reader import PdfFileReader
 from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter
 from pyhanko.sign import signers
 from pyhanko.sign.fields import (
@@ -415,6 +417,176 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
             ),
         }
     )
+
+    # ---- Field rows that needed a hand-built form (rules 2 and 8). ----
+    def shared_parent(w):
+        kids = [field_ref(w, 0), field_ref(w, 1)]
+        parent = w.add_object(
+            generic.DictionaryObject(
+                {name("/T"): text("Group"), name("/Kids"): generic.ArrayObject(kids)}
+            )
+        )
+        for kid in kids:
+            kid.get_object()[name("/Parent")] = parent
+        form(w)[name("/Fields")] = generic.ArrayObject([parent])
+
+    def shared_appearance(w):
+        normal = w.add_object(
+            generic.StreamObject(
+                {
+                    name("/Type"): name("/XObject"),
+                    name("/Subtype"): name("/Form"),
+                    name("/BBox"): generic.ArrayObject([num(0), num(0), num(200), num(50)]),
+                },
+                stream_data=b"",
+            )
+        )
+        shared = w.add_object(generic.DictionaryObject({name("/N"): normal}))
+        for i in (0, 1):
+            field_ref(w, i).get_object()[name("/AP")] = shared
+
+    t["certified-p2-shared-parent.pdf"] = built(shared_parent, fields=two)
+    t["certified-p2-shared-appearance.pdf"] = built(shared_appearance, fields=two)
+
+    # ---- Changes made through the cross-reference data (review finding R1). ----
+    # pdf-lib reads objects in file order and never reads the xref; a conforming reader does the
+    # opposite. Each file below is certified, then carries a hand-written incremental section
+    # that the two views read differently, then pyHanko's own fill of "Approver", so the fill's
+    # signature covers the section and every signature stays cryptographically intact. The app
+    # must refuse all of them (rule 5d, xrefSections.ts).
+    def fill_lenient(pdf: bytes) -> bytes:
+        out = signers.sign_pdf(
+            IncrementalPdfFileWriter(BytesIO(pdf), strict=False),
+            signers.PdfSignatureMetadata(
+                field_name="Approver",
+                md_algorithm="sha256",
+                subfilter=SigSeedSubFilter.ADOBE_PKCS7_DETACHED,
+            ),
+            signer=signer,
+            existing_fields_only=True,
+        )
+        return out.getvalue()
+
+    def xref_case(make) -> bytes:
+        base = certified(MDPPerm.FILL_FORMS, two)
+        reader = PdfFileReader(BytesIO(base))
+        page = reader.root["/Pages"]["/Kids"][0].get_object()
+        contents = page.raw_get("/Contents")
+        n, g = contents.idnum, contents.generation
+        original = re.search(rb"(?<![0-9])%d %d obj.*?endobj" % (n, g), base, re.S).group(0)
+        highest = max(int(m) for m in re.findall(rb"(?<![0-9])(\d+) \d+ obj", base))
+        prev = int(re.findall(rb"startxref\s+(\d+)", base)[-1])
+        trailer = re.findall(rb"trailer\s*(<<.*?>>)\s*startxref", base, re.S)[-1]
+        trailer = re.sub(rb"/Prev\s+\d+", b"", trailer)[:-2]
+
+        def section(objects, rows, trailer_extra=b"", unreached=b""):
+            """objects: [(key, bytes)]; rows(offsets) -> xref rows after the object-0 entry."""
+            out = base + b"\n"
+            offsets = {}
+            for key, data in objects:
+                offsets[key] = len(out)
+                out += data + b"\n"
+            at = len(out)
+            out += b"xref\n0 1\n0000000000 65535 f \n" + rows(offsets)
+            out += b"trailer\n" + trailer + trailer_extra + b" /Prev %d >>\n" % prev
+            out += unreached
+            out += b"startxref\n%d\n%%%%EOF\n" % at
+            return out
+
+        def stream(num, gen, data):
+            return b"%d %d obj\n<< /Length %d >>\nstream\n%s\nendstream\nendobj" % (
+                num,
+                gen,
+                len(data),
+                data,
+            )
+
+        return fill_lenient(make(n, g, original, highest, section, stream))
+
+    black_page = b"0 0 612 792 re f"
+
+    def duplicate_object(n, g, original, highest, section, stream):
+        # Two definitions of the page content: the xref names the altered one, and a byte copy
+        # of the original follows it, which is the one a file-order parser keeps.
+        return section(
+            [("evil", stream(n, g, black_page)), ("copy", original)],
+            lambda o: b"%d 1\n%010d %05d n \n" % (n, o["evil"], g),
+        )
+
+    def free_entry(n, g, original, highest, section, stream):
+        # The xref marks the page content free; no object is written at all.
+        return section([], lambda o: b"%d 1\n0000000000 %05d f \n" % (n, g + 1))
+
+    def generation_bump(n, g, original, highest, section, stream):
+        # The same object number under a new generation: a new key to a file-order parser.
+        return section(
+            [("evil", stream(n, g + 1, black_page))],
+            lambda o: b"%d 1\n%010d %05d n \n" % (n, o["evil"], g + 1),
+        )
+
+    def hybrid(n, g, original, highest, section, stream):
+        # An empty classic table whose trailer points at a cross-reference stream (/XRefStm)
+        # that names an altered definition of the page content.
+        offsets = {}
+
+        def rows(o):
+            offsets.update(o)
+            return b""
+
+        section([("evil", stream(n, g, black_page))], rows)  # first pass: learn the offset
+        entry = bytes([1]) + offsets["evil"].to_bytes(4, "big") + bytes([g])
+        xref_stream = (
+            b"%d 0 obj\n<< /Type /XRef /W [ 1 4 1 ] /Index [ %d 1 ] /Size %d /Length %d >>\n"
+            b"stream\n%s\nendstream\nendobj" % (highest + 1, n, highest + 2, len(entry), entry)
+        )
+        learned = {}
+
+        def rows_again(o):
+            learned.update(o)
+            return b""
+
+        # A byte copy of the original follows, so a file-order parser sees nothing changed.
+        objects = [("evil", stream(n, g, black_page)), ("xref", xref_stream), ("copy", original)]
+        section(objects, rows_again)
+        return section(objects, lambda o: b"", trailer_extra=b" /XRefStm %d" % learned["xref"])
+
+    def double_trailer(n, g, original, highest, section, stream):
+        # Two xref+trailer pairs in one section. startxref reaches the first, which frees the
+        # page content; the second, which a file-order parser reads last, looks harmless.
+        return section(
+            [],
+            lambda o: b"%d 1\n0000000000 %05d f \n" % (n, g + 1),
+            unreached=b"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Root 1 0 R /Size 1 >>\n",
+        )
+
+    for label, make in (
+        ("duplicate-object", duplicate_object),
+        ("free-entry", free_entry),
+        ("generation-bump", generation_bump),
+        ("hybrid", hybrid),
+        ("double-trailer", double_trailer),
+    ):
+        t[f"certified-p2-xref-{label}.pdf"] = xref_case(make)
+
+    def rewritten_object() -> bytes:
+        # One section only, written by pyHanko: its fill of "Approver" also re-emits the page
+        # content unchanged. Nothing differs object by object; only the xref shows it.
+        writer = IncrementalPdfFileWriter(BytesIO(certified(MDPPerm.FILL_FORMS, two)))
+        page = writer.root["/Pages"]["/Kids"][0].get_object()
+        writer.mark_update(page.raw_get("/Contents"))
+        out = signers.sign_pdf(
+            writer,
+            signers.PdfSignatureMetadata(
+                field_name="Approver",
+                md_algorithm="sha256",
+                subfilter=SigSeedSubFilter.ADOBE_PKCS7_DETACHED,
+            ),
+            signer=signer,
+            existing_fields_only=True,
+        )
+        return out.getvalue()
+
+    t["certified-p2-xref-rewritten-object.pdf"] = rewritten_object()
     return t
 
 

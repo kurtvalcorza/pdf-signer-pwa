@@ -86,6 +86,7 @@ const REVISION_REASONS: Record<RevisionFailure, BlockReason> = {
   'not-a-single-fill': 'changed-after-certification',
   'too-many-revisions': 'too-many-revisions',
   'too-many-fields': 'too-many-fields',
+  'xref-unreadable': 'unreadable-policy',
   unreadable: 'unreadable-policy',
 };
 

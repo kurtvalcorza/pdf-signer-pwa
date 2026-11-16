@@ -274,3 +274,172 @@ describe('the form walk', () => {
     expect(() => walkFormNodes(doc, 1)).toThrow(FormTooLargeError);
   });
 });
+
+describe('compareRevisions: each guard refuses for its own reason', () => {
+  // pyHanko's certification followed by pyHanko's fill of Approver: an accepted step. Each case
+  // changes one thing in the parsed revisions and expects that guard, by name.
+  async function step() {
+    const bytes = load('certified-p2-two-empty-fields-signed-once.pdf');
+    const [first, second] = rangeEnds(bytes);
+    const before = await loadRevision(bytes, first);
+    const after = await loadRevision(bytes, second);
+    const opts = {
+      allowInfoRewrite: true,
+      certified: before,
+      certifiedFieldKeys: signatureFieldKeys(before.doc),
+    };
+    const field = fieldRef(after.doc, 'Approver');
+    const trailer = (r: typeof after) =>
+      r.doc.context.trailerInfo as unknown as Record<string, unknown>;
+    const run = () => {
+      const result = compareRevisions(before, after, opts, bytes);
+      return result.ok ? 'accepted' : result.detail;
+    };
+    return { bytes, before, after, opts, field, trailer, run };
+  }
+  const fieldDict = (r: { doc: PDFDocument }, ref: PDFRef) => r.doc.context.lookup(ref, PDFDict);
+
+  it('accepts the unmodified step and names the field', async () => {
+    const s = await step();
+    expect(compareRevisions(s.before, s.after, s.opts, s.bytes)).toEqual({
+      ok: true,
+      field: s.field,
+    });
+  });
+
+  it('root-changed: the trailer names another catalog', async () => {
+    const s = await step();
+    s.trailer(s.after).Root = PDFRef.of(99999);
+    expect(s.run()).toBe('root-changed');
+  });
+
+  it('no-root: a trailer without a catalog reference', async () => {
+    const s = await step();
+    s.trailer(s.after).Root = undefined;
+    expect(s.run()).toBe('no-root');
+  });
+
+  it('encrypted: a trailer that declares encryption', async () => {
+    const s = await step();
+    s.trailer(s.after).Encrypt = PDFRef.of(1);
+    expect(s.run()).toBe('encrypted');
+  });
+
+  it('info-not-a-reference: /Info given as a direct dictionary', async () => {
+    const s = await step();
+    s.trailer(s.after).Info = s.after.doc.context.obj({});
+    expect(s.run()).toBe('info-not-a-reference');
+  });
+
+  it('info-removed: the later trailer drops /Info', async () => {
+    const s = await step();
+    s.trailer(s.after).Info = undefined;
+    expect(s.run()).toBe('info-removed');
+  });
+
+  it('info-repointed: /Info now names an object that already existed', async () => {
+    const s = await step();
+    s.trailer(s.after).Info = s.trailer(s.after).Root;
+    expect(s.run()).toBe('info-repointed');
+  });
+
+  it('changed-objects: no object changed at all', async () => {
+    const s = await step();
+    const result = compareRevisions(s.before, s.before, s.opts);
+    expect(result).toEqual({ ok: false, detail: 'changed-objects:none' });
+  });
+
+  it('not-a-dictionary: the one changed object is not a field', async () => {
+    const s = await step();
+    const contents = s.before.doc.getPages()[0].node.get(N('Contents')) as PDFRef;
+    const objects = new Map(s.before.objects);
+    objects.set(refKey(contents), new Uint8Array([0x25]));
+    const result = compareRevisions(s.before, { ...s.before, objects }, s.opts);
+    expect(result).toEqual({ ok: false, detail: 'not-a-dictionary' });
+  });
+
+  it('not-an-empty-signature-field: the field already held a value', async () => {
+    const s = await step();
+    fieldDict(s.before, s.field).set(N('V'), s.before.doc.context.obj('Earlier'));
+    expect(s.run()).toBe('not-an-empty-signature-field');
+  });
+
+  it('field-not-certified: the field is not in the certified form', async () => {
+    const s = await step();
+    s.opts.certifiedFieldKeys = new Set();
+    expect(s.run()).toBe('field-not-certified');
+  });
+
+  it('field-not-on-certified-page: no page of the certified revision lists it', async () => {
+    const s = await step();
+    s.opts.certified = await loadRevision(load('certified-p2.pdf'));
+    expect(s.run()).toBe('field-not-on-certified-page');
+  });
+
+  it('value-not-new: /V points at an object that already existed', async () => {
+    const s = await step();
+    const cert = fieldDict(s.after, fieldRef(s.after.doc, 'Cert')).get(N('V'))!;
+    fieldDict(s.after, s.field).set(N('V'), cert);
+    expect(s.run()).toBe('value-not-new');
+  });
+
+  it('value-not-a-signature: /V points at a new object that is not a dictionary', async () => {
+    const s = await step();
+    const ctx = s.after.doc.context;
+    fieldDict(s.after, s.field).set(N('V'), ctx.register(ctx.obj([1])));
+    expect(s.run()).toBe('value-not-a-signature');
+  });
+
+  it('value-range-mismatch: the new signature does not cover this revision to its end', async () => {
+    const s = await step();
+    const value = fieldDict(s.after, s.field).lookup(N('V'), PDFDict);
+    const range = value
+      .lookup(N('ByteRange'), PDFArray)
+      .asArray()
+      .map((n) => Number(n.toString()));
+    value.set(N('ByteRange'), s.after.doc.context.obj([0, range[1], range[2], range[3] - 1]));
+    expect(s.run()).toBe('value-range-mismatch');
+    // The same holds when only the parsed prefix is at hand (no byte-level check).
+    expect(compareRevisions(s.before, s.after, s.opts)).toEqual({
+      ok: false,
+      detail: 'value-range-mismatch',
+    });
+  });
+
+  it('field-key-changed: the fill also moved the field', async () => {
+    const s = await step();
+    fieldDict(s.after, s.field).set(N('Rect'), s.after.doc.context.obj([0, 0, 600, 700]));
+    expect(s.run()).toBe('field-key-changed:/Rect');
+  });
+});
+
+describe('refusals that need the bytes or the earlier trailer', () => {
+  it('info-not-a-reference: the earlier trailer holds /Info as a direct dictionary', async () => {
+    const bytes = load('certified-p2-two-empty-fields-signed-once.pdf');
+    const [first, second] = rangeEnds(bytes);
+    const before = await loadRevision(bytes, first);
+    const after = await loadRevision(bytes, second);
+    (before.doc.context.trailerInfo as unknown as Record<string, unknown>).Info =
+      before.doc.context.obj({});
+    const result = compareRevisions(before, after, {
+      allowInfoRewrite: true,
+      certified: before,
+      certifiedFieldKeys: signatureFieldKeys(before.doc),
+    });
+    expect(result).toEqual({ ok: false, detail: 'info-not-a-reference' });
+  });
+
+  it('xref-unreadable: the certified revision does not end in startxref and %%EOF', async () => {
+    const bytes = load('certified-p2-empty-field.pdf');
+    const doc = await parse(bytes);
+    // Same length and same signature gap, so only the reader's entry point is broken.
+    const broken = Uint8Array.from(bytes);
+    const at = Buffer.from(bytes).lastIndexOf('%%EOF');
+    broken[at + 4] = 0x58; // %%EOX
+    expect(await analyzeRevisions(doc, broken)).toEqual({
+      ok: false,
+      reason: 'xref-unreadable',
+      detail: 'xref-no-startxref',
+    });
+  });
+});

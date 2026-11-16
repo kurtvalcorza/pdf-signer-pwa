@@ -10,6 +10,9 @@ import {
   PDFRef,
   PDFString,
 } from 'pdf-lib';
+import { checkRevisionXref, initialXrefState, refKey, sameBytes, serialize } from './xrefSections';
+
+export { refKey };
 
 /**
  * Signed revisions of a certified PDF (specs/004-certified-field-signing, research.md R1).
@@ -25,6 +28,11 @@ import {
  * field object differs, everything reachable from the catalog is unchanged except through that
  * field's own keys.
  *
+ * That argument holds for pdf-lib's view only. A conforming reader resolves objects through the
+ * cross-reference data, which pdf-lib never reads, so each later revision's xref section is also
+ * checked against that view (xrefSections.ts): the two must describe the same objects, or the
+ * document is refused.
+ *
  * Nothing here verifies a signature. The byte ranges come from the document; a lying range only
  * moves where a certification that no longer verifies appears to end (research.md, residual risk).
  */
@@ -38,9 +46,6 @@ export const MAX_FORM_NODES = 2000;
 const FILL_KEYS = new Set(['/AP', '/AS', '/V', '/F', '/DA', '/Q', '/Ff', '/Type']);
 
 const N = (s: string) => PDFName.of(s);
-
-export const refKey = (ref: { objectNumber: number; generationNumber: number }): string =>
-  `${ref.objectNumber} ${ref.generationNumber}`;
 
 /** Absent and null both mean "no value". */
 export const isEmptyValue = (v: PDFObject | undefined): boolean => v === undefined || v === PDFNull;
@@ -167,18 +172,6 @@ export function byteRangeEnd(value: PDFDict, bytes: Uint8Array): number | null {
   if (zero !== 0 || !(a < b) || b + c > bytes.length) return null;
   if (bytes[a] !== 0x3c || bytes[b - 1] !== 0x3e) return null;
   return b + c;
-}
-
-function serialize(o: PDFObject): Uint8Array {
-  const buf = new Uint8Array(o.sizeInBytes());
-  o.copyBytesInto(buf, 0);
-  return buf;
-}
-
-function sameBytes(a: Uint8Array, b: Uint8Array | undefined): boolean {
-  if (!b || a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
 }
 
 /** The document as it stood at the end of one signature's byte range. */
@@ -319,7 +312,7 @@ export function compareRevisions(
   }
   if (!opts.certifiedFieldKeys.has(rest[0])) return fail('field-not-certified');
   if (!existedAtCertification(opts.certified, ref, partialName(was) ?? undefined)) {
-    return fail('field-not-certified');
+    return fail('field-not-on-certified-page');
   }
 
   const valueRef = now.get(N('V'));
@@ -359,6 +352,7 @@ export type RevisionFailure =
   | 'too-many-revisions'
   | 'too-many-fields'
   | 'not-a-single-fill'
+  | 'xref-unreadable'
   | 'unreadable';
 
 export type RevisionAnalysis =
@@ -423,6 +417,10 @@ export async function analyzeRevisions(
 
     const certified = await loadRevision(bytes, ends[0]);
     const certifiedFieldKeys = signatureFieldKeys(certified.doc);
+    // The trailer a reader reaches for the certified revision must be the one pdf-lib took.
+    const initial = initialXrefState(bytes, certified);
+    if (!initial.ok) return { ok: false, reason: 'xref-unreadable', detail: initial.detail };
+    let xref = initial.state;
     const fills: string[] = [];
     let before = certified;
     for (let i = 1; i < ends.length; i++) {
@@ -434,6 +432,13 @@ export async function analyzeRevisions(
         bytes,
       );
       if (!step.ok) return { ok: false, reason: 'not-a-single-fill', detail: step.detail };
+      // The same step as a conforming reader sees it: through the cross-reference data.
+      const reader = checkRevisionXref(bytes, before, after, xref, {
+        fieldKey: refKey(step.field),
+        allowInfoRewrite: true,
+      });
+      if (!reader.ok) return { ok: false, reason: 'not-a-single-fill', detail: reader.detail };
+      xref = reader.state;
       fills.push(refKey(step.field));
       // Only consecutive revisions are compared; drop the older snapshot to bound memory.
       if (before !== certified) before.objects.clear();

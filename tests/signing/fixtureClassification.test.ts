@@ -6,14 +6,22 @@
  * Story 2 (tasks T028–T029: drawn-box refusal on every certified fixture, the node cap, cyclic
  * kids) build on this table.
  */
-import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { describe, it, expect, afterAll } from 'vitest';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPdf } from '../../src/features/viewer/loadPdf';
 import type { BlockReason, FieldIneligibleReason } from '../../src/features/signing/types';
 
-const POLICY = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/policy');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const POLICY = resolve(HERE, 'fixtures/policy');
+/**
+ * Every fixture the app classified `fill-only` in this run. The signature gate runs the pinned
+ * validator on each of these INPUTS: what the app is willing to sign into, the validator must
+ * accept as it stands (spec Assumption 1, tested on the input side; review finding R2).
+ */
+const FILL_ONLY_LIST = resolve(HERE, 'out/fill-only-inputs.json');
+const fillOnlyInputs: string[] = [];
 
 type Expected =
   | { kind: 'ok' }
@@ -69,6 +77,14 @@ const EXPECTED: Record<string, Expected> = {
   'certified-p2-later-annotation.pdf': blocked('changed-after-certification'),
   'certified-p3-later-annotation.pdf': blocked('changed-after-certification'),
   'certified-p3-annotation-then-fill.pdf': blocked('changed-after-certification'),
+  // R18 through the cross-reference data: invisible object by object (review finding R1).
+  // Signatures intact in all six; tests/unit/xrefSections.test.ts pins the exact reason.
+  'certified-p2-xref-duplicate-object.pdf': blocked('changed-after-certification'),
+  'certified-p2-xref-free-entry.pdf': blocked('changed-after-certification'),
+  'certified-p2-xref-generation-bump.pdf': blocked('changed-after-certification'),
+  'certified-p2-xref-hybrid.pdf': blocked('changed-after-certification'),
+  'certified-p2-xref-double-trailer.pdf': blocked('changed-after-certification'),
+  'certified-p2-xref-rewritten-object.pdf': blocked('changed-after-certification'),
 
   // R3 and the per-field rows.
   'certified-p2-empty-field-lock.pdf': noEligible({ Approver: 'locked' }), // R5
@@ -79,6 +95,14 @@ const EXPECTED: Record<string, Expected> = {
   'certified-p2-duplicate-names.pdf': noEligible({ Approver: 'bad-name' }), // R13
   'certified-p2-dotted-name.pdf': noEligible({ 'Approver.One': 'bad-name' }), // R13
   'certified-p2-inherited-v.pdf': noEligible({ 'Group.Approver': 'inherited-value' }), // R14
+  'certified-p2-shared-parent.pdf': noEligible({
+    'Group.Approver': 'shared-parent',
+    'Group.Witness': 'shared-parent',
+  }), // R14
+  'certified-p2-shared-appearance.pdf': noEligible({
+    Approver: 'shared-appearance',
+    Witness: 'shared-appearance',
+  }), // rule 8
   'certified-p2-widget-two-pages.pdf': noEligible({ Approver: 'on-several-pages' }), // R15
   'certified-p2-widget-oc.pdf': noEligible({ Approver: 'optional-content' }), // R16
   'certified-p2-readonly-field.pdf': noEligible({ Approver: 'read-only' }), // R16
@@ -88,6 +112,11 @@ const EXPECTED: Record<string, Expected> = {
 };
 
 describe('policy fixtures: what the app makes of each on open', () => {
+  afterAll(() => {
+    mkdirSync(dirname(FILL_ONLY_LIST), { recursive: true });
+    writeFileSync(FILL_ONLY_LIST, JSON.stringify(fillOnlyInputs.sort(), null, 2));
+  });
+
   it('has an expectation for every fixture file', () => {
     const files = readdirSync(POLICY).filter((f) => f.endsWith('.pdf'));
     expect(files.sort()).toEqual(Object.keys(EXPECTED).sort());
@@ -95,6 +124,7 @@ describe('policy fixtures: what the app makes of each on open', () => {
 
   it.each(Object.entries(EXPECTED))('%s', async (name, expected) => {
     const { signing } = await loadPdf(new Uint8Array(readFileSync(resolve(POLICY, name))));
+    if (signing.kind === 'fill-only') fillOnlyInputs.push(name);
     expect(signing.kind).toBe(expected.kind);
     if (signing.kind === 'ok' || expected.kind === 'ok') return;
 

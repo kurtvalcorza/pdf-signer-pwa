@@ -5,7 +5,12 @@ import { fileURLToPath } from 'node:url';
 import signpdf from '@signpdf/signpdf';
 import { P12Signer } from '@signpdf/signer-p12';
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRef } from 'pdf-lib';
-import { signIncremental, signIntoField } from '../../src/features/signing/signIncremental';
+import {
+  assertFillWellFormed,
+  checkFill,
+  signIncremental,
+  signIntoField,
+} from '../../src/features/signing/signIncremental';
 import {
   addIncrementalPlaceholder,
   reserveExistingObjectNumbers,
@@ -308,5 +313,95 @@ describe('negative controls for the gate (spec 004, FR-021)', () => {
 
     const info = await loadPdf(tampered);
     expect(info.signing).toMatchObject({ kind: 'blocked', reason: 'changed-after-certification' });
+  }, 40000);
+});
+
+describe('the fill check refuses an output that is not exactly one fill (FR-015)', () => {
+  let input: Uint8Array;
+  let output: Uint8Array;
+  let approver: PDFRef;
+  let witness: PDFRef;
+  const asRef = (f: CandidateField) => PDFRef.of(f.ref.objectNumber, f.ref.generationNumber);
+
+  beforeAll(async () => {
+    input = load('certified-p2-two-empty-fields.pdf');
+    const [first, second] = await eligibleFields(input);
+    approver = asRef(first);
+    witness = asRef(second);
+    output = await signIntoField(
+      input,
+      { imageBytes: PNG, format: 'png', fieldRef: first.ref },
+      cert,
+    );
+  }, 40000);
+
+  const rejects = async (bad: Uint8Array, ref: PDFRef, reason: string | RegExp) => {
+    expect(await checkFill(input, bad, ref)).toMatch(reason);
+    await expect(assertFillWellFormed(input, bad, ref)).rejects.toThrow(
+      /no signed file was produced/,
+    );
+  };
+
+  it('accepts the real output', async () => {
+    expect(await checkFill(input, output, approver)).toBeNull();
+    await expect(assertFillWellFormed(input, output, approver)).resolves.toBeUndefined();
+  });
+
+  it('nothing-appended', async () => {
+    await rejects(input, approver, /^nothing-appended$/);
+  });
+
+  it('input-bytes-changed', async () => {
+    const bad = Uint8Array.from(output);
+    bad[100] ^= 0x01;
+    await rejects(bad, approver, /^input-bytes-changed$/);
+  });
+
+  it('another-field-changed: the output fills a field other than the one asked for', async () => {
+    await rejects(output, witness, /^another-field-changed$/);
+  });
+
+  it('signature-declares-a-transform: the new signature carries a /Reference', async () => {
+    // Same length, so every offset in the appended section still holds.
+    const text = Buffer.from(output).toString('latin1');
+    const at = text.lastIndexOf('/Reason (Digitally signed)');
+    expect(at).toBeGreaterThan(input.length);
+    const swapped = '/Reference [' + ' '.repeat('/Reason (Digitally signed)'.length - 13) + ']';
+    const bad = new Uint8Array(
+      Buffer.from(text.slice(0, at) + swapped + text.slice(at + swapped.length), 'latin1'),
+    );
+    expect(bad.length).toBe(output.length);
+    await rejects(bad, approver, /^signature-declares-a-transform$/);
+  });
+
+  it('an object freed through the appended xref section', async () => {
+    // Turn the object-0 row of the appended table into a second row for object 1 (the catalog),
+    // marked free: same bytes otherwise.
+    const text = Buffer.from(output).toString('latin1');
+    const at = text.lastIndexOf('xref\n0 1\n');
+    expect(at).toBeGreaterThan(input.length);
+    const bad = new Uint8Array(
+      Buffer.from(text.slice(0, at) + 'xref\n1 1\n' + text.slice(at + 9), 'latin1'),
+    );
+    await rejects(bad, approver, /^xref-free-entry:1$/);
+  });
+
+  it('a second fill on top of the first is checked against the first, not the original', async () => {
+    const second = await signIntoField(
+      output,
+      {
+        imageBytes: PNG,
+        format: 'png',
+        fieldRef: {
+          objectNumber: witness.objectNumber,
+          generationNumber: witness.generationNumber,
+        },
+      },
+      cert,
+    );
+    expect(await checkFill(output, second, witness)).toBeNull();
+    // Against the original input the same bytes are two fills, not one.
+    expect(await checkFill(input, second, witness)).toMatch(/^changed-objects:/);
+    writeFileSync(resolve(OUT, 'fill-chain-two-fields.pdf'), second);
   }, 40000);
 });

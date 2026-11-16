@@ -26,6 +26,7 @@ import {
   signatureFieldKeys,
   walkFormNodes,
 } from './revisions';
+import { checkRevisionXref, initialXrefState } from './xrefSections';
 
 /**
  * Tier B — a subsequent cryptographic signature added as a BYTE-LEVEL INCREMENTAL
@@ -264,25 +265,29 @@ function updateMalformed(): Error {
 }
 
 /**
- * FR-015: re-read the signed output and compare it with the input object by object.
+ * FR-015: re-read the signed output and compare it with the input, object by object AND through
+ * the cross-reference data. Returns null when the output is exactly one fill of `fieldRef`, else
+ * a short reason.
  *
- * Required, or no output leaves here: the input is a byte prefix of the output; the set of form
- * nodes is unchanged; exactly one pre-existing object differs and it is the picked field; that
- * field changed only in the fill keys and now holds a NEW signature dictionary whose byte range
- * ends at the end of the file; that dictionary declares no /Reference (it is an approval
- * signature, not a certification or a lock); the trailer still names the same catalog and /Info.
- * Every page's /Annots, the form and the catalog are pre-existing objects (or live inside one),
- * so "no other object differs" covers them.
+ * Required: the input is a byte prefix of the output; exactly one pre-existing object differs
+ * and it is the picked field; that field changed only in the fill keys and now holds a NEW
+ * signature dictionary whose byte range ends at the end of the file; that dictionary declares no
+ * /Reference (an approval signature, not a certification or a lock); the trailer still names the
+ * same catalog and /Info; the appended bytes are one cross-reference section that lists exactly
+ * the objects compared, frees nothing and re-defines no other existing object number
+ * (xrefSections.ts); the set of form nodes is unchanged. Every page's /Annots, the form and the
+ * catalog are pre-existing objects (or live inside one), so "no other object differs" covers
+ * them.
  */
-export async function assertFillWellFormed(
+export async function checkFill(
   input: Uint8Array,
   output: Uint8Array,
   fieldRef: PDFRef,
-): Promise<void> {
+): Promise<string | null> {
   try {
-    if (output.length <= input.length) throw new Error('nothing appended');
+    if (output.length <= input.length) return 'nothing-appended';
     for (let i = 0; i < input.length; i++) {
-      if (output[i] !== input[i]) throw new Error('input bytes changed');
+      if (output[i] !== input[i]) return 'input-bytes-changed';
     }
     const before = await loadRevision(input);
     const after = await loadRevision(output);
@@ -296,19 +301,39 @@ export async function assertFillWellFormed(
       },
       output,
     );
-    if (!result.ok) throw new Error(result.detail);
-    if (refKey(result.field) !== refKey(fieldRef)) throw new Error('another field changed');
+    if (!result.ok) return result.detail;
+    if (refKey(result.field) !== refKey(fieldRef)) return 'another-field-changed';
+
+    const initial = initialXrefState(input, before);
+    if (!initial.ok) return initial.detail;
+    const reader = checkRevisionXref(output, before, after, initial.state, {
+      fieldKey: refKey(fieldRef),
+      allowInfoRewrite: false,
+    });
+    if (!reader.ok) return reader.detail;
 
     const nodeKeys = (doc: PDFDocument) =>
       walkFormNodes(doc)
         .nodes.map((n) => (n.ref ? refKey(n.ref) : 'direct'))
         .join(',');
-    if (nodeKeys(before.doc) !== nodeKeys(after.doc)) throw new Error('field set changed');
+    if (nodeKeys(before.doc) !== nodeKeys(after.doc)) return 'field-set-changed';
 
     const field = after.doc.context.lookup(fieldRef, PDFDict);
     const value = field.lookup(PDFName.of('V'), PDFDict);
-    if (value.has(PDFName.of('Reference'))) throw new Error('signature declares a transform');
+    if (value.has(PDFName.of('Reference'))) return 'signature-declares-a-transform';
+    return null;
   } catch {
+    return 'unreadable-output';
+  }
+}
+
+/** Throws, so that no output leaves `signIntoField`, unless `checkFill` finds nothing. */
+export async function assertFillWellFormed(
+  input: Uint8Array,
+  output: Uint8Array,
+  fieldRef: PDFRef,
+): Promise<void> {
+  if ((await checkFill(input, output, fieldRef)) !== null) {
     throw new Error(
       'The signature could not be added to the chosen field without changing another part of ' +
         'this certified PDF, so no signed file was produced.',
