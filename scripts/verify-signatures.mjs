@@ -116,10 +116,21 @@ const violations = [
 ].map((f) => resolve(POLICY, f));
 if (run(PY, [VALIDATOR, '--expect-policy-violation', ...violations]) !== 0) process.exit(1);
 
-// These two the validator will not even read in strict mode; the app refuses them as well.
+// These the validator will not even read in strict mode; the app refuses them as well.
 // They must never validate.
 console.log('› Malformed cross-reference data must not validate…');
-for (const f of ['certified-p2-xref-generation-bump.pdf', 'certified-p2-xref-hybrid.pdf']) {
+for (const f of [
+  'certified-p2-xref-generation-bump.pdf',
+  'certified-p2-xref-hybrid.pdf',
+  // Single signed sections (review round 2): a repeated dictionary key, a wrong /Size, a
+  // predictor the rows were not written with.
+  'certified-p2-signed-xref-repeated-key-field.pdf',
+  'certified-p2-signed-xref-repeated-key-root.pdf',
+  'certified-p2-signed-xref-repeated-key-prev.pdf',
+  'certified-p2-signed-xref-size-low.pdf',
+  'certified-p2-signed-xref-size-short.pdf',
+  'certified-p2-signed-xref-decode-parms.pdf',
+]) {
   if (run(PY, [VALIDATOR, resolve(POLICY, f)]) === 0) {
     console.error(`✗ ${f} wrongly validated`);
     process.exit(1);
