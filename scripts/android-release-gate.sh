@@ -7,7 +7,8 @@
 # 1. The emulator's WebView major must equal android/VALIDATED_WEBVIEW. That file is the floor the
 #    app reports as validated (R11), so the gate must have run on exactly that engine. A newer
 #    system image fails here on purpose: re-validate, then update the file in its own commit.
-# 2. scripts/android-gate.mjs with the release flag set (C8, C10-C12, US1-US3, large files).
+# 2. scripts/android-gate.mjs with the release flag set (C8, C10-C12, US1-US3, large files, and
+#    spec 004's certified-field signing validated at FORM_FILLING).
 set -euo pipefail
 
 apk="${1:?usage: android-release-gate.sh <signed-release.apk>}"
@@ -25,4 +26,4 @@ if [ "$have" != "$want" ]; then
   exit 1
 fi
 
-node scripts/android-gate.mjs "$apk" --adb "$adb_bin" --network-on --backup --large
+node scripts/android-gate.mjs "$apk" --adb "$adb_bin" --network-on --backup --large --certified-field

@@ -68,13 +68,25 @@ jobs:
           node-version: 22
           cache: npm
 
+      # tests/e2e/us7-certified-field.spec.ts validates its download with pyHanko (spec 004).
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Install pyHanko (signature validator)
+        run: pip install --require-hashes -r scripts/requirements-verify.txt
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
       - name: E2E (signing flows)
+        # Spec 004 T038: a missing pyHanko fails the certified-field validator step instead of
+        # skipping it.
+        env:
+          REQUIRE_PYHANKO: '1'
         run: npm run e2e
 
       # Offline/installability runs against the production build (service worker
@@ -129,10 +141,18 @@ jobs:
 
       - name: Desktop E2E [Linux, xvfb]
         if: runner.os == 'Linux'
+        # Spec 004 T038: a missing pyHanko fails the certified-field validator step instead of
+        # skipping it.
+        env:
+          REQUIRE_PYHANKO: '1'
         run: xvfb-run -a npm run e2e:desktop
 
       - name: Desktop E2E [Windows]
         if: runner.os == 'Windows'
+        # Spec 004 T038: a missing pyHanko fails the certified-field validator step instead of
+        # skipping it.
+        env:
+          REQUIRE_PYHANKO: '1'
         run: npm run e2e:desktop
 
       # Issue #33: the release binary has the Node inspector fuse off; the gate-only probe (same dist/,
