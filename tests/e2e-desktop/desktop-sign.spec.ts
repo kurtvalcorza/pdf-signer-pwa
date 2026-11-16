@@ -104,11 +104,18 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
  */
 test('desktop: signs a certified PDF in its prepared field, classed as form filling', async () => {
   const testInfo = test.info();
+  // Its own data dir, so this run neither reads nor writes the shared per-user app data.
+  const portableDir = mkdtempSync(join(tmpdir(), 'pdfsigner-portable-'));
   const downloadDir = mkdtempSync(join(tmpdir(), 'pdfsigner-dl-'));
   const app = await electron.launch({
     args: [MAIN],
     cwd: ROOT,
-    env: { ...process.env, PDFSIGNER_HEADLESS: '1', PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir },
+    env: {
+      ...process.env,
+      PDFSIGNER_HEADLESS: '1',
+      PORTABLE_EXECUTABLE_DIR: portableDir,
+      PDFSIGNER_E2E_DOWNLOAD_DIR: downloadDir,
+    },
   });
   try {
     const page = await app.firstWindow();
@@ -194,6 +201,7 @@ test('desktop: signs a certified PDF in its prepared field, classed as form fill
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   } finally {
     await app.close();
+    rmSync(portableDir, { recursive: true, force: true });
     rmSync(downloadDir, { recursive: true, force: true });
   }
 });
