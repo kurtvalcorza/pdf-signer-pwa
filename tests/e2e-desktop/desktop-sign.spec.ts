@@ -127,11 +127,11 @@ test('desktop: layer-5 no-phone-home switches are set (not just crashReporter ab
     // A build-time/runtime assertion: a live run that happens to make no request proves nothing about
     // whether these are set. Read them directly from the command line (network-policy.md § layer 5).
     const set = await app.evaluate(({ app: a }) =>
-      ['disable-background-networking', 'disable-component-update', 'disable-domain-reliability', 'disable-breakpad'].map(
+      ['disable-background-networking', 'disable-component-update', 'disable-domain-reliability', 'disable-breakpad', 'no-proxy-server'].map(
         (s) => a.commandLine.hasSwitch(s),
       ),
     );
-    expect(set).toEqual([true, true, true, true]);
+    expect(set).toEqual([true, true, true, true, true]);
   } finally {
     await app.close();
   }

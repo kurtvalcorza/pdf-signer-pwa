@@ -73,7 +73,9 @@ None of these are your documents, certificates, or signatures.
 
 ## No self-update
 
-This build **does not update itself**. These builds **never contact a network**. There is no update
+This build **does not update itself**. These builds **never contact a network**. That includes
+proxy autodiscovery: the app starts with `no-proxy-server`, so it does not look up `wpad` in DNS
+(found and fixed in issue #23). There is no update
 feed to misconfigure — the guarantee is the *absence* of one. A build past ~180 days shows a passive,
 offline notice that its bundled browser engine is ageing and a newer build should be fetched
 manually; it makes **zero** network requests to do so.
