@@ -46,6 +46,8 @@ const EXPECTED: Record<string, Expected> = {
   'certified-p3-empty-field.pdf': { kind: 'fill-only', fields: ['Approver'] },
   'certified-p2-empty-field-xref-stream.pdf': { kind: 'fill-only', fields: ['Approver'] },
   'certified-p2-empty-field-rotated-page.pdf': { kind: 'fill-only', fields: ['Approver'] },
+  // Field /AA JavaScript actions: signable; the preview runs no script (T030, research.md R7).
+  'certified-p2-empty-field-aa-javascript.pdf': { kind: 'fill-only', fields: ['Approver'] },
   'certified-p2-two-empty-fields.pdf': { kind: 'fill-only', fields: ['Approver', 'Witness'] },
   // A first fill by another tool (pyHanko), then the remaining field (rule 5d, C1).
   'certified-p2-two-empty-fields-signed-once.pdf': { kind: 'fill-only', fields: ['Witness'] },
@@ -63,6 +65,8 @@ const EXPECTED: Record<string, Expected> = {
   'certified-p3.pdf': blocked('certified-no-empty-field'),
   'certified-p2-xref-stream.pdf': blocked('certified-no-empty-field'),
   'certified-p2-empty-field-signed-once.pdf': blocked('certified-no-empty-field'),
+  // R7: a transform this app does not recognise (UR3), on an uncertified document.
+  'approval-unknown-transform.pdf': blocked('unknown-policy'),
   // R4.
   'fieldmdp-all.pdf': blocked('field-locked'),
   'certified-p2-fieldmdp-approval.pdf': blocked('field-locked'),
