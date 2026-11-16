@@ -371,8 +371,9 @@ The 18 (the grouping below is from reading the code, not from a further run):
   the same reason); `xref-offset` for an offset outside the revision (the header check after it
   refuses); the R8 consistency check and the 2,000-node cap in `classifySigning` (the revision
   analysis repeats both); `/MK` that is not a dictionary (the next line refuses).
-- *Redundant by construction* (4): `xref-unlisted-object` and the final `xref-offset` sweep
-  (the header scan already forces both); `field-set-changed` in `checkFill` (the form is a
+- *Redundant by construction* (4; corrected in R11: the first two were NOT redundant at this
+  point, they were untested, because the header scan could not see a header glued to `endobj`):
+  `xref-unlisted-object` and the final `xref-offset` sweep; `field-set-changed` in `checkFill` (the form is a
   pre-existing object, so the object comparison refuses first); `added-after-certification`
   (a late field always arrives in a revision rule 5d refuses first, see R9).
 - *Catch-all handlers* (3): the `catch` blocks that turn a thrown error
@@ -382,3 +383,97 @@ Line-level list: scratchpad `new/survivors-*.json` of the build session; not com
 
 **Gates after the round [run].** lint 0, tsc 0, vitest 0 (366 passed in 20 files),
 `npm run verify:signatures` 0, `npm run e2e` 0 (21 passed).
+
+## R11 — Second review round: what two readers can disagree on (2026-11-16)
+
+**Finding (P1, reproduced by the reviewer and by the orchestrator).** The R10 check compared two
+views that are both pdf-lib's: the document parse and `PDFObjectParser` each keep the LAST value
+of a repeated dictionary key. ISO 32000-1 7.3.7 leaves that value undefined, and other readers
+keep the first. Three single-section, validly signed fill revisions were classified fill-only
+while the validator refused to read them: `/Root` twice in the reached trailer (a first-wins
+reader opens a different document), `/Prev` twice (it skips the certified section), `/Rect`
+twice in the field (the widget covers the page). Two more gaps had the same effect: a trailer
+`/Size` that makes a reader ignore objects (P2), and a cross-reference stream with
+`/DecodeParms`, which pdf-lib inflates without applying the predictor (P2).
+
+**Fix, all in `src/features/signing/xrefSections.ts`.**
+
+- *Repeated keys (S1).* `makeStrict` gives a pdf-lib object parser a `parseDict` that throws on
+  a key it has already seen, at any depth; `PDFName` is interned after `#xx` decoding, so
+  `/#52ect` and `/Rect` collide. It is used for the reached trailer and every listed definition
+  of every later revision, and `findRepeatedKeys` runs it over every object of a certified file,
+  objects inside object streams included. That is how the objects a decision reads in the
+  certified revision (catalog, `/Perms`, form, fields, widgets, pages) are covered: all objects
+  are checked, not a chosen few. Inside the certified bytes a repeated key reports
+  `unreadable-policy`; after them, `changed-after-certification`. An object stream that cannot
+  be read strictly is refused, because what it holds was never checked.
+- *`/Size` (S2).* Must be an integer equal to the section's highest listed object number plus
+  one (pyHanko's strict rule), and not below the previous revision's.
+- *Cross-reference stream filters (S3).* `/DecodeParms`, or any `/Filter` other than a plain
+  `/FlateDecode` name, is refused in a later revision. Predictors are not implemented.
+- *Glued headers (S4).* The header scan now tries every digit run, so `endobj3 0 obj` is seen.
+  An unlisted object stream or cross-reference stream therefore fails `xref-unlisted-definition`.
+- *Number ranges (S5).* Object numbers above 8388607 and generations above 65535 are refused.
+
+**Fixtures: one hand-written fill revision, signed again.** `make_policy_fixtures.py` now
+rebuilds pyHanko's fill of `Approver` as a single cross-reference section, changes one thing and
+signs it (SHA-256 over the new byte range, CMS from the fixture signer), so every signature in
+these files verifies. This is the shape R10 said could not be produced.
+
+| Fixture (`certified-p2-signed-xref-…`) | Validator (default mode) [run] | App [run] |
+| :-- | :-- | :-- |
+| `control.pdf` (classic table) | exit 0 | fill-only, `Witness` |
+| `control-xref-stream.pdf` | exit 0 | fill-only, `Witness` |
+| `repeated-key-field.pdf` | exit 1, "Multiple definitions in dictionary … /Rect" | blocked, `repeated-key:6` |
+| `repeated-key-root.pdf` | exit 1, same for `/Root` | blocked, `repeated-key` |
+| `repeated-key-prev.pdf` | exit 1, same for `/Prev` | blocked, `repeated-key` |
+| `size-low.pdf` (`/Size 3`) | exit 1, "Xref table size mismatch" | blocked, `xref-size` |
+| `size-short.pdf` (one short) | exit 1, size mismatch | blocked, `xref-size` |
+| `decode-parms.pdf` | exit 1 (reader error) | blocked, `xref-stream-filter` |
+| `glued-definitions.pdf` | **exit 0** | blocked, `xref-unlisted-definition:3` |
+
+`glued-definitions.pdf` is the one case where the validator passes and the app refuses: the
+glued definitions are unlisted, so no reader that follows the xref reaches them. The app refuses
+because pdf-lib does read them, and the two views then differ. The gate cannot list it as a
+validator failure; the classification test pins the app's refusal.
+
+**Rulings recorded (orchestrator, following the reviewer).**
+
+- *Object streams after certification stay refused* (xref entries of type 2). A fill by a
+  producer that compresses objects is refused until a real fixture exists.
+- *A pre-existing object re-emitted unchanged stays refused*, although pyHanko accepts it.
+- *The certified revision's own cross-reference entries are not checked.* A file-order versus
+  xref disagreement inside the bytes the certifier signed is accepted as residual risk (threat
+  T8): the app reads those bytes as pdf-lib does, the certification covers them either way, and
+  repeated keys in them are refused by `findRepeatedKeys`. What is not caught is a certified
+  revision that itself holds two definitions of one object.
+
+**Known over-refusals (S7; all fail closed, none fixed).**
+
+1. A certified revision that is a linearized full save: its final `startxref` names the
+   first-page section, whose trailer is not followed by that `startxref`, so the document is
+   `unreadable-policy` even with no fill after it.
+2. Any byte after the last signature's range, a trailing newline or comment included, is a
+   change after certification.
+3. The words `trailer` or `startxref` anywhere in a later revision's bytes (a `/Reason` or
+   `/Name` string, appearance text) refuse an honest fill.
+4. A fill trailer that omits `/Info` while an earlier one had it, because pdf-lib inherits the
+   earlier value and a reader does not.
+5. A later revision whose cross-reference stream uses a predictor (qpdf, Acrobat and most
+   writers other than pyHanko), or whose objects sit in an object stream.
+6. A fill whose `/Size` is larger than its highest object number plus one, and a table whose
+   rows are not exactly 20 bytes.
+7. A header-looking byte run (`12 0 obj`) inside a string or stream of a later revision.
+
+**Guard tests (S6).** Added: a subsection header and its first row on one line; an unlisted
+object glued to `endobj`; a listed one (accepted, both views agree); an altered copy plus the
+original, both glued. A mutation rerun over `xrefSections.ts` with the current tests: 55 guards,
+44 produce a failing test, 11 do not. The 11, grouped by reading the code: two table-format and
+four stream-format checks that a later format check repeats with the same reason; the two
+`xref-number-range` checks, each of which the other repeats; `xref-offset` for an offset outside
+the revision (the header check after it refuses); and the final `xref-offset` sweep and
+`xref-unlisted-object`, which the header scan, now complete, shadows.
+
+**Gates after the round [run]** on `6e2f83c` (rebased onto `origin/main` `47b26e8`): lint 0,
+tsc 0, vitest 0 (401 passed in 20 files), `npm run verify:signatures` 0 (9 fill-only
+inputs validated, 8 fixtures that must not validate), `npm run e2e` 0 (21 passed).

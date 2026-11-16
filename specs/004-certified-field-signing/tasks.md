@@ -103,6 +103,12 @@ hand-built fixtures were added, the gate validates every input the app classifie
 and each guard has a test that names it. Details and the mutation check are in
 [research.md](research.md) R10. T028 and T031 stay unticked.
 
+**Second review round, 2026-11-16 (one P1, two P2, four P3).** Repeated dictionary keys, a
+wrong trailer `/Size` and cross-reference streams with a predictor are now refused, object
+headers glued to `endobj` are seen, and nine fixtures hold one hand-written fill revision that
+is signed again, so the gate tests the single-section shape with intact signatures. See
+[research.md](research.md) R11.
+
 ---
 
 ## Phase 4: User Story 2 - Understand why a certified PDF or a field cannot be signed (Priority: P1)

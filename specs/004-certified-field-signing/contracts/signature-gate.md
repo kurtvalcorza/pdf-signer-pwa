@@ -26,6 +26,9 @@ Exit 0 iff, for every file:
 | Every fixture the app classifies `fill-only` (the INPUT, listed by the classification tests in `tests/signing/out/fill-only-inputs.json`) | default: what the app will sign into, the validator must accept as it stands |
 | `certified-p2-xref-duplicate-object.pdf`, `certified-p2-xref-free-entry.pdf`, `certified-p2-xref-double-trailer.pdf` | `--expect-policy-violation` |
 | `certified-p2-xref-generation-bump.pdf`, `certified-p2-xref-hybrid.pdf` | must not validate in the default mode (the validator refuses to read them) |
+| `certified-p2-signed-xref-repeated-key-field.pdf`, `-repeated-key-root.pdf`, `-repeated-key-prev.pdf`, `-size-low.pdf`, `-size-short.pdf`, `-decode-parms.pdf` | must not validate in the default mode |
+| `certified-p2-signed-xref-control.pdf`, `-control-xref-stream.pdf` | fill-only for the app, so validated as inputs (first row) |
+| `certified-p2-signed-xref-glued-definitions.pdf` | none: the validator passes it and the app refuses it (research.md R11) |
 | pyHanko's own fill of `certified-p2-empty-field-kid-widget.pdf` and of `certified-p2-late-visible-field.pdf` (written to a temp dir by the gate) | `--expect-policy-violation` |
 
 The gate fails if any of these lists is empty (no vacuous pass), as it already does for the
