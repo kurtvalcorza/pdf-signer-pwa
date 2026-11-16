@@ -2,7 +2,7 @@
 // Electron binary with @electron/fuses and fails unless it matches the expected set exactly. The
 // config (electron-builder*.yml) is what we asked for; only the binary is what ships.
 //
-//   node scripts/check-fuses.mjs --release <exe> [--probe <exe>]
+//   node scripts/check-fuses.mjs --release <exe> --probe <exe>   (both required; exit 2 = usage)
 //
 // --release: every fuse must hold its hardened value (HARDENED below), the inspector included.
 // --probe:   the gate-only probe build (electron-builder.probe.yml). Identical to HARDENED except
@@ -24,11 +24,14 @@ const { FuseV1Options, getCurrentFuseWire } = fuses;
 const DISABLED = 48; // the fuse wire stores ASCII '0' and '1'
 const ENABLED = 49;
 
-// The hardened set. Every fuse @electron/fuses knows is listed, so a new one cannot slip in unlisted
-// (the loop below fails on a fuse this table does not name).
+// The release set. Every fuse @electron/fuses knows is listed, so a new one cannot slip in unlisted
+// (the loop below fails on a fuse this table does not name). All are hardened except
+// EnableCookieEncryption, kept at Electron's default (off) as on main: turning it on is a separate
+// follow-up (on Linux it may create a desktop-keyring entry; unverified). Asar integrity validation
+// is burned on, but Electron enforces it on Windows (and macOS) only, not on Linux.
 export const HARDENED = {
   RunAsNode: DISABLED, // ELECTRON_RUN_AS_NODE would turn the binary into a plain Node runtime
-  EnableCookieEncryption: ENABLED, // the app sets no cookies; encrypt any that appear, at rest
+  EnableCookieEncryption: DISABLED, // Electron default; the app sets no cookies (follow-up to harden)
   EnableNodeOptionsEnvironmentVariable: DISABLED, // NODE_OPTIONS could --require arbitrary code
   EnableNodeCliInspectArguments: DISABLED, // --inspect would attach a debugger to the main process
   EnableEmbeddedAsarIntegrityValidation: ENABLED, // Windows checks app.asar against its embedded hash
@@ -85,7 +88,13 @@ const listFiles = (root, dir = root) =>
 /** Throws unless the two app folders differ only by one byte of the main binary. */
 export function assertOnlyFuseByteDiffers(releaseExe, probeExe) {
   const [ra, rb] = [dirname(releaseExe), dirname(probeExe)];
-  const [fa, fb] = [listFiles(ra).sort(), listFiles(rb).sort()];
+  // The release's Windows portable target adds electron-builder's UAC helper next to the app; the
+  // probe builds only the unpacked folder. It is the one file allowed on the release side alone.
+  const releaseOnly = new Set([join('resources', 'elevate.exe')]);
+  const all = listFiles(ra).sort();
+  const extra = all.filter((f) => releaseOnly.has(f));
+  if (extra.length) console.log(`[fuses] release-only, allowed by name: ${extra.join(', ')}`);
+  const [fa, fb] = [all.filter((f) => !releaseOnly.has(f)), listFiles(rb).sort()];
   if (JSON.stringify(fa) !== JSON.stringify(fb)) {
     const only = (x, y) => x.filter((f) => !y.includes(f));
     throw new Error(
@@ -114,24 +123,35 @@ export function assertOnlyFuseByteDiffers(releaseExe, probeExe) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2);
-  const opt = (flag) => {
-    const i = args.indexOf(flag);
-    return i >= 0 && args[i + 1] ? resolve(args[i + 1]) : undefined;
-  };
-  const release = opt('--release');
-  const probe = opt('--probe');
-  if (!release && !probe) {
-    console.error('usage: node scripts/check-fuses.mjs --release <exe> [--probe <exe>]');
+  // Strict: exactly --release <exe> --probe <exe>, each with a non-empty value naming an existing
+  // file. Anything else is a usage error (exit 2), so an empty CI matrix value cannot pass by
+  // silently checking less.
+  const usage = (why) => {
+    console.error(`[fuses] usage error: ${why}`);
+    console.error('usage: node scripts/check-fuses.mjs --release <exe> --probe <exe>');
     process.exit(2);
+  };
+  const args = process.argv.slice(2);
+  const paths = {};
+  for (let i = 0; i < args.length; i += 2) {
+    const [flag, value] = [args[i], args[i + 1]];
+    if (flag !== '--release' && flag !== '--probe')
+      usage(`unknown argument ${JSON.stringify(flag)}`);
+    if (flag in paths) usage(`${flag} given twice`);
+    if (value === undefined || value.trim() === '' || value.startsWith('--'))
+      usage(`${flag} needs a non-empty path`);
+    paths[flag] = resolve(value);
   }
+  for (const flag of ['--release', '--probe']) {
+    if (!paths[flag]) usage(`${flag} is required`);
+    if (!existsSync(paths[flag])) usage(`${flag} ${paths[flag]} does not exist`);
+  }
+  const { '--release': release, '--probe': probe } = paths;
   try {
-    if (release) await assertFuses(release, HARDENED, 'release');
-    if (probe) await assertFuses(probe, PROBE, 'probe');
-    if (release && probe) {
-      assertSameAsar(release, probe);
-      assertOnlyFuseByteDiffers(release, probe);
-    }
+    await assertFuses(release, HARDENED, 'release');
+    await assertFuses(probe, PROBE, 'probe');
+    assertSameAsar(release, probe);
+    assertOnlyFuseByteDiffers(release, probe);
   } catch (e) {
     console.error(e.message);
     process.exit(1);

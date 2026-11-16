@@ -14,12 +14,15 @@ extends: electron-builder.yml
 directories:
   output: release-probe
 artifactName: ${name}-GATE-PROBE-not-for-release-${version}-${arch}.${ext}
+# Repeated, not inherited: the probe has no update feed and nothing to publish to. The build command
+# also passes --publish never.
+publish: null
 # Repeated in full rather than inherited, so the probe's fuse set does not depend on how `extends`
 # merges nested keys. check-fuses.mjs fails if this ever differs from the release by more than the
 # inspector.
 electronFuses:
   runAsNode: false
-  enableCookieEncryption: true
+  enableCookieEncryption: false
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: true
   enableEmbeddedAsarIntegrityValidation: true

@@ -48,7 +48,8 @@ into the task mapping.
 ```text
 build (per platform): the release build, then the gate-only PROBE build of the same dist/
    ├─> FUSES: read the burned wire of BOTH binaries (scripts/check-fuses.mjs):
-   │     release = all 8 hardened (Node inspector OFF); probe = release + inspector ON;
+   │     release = hardened (Node inspector OFF; cookie encryption left at
+   │     Electron's default, off — separate follow-up); probe = release + inspector ON;
    │     same app.asar SHA-256, and the two app folders differ in exactly
    │     ONE byte of the main binary (the inspector fuse)                 [issue #33, RFC 23-2 B3 (b)]
    ├─> launch the packaged PROBE via Playwright (_electron.launch)
@@ -106,7 +107,12 @@ Non-negotiable rules:
   demonstrate is the release binary running with that fuse off; per Electron's fuse documentation the
   fuse decides only whether the `--inspect` family of switches (and SIGUSR1) can start the
   main-process inspector. The release workflow also fails if any `GATE-PROBE` file
-  reaches the release assets.
+  reaches the release assets, and the build job refuses an upload that sits under `release-probe/`
+  or is byte-identical to a probe file.
+- **Limits of the fuse gate.** The release workflow reads the fuses from inside the shipped files:
+  the unpacked portable `.exe` (7-Zip) on Windows and the extracted AppImage on Linux. PR CI reads
+  the `--dir` folders only, because it builds no portable or AppImage. The asar integrity fuse is burned on both platforms but Electron enforces it on Windows only; on
+  Linux it has no effect (the AppImage's own squashfs is the only integrity boundary).
 - **No partial releases.** If either platform's gate is red, neither publishes (SC-002). Shipping one
   while the other is broken would imply an equivalence never demonstrated. The user stories'
   "independently shippable" framing means independently **buildable and testable** — never

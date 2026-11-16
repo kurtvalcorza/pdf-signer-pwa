@@ -143,7 +143,7 @@ jobs:
           set -euo pipefail
           node scripts/gen-build-info.mjs
           npx electron-builder --config electron-builder.yml --dir
-          npx electron-builder --config electron-builder.probe.yml --dir
+          npx electron-builder --config electron-builder.probe.yml --dir --publish never
 
       - name: Fuse state — release hardened, probe = release + inspector only
         shell: bash

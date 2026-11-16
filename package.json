@@ -22,7 +22,7 @@
     "verify:signatures": "node scripts/verify-signatures.mjs",
     "audit:gate": "npm audit --omit=dev --audit-level=high",
     "perf": "npm run build && playwright test --config playwright.perf.config.ts",
-    "build:desktop:probe": "electron-builder --config electron-builder.probe.yml",
+    "build:desktop:probe": "electron-builder --config electron-builder.probe.yml --publish never",
     "check:fuses": "node scripts/check-fuses.mjs"
   },
   "dependencies": {
