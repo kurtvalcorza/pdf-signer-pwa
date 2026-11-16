@@ -251,7 +251,7 @@ not needed. The same holds for the xref-stream and the rotated-page fixtures.
   new catalog. `compareRevisions` now also requires the same `/Root` reference in both revisions
   and no `/Encrypt`, and treats `/Info` as C1 decided: the same reference rewritten, or a new
   object, and in both cases a dictionary of direct strings and names only. Anything else refuses.
-- **F6 — open: deletions through the cross-reference table are invisible to pdf-lib.** pdf-lib
+- **F6 — closed by R10 (it was wider than first recorded).** Originally: deletions through the cross-reference table are invisible to pdf-lib. pdf-lib
   reads objects in file order and ignores the xref, so a later revision that marks an object free
   (for example an annotation) changes what Acrobat and pyHanko see but not what the app compares.
   pyHanko reports such a revision as a violation; the app would still offer the field. The result
@@ -286,3 +286,99 @@ not needed. The same holds for the xref-stream and the rotated-page fixtures.
   `REQUIRE_PYHANKO` is set. T038 must set it in CI, or the web E2E proves less there than here.
 - A `/V` that is present but is not a signature dictionary makes the field "not empty", so it is
   never offered. Listing it as an ineligible field with its own reason is left to T029.
+
+## R10 — Review round: rule 5d through the cross-reference data (2026-11-16)
+
+**Finding (P1, reproduced by the reviewer and by the orchestrator).** Rule 5d compared pdf-lib's
+file-order object graph and never read the cross-reference data. A conforming reader does the
+opposite: it starts at the last `startxref`, and an object is whatever the xref says it is. So a
+change expressed only through the xref was invisible: an object marked free, a second definition
+the xref points at while pdf-lib keeps the last one, a new generation of an old number, a
+trailer the reader never reaches. On such files the certification still verified and pyHanko
+reported its policy as violated, while the app offered the remaining field and signed. That is
+not Assumption 2's residual risk; it is what FR-008 exists to refuse.
+
+**Fix.** `src/features/signing/xrefSections.ts`, called for every signed revision after the
+certification (`analyzeRevisions`) and for the app's own output (`checkFill`, FR-015). It reads
+the one section a reader reaches from the revision's final `startxref` and requires that view
+and pdf-lib's to describe the same objects:
+
+- exactly one `startxref` in the revision; one classic table with its trailer, or one
+  cross-reference stream; `/Prev` equal to the previous revision's `startxref`; no `/XRefStm`;
+  no `/Encrypt`; the reached trailer's `/Root` and `/Info` are the ones pdf-lib took;
+- the only free entry is object 0; no number listed twice;
+- every in-use entry points, inside the revision, at an `N G obj` header with its number and
+  generation, and the object parsed there is byte for byte the one the comparison used;
+- an entry for a number that already existed (any generation; object-stream and xref-stream
+  containers count) is allowed only for the filled field, and for `/Info` under C1;
+- the `N G obj` headers in the revision's bytes are exactly the in-use entries, once each.
+
+The certified revision's own sections are not checked entry by entry (they are what the
+certifier signed), but its final `startxref` must be readable and its reached trailer must be the
+one pdf-lib took.
+
+**Decisions made while building it (fail closed).**
+
+- *Hybrid sections* (`/XRefStm`) after certification are refused.
+- *Objects inside object streams* (xref entries of type 2) after certification are refused. No
+  signing tool this project can run writes a fill that way (pyHanko writes plain objects, with a
+  table or with an xref stream), so an acceptance could not be tested. **Open for the owner:**
+  another producer's fill of an xref-stream document may use object streams and would be refused
+  with "changed after it was certified in a way this app cannot check". Supporting it needs a
+  fixture from such a producer.
+- *A pre-existing object re-emitted unchanged* is refused, although pyHanko accepts it
+  (`certified-p2-xref-rewritten-object.pdf` validates at FORM_FILLING). The app is stricter than
+  the validator here on purpose: object by object nothing differs, so the xref is the only place
+  the rewrite shows, and the rule is "only the field".
+- A header-looking byte run inside stream data makes a section look inconsistent and refuses.
+- The table parser is strict (20-byte entries). A real-world fill with a sloppier table is
+  refused, not guessed at.
+
+**Evidence [run].**
+
+| File | pyHanko (`validate_pdf.py`, default) | App |
+| :-- | :-- | :-- |
+| `certified-p2-xref-duplicate-object.pdf` | exit 1, certification policy violated | blocked, `xref-sections:2` |
+| `certified-p2-xref-free-entry.pdf` | exit 1, policy violated | blocked, `xref-sections:2` |
+| `certified-p2-xref-double-trailer.pdf` | exit 1, policy violated | blocked, `xref-sections:2` |
+| `certified-p2-xref-generation-bump.pdf` | exit 1, strict read error (orphaned generation) | blocked, `xref-sections:2` |
+| `certified-p2-xref-hybrid.pdf` | exit 1, strict read error | blocked, `xref-sections:2` |
+| `certified-p2-xref-rewritten-object.pdf` | exit 0, FORM_FILLING | blocked, `xref-preexisting-object:3` |
+
+The first five are a hand-written section followed by pyHanko's fill, so their signatures are
+intact; that makes two sections in one signed revision, and they all stop at the same guard. A
+single hand-written section cannot be given a valid signature without a signing tool that
+writes it, so the per-entry guards are exercised by `tests/unit/xrefSections.test.ts`, which
+appends one section to a certified fixture and asserts each refusal by name (free entry,
+duplicate definition, definition mismatch, unlisted definition, generation bump, unchanged
+rewrite, wrong offset, `/Prev`, hybrid, `/Encrypt`, trailer mismatch, extra trailer, type 2
+entry, an xref stream taking an existing number, and the malformed-table and malformed-stream
+cases).
+
+**Assumption 1 on the input side (P2).** The gate now runs the validator on every fixture the
+app classifies `fill-only` (7 inputs) and fails on a mismatch. The app-is-stricter direction
+(rewritten-object above) is allowed; the other direction is what the gate forbids.
+
+**Guard tests and mutation check (P2).** Every `compareRevisions` reason, the four reachable
+`checkFill` reasons and the per-field reasons `shared-parent` and `shared-appearance` now have a
+test that asserts the exact reason. A quick mutation run replaced each guard's `return` with a
+no-op, one at a time, and ran the unit and signing tests: 120 guards in `revisions.ts`,
+`xrefSections.ts`, `signingPolicy.ts` and `checkFill`; 102 produced a failing test, 18 did not.
+The 18 (the grouping below is from reading the code, not from a further run):
+
+- *Shadowed by a later guard with the same result* (11): three table-format checks and four
+  xref-stream format checks in `readSection` (a later format check refuses the same input with
+  the same reason); `xref-offset` for an offset outside the revision (the header check after it
+  refuses); the R8 consistency check and the 2,000-node cap in `classifySigning` (the revision
+  analysis repeats both); `/MK` that is not a dictionary (the next line refuses).
+- *Redundant by construction* (4): `xref-unlisted-object` and the final `xref-offset` sweep
+  (the header scan already forces both); `field-set-changed` in `checkFill` (the form is a
+  pre-existing object, so the object comparison refuses first); `added-after-certification`
+  (a late field always arrives in a revision rule 5d refuses first, see R9).
+- *Catch-all handlers* (3): the `catch` blocks that turn a thrown error
+  into a refusal.
+
+Line-level list: scratchpad `new/survivors-*.json` of the build session; not committed.
+
+**Gates after the round [run].** lint 0, tsc 0, vitest 0 (366 passed in 20 files),
+`npm run verify:signatures` 0, `npm run e2e` 0 (21 passed).

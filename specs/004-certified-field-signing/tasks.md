@@ -97,6 +97,12 @@ T012's gate run was done once, at the end of Phase 3. The document-level checks 
 R9, R10) and a fixture-by-fixture table (the core of T028) landed early, with T010 and as
 tests/signing/fixtureClassification.test.ts; T028 and T031 stay open for what they add.
 
+**Review round, 2026-11-16 (one P1, two P2).** Rule 5d now also reads the cross-reference data
+of every section after the certified bytes (src/features/signing/xrefSections.ts), eight
+hand-built fixtures were added, the gate validates every input the app classifies fill-only,
+and each guard has a test that names it. Details and the mutation check are in
+[research.md](research.md) R10. T028 and T031 stay unticked.
+
 ---
 
 ## Phase 4: User Story 2 - Understand why a certified PDF or a field cannot be signed (Priority: P1)
@@ -148,7 +154,7 @@ validator passes three signatures.
 
 **Independent Test**: each distribution's run signs the fixture and validates its own output.
 
-- [ ] T038 [US4] After the issue #23 item 2 change merges, wire `us7-certified-field.spec.ts`, the desktop case and the Android `--certified-field` run into the existing jobs under .github/workflows/ (no new job; same commit for all three)
+- [ ] T038 [US4] **v0.3.0 blocker.** tests/e2e/us7-certified-field.spec.ts skips its validator step when pyHanko is not importable unless `REQUIRE_PYHANKO=1` is set, so until this task sets it in CI the web E2E proves less there than locally (review finding R4). After the issue #23 item 2 change merges, wire `us7-certified-field.spec.ts`, the desktop case and the Android `--certified-field` run into the existing jobs under .github/workflows/ (no new job; same commit for all three)
 - [ ] T039 [P] [US4] Add a certified-field case to tests/e2e-desktop/desktop-sign.spec.ts that signs `certified-p2-empty-field.pdf` in the packaged desktop app and validates the saved file with the new validator mode
 - [ ] T040 [P] [US4] Add the `--certified-field` mode to scripts/android-gate.mjs per contracts/signature-gate.md and run it against a locally built signed APK on the emulator
 - [ ] T041 [US4] Measure classification time for the largest file the app accepts at the C2 cap (a generated document signed that many times) on the web build; record the numbers in specs/004-certified-field-signing/research.md F3 and confirm or adjust `MAX_SIGNED_REVISIONS_AFTER_CERTIFICATION` with the owner

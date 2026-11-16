@@ -23,6 +23,9 @@ Exit 0 iff, for every file:
 | Every other signed output | default (unchanged) |
 | `violates-p1.pdf`, `certified-p2-two-revisions.pdf` (existing), `certified-p2-late-visible-field.pdf`, `certified-p2-later-annotation.pdf`, `certified-p3-later-annotation.pdf`, `certified-p3-annotation-then-fill.pdf` | `--expect-policy-violation` |
 | Forced add-a-field on `certified-p2-empty-field.pdf`; fill output plus one disallowed revision (`tests/signing/out-violations/`) | `--expect-policy-violation` |
+| Every fixture the app classifies `fill-only` (the INPUT, listed by the classification tests in `tests/signing/out/fill-only-inputs.json`) | default: what the app will sign into, the validator must accept as it stands |
+| `certified-p2-xref-duplicate-object.pdf`, `certified-p2-xref-free-entry.pdf`, `certified-p2-xref-double-trailer.pdf` | `--expect-policy-violation` |
+| `certified-p2-xref-generation-bump.pdf`, `certified-p2-xref-hybrid.pdf` | must not validate in the default mode (the validator refuses to read them) |
 | pyHanko's own fill of `certified-p2-empty-field-kid-widget.pdf` and of `certified-p2-late-visible-field.pdf` (written to a temp dir by the gate) | `--expect-policy-violation` |
 
 The gate fails if any of these lists is empty (no vacuous pass), as it already does for the
