@@ -48,6 +48,7 @@ An empty signature field found by walking `/AcroForm /Fields`.
 | `name` | string | Fully qualified `/T`, shown as "field name set by the document" |
 | `pageIndex` | number or null | null when rule 4 could not resolve a single page |
 | `rect` | `[x1, y1, x2, y2]` in PDF points, or null | The box the stamp is fitted into |
+| `box` | normalized `{nx, ny, nw, nh}` on the displayed page, or null | Derived from `rect`, the page's CropBox and `/Rotate`; what the preview outlines and what the appearance layout takes (added in the build, research.md R9) |
 | `eligible` | boolean | |
 | `reason` | FieldIneligibleReason, absent when eligible | Exactly one: the first rule that failed, in rule order |
 

@@ -221,3 +221,68 @@ case in `tests/e2e-desktop/desktop-sign.spec.ts`. Android: a `--certified-field`
 `scripts/android-gate.mjs`, which already resolves the policy fixture directory. Each validates
 its own download with the new validator mode. CI wiring for these lives in `.github/workflows/`,
 which a parallel change (issue #23 item 2) is editing; T038 lands after that change merges.
+
+## R9 — Phases 1–3 as built (2026-11-16)
+
+**[run]** on the branch head after T027, Windows, Python 3.12.10, pyHanko 0.36.2:
+
+| Gate | Command | Exit | Result |
+| :-- | :-- | :-- | :-- |
+| Lint | `npm run lint` | 0 | clean |
+| Types | `npx tsc --noEmit` | 0 | clean |
+| Unit | `npx vitest run` | 0 | 258 passed, 18 files (baseline 174 in 17: minus the 14 spike tests, plus 98) |
+| Signature gate | `npm run verify:signatures` | 0 | 8 default outputs valid; 4 fill outputs valid with the certification at FORM_FILLING; 6 violating fixtures and 2 negative controls reported as policy violations |
+| Web E2E | `npm run e2e` | 0 | 21 passed, `us7-certified-field.spec.ts` among them, with the validator run on the download |
+
+Not run in this pass: the PWA and desktop E2E configurations, the Android gate, Acrobat Reader.
+
+### D1: P=3 is supported
+
+**[run]** `fill-certified-p3-empty-field.pdf`, written by the app's own writer, validates with
+both signatures intact, policy satisfied, and the certification at
+`ModificationLevel.FORM_FILLING`. pyHanko still logs its "not designed for DocMDP level 3"
+warning. P=3 therefore stays classified `fill-only`; the fallback of D1 (ship P=3 as refused) is
+not needed. The same holds for the xref-stream and the rotated-page fixtures.
+
+### Findings from the build
+
+- **F5 — the comparison also pins the trailer.** The spike compared indirect objects only. A
+  later revision could leave every pre-existing object alone and point the trailer's `/Root` at a
+  new catalog. `compareRevisions` now also requires the same `/Root` reference in both revisions
+  and no `/Encrypt`, and treats `/Info` as C1 decided: the same reference rewritten, or a new
+  object, and in both cases a dictionary of direct strings and names only. Anything else refuses.
+- **F6 — open: deletions through the cross-reference table are invisible to pdf-lib.** pdf-lib
+  reads objects in file order and ignores the xref, so a later revision that marks an object free
+  (for example an annotation) changes what Acrobat and pyHanko see but not what the app compares.
+  pyHanko reports such a revision as a violation; the app would still offer the field. The result
+  is a signature added to a document whose certification was already broken, which Assumption 2
+  and FR-019 cover, but rule 5d does not catch it. T042's cross-check does not either. Candidate
+  fix: refuse a certified document whose appended sections carry an xref entry of type `f` other
+  than object 0. Not built; needs an owner decision on scope.
+- **F7 — pyHanko drops `/NeedAppearances` when it signs**, as it raises `/SigFlags` to 3. The R9
+  fixtures (`certified-p2-sigflags-1.pdf`, `certified-p2-need-appearances.pdf`) therefore set
+  those values in an unsigned revision after the certification. The form checks run before the
+  revision check, so each still reports `form-not-fillable`.
+- **R17 is not reachable as a per-field reason on any fixture.** A field added after
+  certification arrives in a revision that rule 5d refuses first, so
+  `certified-p2-late-visible-field.pdf` reports `changed-after-certification`. The per-field rule
+  5c is still evaluated (it is what the 5d comparison and `added-after-certification` use) and is
+  tested directly in tests/unit/revisions.test.ts.
+- **FR-015 runs on the signed bytes**, not on the placeholder: `assertFillWellFormed` re-reads
+  the final output, so it also checks that the new signature's byte range ends at the end of the
+  file.
+
+### Where the build differs from the plan
+
+- `CandidateField` gained `box` (data-model.md): the UI needs the field's place on the displayed
+  page, and computing it next to `rect` keeps the outline and the stamp on one conversion
+  (`fieldRectToNormBox`, the exact inverse of `normalizedBoxToPdfRect`).
+- The R11 message is no longer today's CERTIFIED text. That text said "this app signs by adding
+  [a field]", which stopped being true. The drawn-box path now says a signature cannot be placed
+  freely on a certified PDF.
+- `tests/signing/out-violations/` is ignored through `tests/signing/.gitignore`, not the root
+  `.gitignore`.
+- The E2E validator step is skipped with an annotation when pyHanko is not importable, unless
+  `REQUIRE_PYHANKO` is set. T038 must set it in CI, or the web E2E proves less there than here.
+- A `/V` that is present but is not a signature dictionary makes the field "not empty", so it is
+  never offered. Listing it as an ineligible field with its own reason is left to T029.
