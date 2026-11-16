@@ -31,6 +31,7 @@ from pyhanko.sign.fields import (
     MDPPerm,
     SigFieldSpec,
     SigSeedSubFilter,
+    SigSeedValueSpec,
     append_signature_field,
 )
 from pyhanko_certvalidator.registry import SimpleCertificateStore
@@ -214,6 +215,200 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
         ),
         signer,
         "Approver",
+    )
+
+    # ---- Refusal rows (RFC 23-1 section 7.1, research.md R2) and geometry (R6). ----
+    # Each document is built with the field in place and certified AFTERWARDS, so the field is
+    # part of the certified revision and only the rule under test refuses it.
+    def name(s):
+        return generic.pdf_name(s)
+
+    def num(v):
+        return generic.NumberObject(v)
+
+    def text(s):
+        return generic.pdf_string(s)
+
+    def form(w):
+        return w.root["/AcroForm"]
+
+    def field_ref(w, i=0):
+        return form(w)["/Fields"].raw_get(i)
+
+    def page_of(w, i):
+        return w.find_page_for_modification(i)[0]
+
+    def built(build=None, perm=MDPPerm.FILL_FORMS, pages=1, fields=one, certify=True):
+        writer = PdfFileWriter(stream_xrefs=False)
+        for _ in range(pages):
+            content = generic.StreamObject(stream_data=b"72 700 300 40 re S")
+            writer.insert_page(
+                PageObject(contents=writer.add_object(content), media_box=(0, 0, 612, 792))
+            )
+        for field, box in fields:
+            append_signature_field(writer, SigFieldSpec(field, box=box, on_page=0))
+        if build:
+            build(writer)
+        buf = BytesIO()
+        writer.write(buf)
+        if not certify:
+            return buf.getvalue()
+        return sign(buf.getvalue(), signer, "Cert", BOX, certify=True, docmdp_permissions=perm)
+
+    def set_on_field(key, value):
+        def build(w):
+            field_ref(w).get_object()[name(key)] = value
+
+        return build
+
+    def split_widget(extra_page=False):
+        """Turn the merged field/widget into a field with separate widget kid(s)."""
+
+        def build(w):
+            ref = field_ref(w)
+            field = ref.get_object()
+            widget = generic.DictionaryObject({name("/Parent"): ref})
+            for key in ("/Type", "/Subtype", "/Rect", "/P", "/F", "/AP"):
+                if key in field:
+                    widget[name(key)] = field.raw_get(key)
+                    del field[key]
+            kids = [w.add_object(widget)]
+            page_of(w, 0).get_object()[name("/Annots")] = generic.ArrayObject([kids[0]])
+            if extra_page:
+                second = generic.DictionaryObject(widget)
+                second[name("/P")] = page_of(w, 1)
+                kids.append(w.add_object(second))
+                page_of(w, 1).get_object()[name("/Annots")] = generic.ArrayObject([kids[1]])
+            field[name("/Kids")] = generic.ArrayObject(kids)
+
+        return build
+
+    def p_mismatch(w):
+        ref = field_ref(w)  # its /P still names page 1
+        page_of(w, 0).get_object()[name("/Annots")] = generic.ArrayObject([])
+        page_of(w, 1).get_object()[name("/Annots")] = generic.ArrayObject([ref])
+
+    def on_two_pages(w):
+        page_of(w, 1).get_object()[name("/Annots")] = generic.ArrayObject([field_ref(w)])
+
+    def duplicate_names(w):
+        field_ref(w, 1).get_object()[name("/T")] = text("Approver")
+
+    def inherited_value(w):
+        ref = field_ref(w)
+        parent = w.add_object(
+            generic.DictionaryObject(
+                {
+                    name("/T"): text("Group"),
+                    name("/V"): text("inherited"),
+                    name("/Kids"): generic.ArrayObject([ref]),
+                }
+            )
+        )
+        ref.get_object()[name("/Parent")] = parent
+        form(w)[name("/Fields")] = generic.ArrayObject([parent])
+
+    def optional_content(w):
+        group = w.add_object(
+            generic.DictionaryObject(
+                {name("/Type"): name("/OCG"), name("/Name"): text("Hidden layer")}
+            )
+        )
+        w.root[name("/OCProperties")] = generic.DictionaryObject(
+            {
+                name("/OCGs"): generic.ArrayObject([group]),
+                name("/D"): generic.DictionaryObject({name("/OFF"): generic.ArrayObject([group])}),
+            }
+        )
+        field_ref(w).get_object()[name("/OC")] = group
+
+    def with_spec(**spec_args):
+        def build(w):
+            append_signature_field(
+                w, SigFieldSpec("Approver", box=APPROVER_BOX, on_page=0, **spec_args)
+            )
+
+        return build
+
+    def need_appearances(w):
+        form(w)[name("/NeedAppearances")] = generic.BooleanObject(True)
+
+    def xfa(w):
+        form(w)[name("/XFA")] = w.add_object(
+            generic.StreamObject(stream_data=b'<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"/>')
+        )
+
+    def rotate_page(w):
+        page_of(w, 0).get_object()[name("/Rotate")] = num(90)
+
+    def later_revision(pdf: bytes, change) -> bytes:
+        """An unsigned revision after the last signature (so the signed bytes stay intact)."""
+        writer = IncrementalPdfFileWriter(BytesIO(pdf))
+        change(writer)
+        buf = BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+
+    def sigflags_1(w):
+        # pyHanko always raises /SigFlags to 3 when it signs, so the only way to get a certified
+        # document whose form says otherwise is a later rewrite of the form.
+        acro = w.root["/AcroForm"]
+        acro[name("/SigFlags")] = num(1)
+        w.update_container(acro)
+
+    def perms_without_reference(w):
+        # The catalog names a certification, but that signature declares no DocMDP transform.
+        fields = w.root["/AcroForm"]["/Fields"]
+        sig = next(
+            fields[i].raw_get("/V") for i in range(len(fields)) if fields[i]["/T"] == "Approval"
+        )
+        w.root[name("/Perms")] = generic.DictionaryObject({name("/DocMDP"): sig})
+        w.update_root()
+
+    t.update(
+        {
+            "certified-p1-empty-field.pdf": certified(MDPPerm.NO_CHANGES, one),
+            "certified-p2-empty-field-lock.pdf": built(
+                with_spec(field_mdp_spec=FieldMDPSpec(FieldMDPAction.ALL)), fields=[]
+            ),
+            "certified-p2-empty-field-sv.pdf": built(
+                with_spec(seed_value_dict=SigSeedValueSpec(reasons=["Approval"])), fields=[]
+            ),
+            "certified-p2-fieldmdp-approval.pdf": sign(
+                certified(MDPPerm.FILL_FORMS, one),
+                signer,
+                "Approval",
+                WITNESS_BOX,
+                spec_args={
+                    "field_mdp_spec": FieldMDPSpec(FieldMDPAction.INCLUDE, fields=["Approver"])
+                },
+            ),
+            "certified-p2-empty-field-hidden.pdf": built(set_on_field("/F", num(2))),
+            "certified-p2-empty-field-two-widgets.pdf": built(split_widget(True), pages=2),
+            "certified-p2-empty-field-p-mismatch.pdf": built(p_mismatch, pages=2),
+            "certified-p2-empty-field-kid-widget.pdf": built(split_widget()),
+            "certified-p3-empty-field-kid-widget.pdf": built(split_widget(), MDPPerm.ANNOTATE),
+            "certified-p2-duplicate-names.pdf": built(duplicate_names, fields=two),
+            "certified-p2-dotted-name.pdf": built(set_on_field("/T", text("Approver.One"))),
+            "certified-p2-inherited-v.pdf": built(inherited_value),
+            "certified-p2-widget-two-pages.pdf": built(on_two_pages, pages=2),
+            "certified-p2-widget-oc.pdf": built(optional_content),
+            "certified-p2-readonly-field.pdf": built(set_on_field("/Ff", num(1))),
+            # Gap fixtures for rows R8, R9 and R10 (research.md R2).
+            "certified-p2-perms-without-reference.pdf": later_revision(
+                sign(built(certify=False), signer, "Approval", BOX), perms_without_reference
+            ),
+            "certified-p2-sigflags-1.pdf": later_revision(
+                certified(MDPPerm.FILL_FORMS, one), sigflags_1
+            ),
+            "certified-p2-need-appearances.pdf": built(need_appearances),
+            "certified-p2-xfa.pdf": built(xfa),
+            # Geometry (research.md R6).
+            "certified-p2-empty-field-rotated-page.pdf": built(rotate_page),
+            "certified-p2-empty-field-mk-rotation.pdf": built(
+                set_on_field("/MK", generic.DictionaryObject({name("/R"): num(90)}))
+            ),
+        }
     )
     return t
 
