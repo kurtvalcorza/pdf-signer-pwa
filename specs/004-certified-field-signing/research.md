@@ -83,6 +83,14 @@ The two-field fixtures pass the strict rule only by accident: their certificatio
 written within the same second, so `/ModDate` did not move and the rewritten `/Info` serializes
 identically. The single-field fixture straddled a second and shows the real behaviour.
 
+Superseded by T035 (2026-11-17): `scripts/make_policy_fixtures.py` now waits 1.1 s before the two
+two-field fills, and both two-field `signed-once` fixtures were regenerated, so their `/ModDate`
+moves and they exercise the C1 accept path. The tests in `tests/signing/policy.test.ts` assert that
+`/Info` really changed, so a same-second regeneration would fail rather than pass by accident. The
+generator certifies again with a fresh key on each run, so `certified-p2-two-empty-fields-signed-once.pdf`
+is no longer a byte extension of the committed `certified-p2-two-empty-fields.pdf`. No test relies
+on that.
+
 The app's own writer does not touch `/Info` (it carries the reference forward,
 `incrementalUpdate.ts` `previousTrailerEntries`), so app → app chains are unaffected either way.
 What other producers do (Acrobat is likely to update `/Info` and the XMP `/Metadata` stream) is
