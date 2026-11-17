@@ -285,7 +285,8 @@ not needed. The same holds for the xref-stream and the rotated-page fixtures.
 - The E2E validator step is skipped with an annotation when pyHanko is not importable, unless
   `REQUIRE_PYHANKO` is set. T038 must set it in CI, or the web E2E proves less there than here.
 - A `/V` that is present but is not a signature dictionary makes the field "not empty", so it is
-  never offered. Listing it as an ineligible field with its own reason is left to T029.
+  never offered. Superseded by T029 (2026-11-17): such a value now refuses the whole certified
+  document as `unreadable-policy`, even when its other fields are eligible.
 
 ## R10 — Review round: rule 5d through the cross-reference data (2026-11-16)
 

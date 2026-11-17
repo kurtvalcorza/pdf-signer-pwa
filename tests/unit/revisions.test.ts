@@ -7,8 +7,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRef } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib';
 import {
+  MAX_FORM_NODES,
   MAX_SIGNED_REVISIONS_AFTER_CERTIFICATION,
   FormTooLargeError,
   analyzeRevisions,
@@ -21,6 +22,7 @@ import {
   signatureFieldKeys,
   walkFormNodes,
 } from '../../src/features/signing/revisions';
+import { classifySigning } from '../../src/features/signing/signingPolicy';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const POLICY = resolve(HERE, '../signing/fixtures/policy');
@@ -461,5 +463,94 @@ describe('a dictionary that repeats a key (review round 2)', () => {
     const analysis = await analyzeRevisions(doc, patched);
     expect(analysis).toMatchObject({ ok: false, reason: 'xref-unreadable' });
     expect(!analysis.ok && analysis.detail).toMatch(/^repeated-key:\d+$/);
+  });
+});
+
+/**
+ * Spec 004 T029: forms this app will not walk to the end are refused for a reason, never thrown
+ * and never half-classified. Each document is the certified fixture changed in memory only, so
+ * the signed bytes are the fixture's own.
+ */
+describe('classification of forms that cannot be fully checked (spec 004, T029)', () => {
+  const reasonOf = async (doc: PDFDocument, bytes: Uint8Array) => {
+    const result = await classifySigning(doc, bytes);
+    return result.kind === 'blocked' ? result.reason : result.kind;
+  };
+  const addFillers = (doc: PDFDocument, total: number) => {
+    const fields = doc.catalog.lookup(N('AcroForm'), PDFDict).lookup(N('Fields'), PDFArray);
+    for (let k = walkFormNodes(doc).nodes.length; k < total; k++) {
+      fields.push(doc.context.register(doc.context.obj({ FT: 'Tx', T: `Filler${k}` })));
+    }
+  };
+
+  it(`more than ${MAX_FORM_NODES} form nodes is too-many-fields (T10)`, async () => {
+    const bytes = load('certified-p2-empty-field.pdf');
+    const doc = await parse(bytes);
+    addFillers(doc, MAX_FORM_NODES + 1);
+    expect(walkFormNodes(doc).nodes.length).toBe(MAX_FORM_NODES + 1);
+    expect(await reasonOf(doc, bytes)).toBe('too-many-fields');
+  });
+
+  it(`exactly ${MAX_FORM_NODES} form nodes is still classified`, async () => {
+    const bytes = load('certified-p2-empty-field.pdf');
+    const doc = await parse(bytes);
+    addFillers(doc, MAX_FORM_NODES);
+    expect(walkFormNodes(doc).nodes.length).toBe(MAX_FORM_NODES);
+    expect(await reasonOf(doc, bytes)).not.toBe('too-many-fields');
+  });
+
+  it('a cyclic /Kids is unreadable-policy', async () => {
+    const bytes = load('certified-p2-inherited-v.pdf');
+    const doc = await parse(bytes);
+    const group = walkFormNodes(doc).nodes.find((n) => partialName(n.dict) === 'Group')!;
+    group.dict.lookup(N('Kids'), PDFArray).push(group.ref!);
+    expect(await reasonOf(doc, bytes)).toBe('unreadable-policy');
+  });
+
+  it.each([
+    ['a number', () => PDFNumber.of(5)],
+    ['a string', () => PDFString.of('signed')],
+    ['an array', (doc: PDFDocument) => doc.context.obj([1, 2])],
+  ])('a signature field whose /V is %s is unreadable-policy', async (_label, value) => {
+    const bytes = load('certified-p2-empty-field.pdf');
+    const doc = await parse(bytes);
+    doc.context.lookup(fieldRef(doc, 'Approver'), PDFDict).set(N('V'), value(doc));
+    expect(await reasonOf(doc, bytes)).toBe('unreadable-policy');
+  });
+
+  it('a parse error during classification is unreadable-policy', async () => {
+    const bytes = load('certified-p2-empty-field.pdf');
+    const doc = await parse(bytes);
+    const broken = new Proxy(doc, {
+      get(target, key, receiver) {
+        if (key === 'getPages') {
+          return () => {
+            throw new Error('broken page tree');
+          };
+        }
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    expect(await reasonOf(broken, bytes)).toBe('unreadable-policy');
+  });
+});
+
+describe('row R8: the catalog and the signatures must agree on one certification (T031)', () => {
+  it('a second signature that also declares DocMDP is unknown-policy', async () => {
+    const bytes = load('certified-p2-two-empty-fields-signed-once.pdf');
+    const doc = await parse(bytes);
+    const before = await classifySigning(doc, bytes);
+    expect(before.kind).toBe('fill-only');
+    const approval = doc.context.lookup(fieldRef(doc, 'Approver'), PDFDict).lookup(N('V'), PDFDict);
+    approval.set(
+      N('Reference'),
+      doc.context.obj([
+        { Type: 'SigRef', TransformMethod: 'DocMDP', TransformParams: { P: 2, V: '1.2' } },
+      ]),
+    );
+    expect(await classifySigning(doc, bytes)).toMatchObject({
+      kind: 'blocked',
+      reason: 'unknown-policy',
+    });
   });
 });

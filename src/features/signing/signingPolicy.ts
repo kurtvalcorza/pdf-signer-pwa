@@ -49,7 +49,7 @@ export const BLOCK_MESSAGES: Record<BlockReason, string> = {
     'An existing signature on this PDF uses a modification policy this app does not recognise, ' +
     'so it cannot be signed here.',
   'form-not-fillable':
-    'This certified PDF’s form is not set up the way a signed form must be, so it cannot be ' +
+    "This certified PDF's form is not set up the way a signed form must be, so it cannot be " +
     'signed here.',
   'xfa-form': 'This certified PDF uses an XFA form, which this app cannot sign.',
   'changed-after-certification':
@@ -179,6 +179,9 @@ async function classify(doc: PDFDocument, bytes: Uint8Array): Promise<SigningCla
   // --- T10, and a form that is not a tree. ---
   if (walk.nodes.length > MAX_FORM_NODES) return blocked('too-many-fields');
   if (walk.repeated) return blocked('unreadable-policy');
+  // A signature field holds a signature dictionary or nothing. Any other /V is a form this app
+  // cannot read, not an empty field and not a signature (T029): refuse rather than guess.
+  if (walk.nodes.some(hasUnreadableSignatureValue)) return blocked('unreadable-policy');
 
   // --- R18 (rule 5d) and FR-009. ---
   const analysis = await analyzeRevisions(doc, bytes);
@@ -202,6 +205,12 @@ async function classify(doc: PDFDocument, bytes: Uint8Array): Promise<SigningCla
 
 const isSignatureField = (node: FormNode): boolean => inheritable(node.dict, 'FT') === N('Sig');
 const isNamed = (node: FormNode): boolean => partialName(node.dict) !== null;
+
+const hasUnreadableSignatureValue = (node: FormNode): boolean => {
+  if (!isSignatureField(node)) return false;
+  const value = node.dict.lookup(N('V'));
+  return !isEmptyValue(value) && !(value instanceof PDFDict);
+};
 
 /**
  * Rule 1 and the "empty" half of rule 2: a signature field with no value of its own. A kid

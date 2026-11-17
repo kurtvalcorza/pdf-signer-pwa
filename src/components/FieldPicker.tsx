@@ -114,6 +114,10 @@ export function FieldOutlines({
 /**
  * The fields of a certified document, in the document's own order: eligible ones as choices,
  * the others greyed out with the reason each cannot be used.
+ *
+ * A refused document (`blocked`) shows why, in the exact words of
+ * contracts/signing-classification.md, above the greyed list when there is one (R3). The refusal
+ * stays in place for as long as the document is open: it is not a passing error.
  */
 export function FieldList({
   signing,
@@ -125,35 +129,52 @@ export function FieldList({
   onPick: (field: CandidateField) => void;
 }) {
   const eligible = signing.kind === 'fill-only' ? signing.fields : [];
-  if (eligible.length === 0 && signing.ineligible.length === 0) return null;
+  const hasFields = eligible.length > 0 || signing.ineligible.length > 0;
+  if (signing.kind === 'fill-only' && !hasFields) return null;
   return (
     <div className="rounded-lg bg-white/5 px-3 py-2 text-xs" data-testid="field-list">
-      {signing.kind === 'fill-only' && <p className="mb-2 text-amber-200">{FILL_ONLY_NOTICE}</p>}
-      <ul className="flex flex-col gap-1">
-        {eligible.map((f) => {
-          const isPicked = sameField(picked, f.ref);
-          return (
-            <li key={`${f.ref.objectNumber}-${f.ref.generationNumber}`}>
-              <button
-                type="button"
-                data-testid="field-option"
-                aria-pressed={isPicked}
-                onClick={() => onPick(f)}
-                className={`w-full rounded px-2 py-1 text-left ${
-                  isPicked ? 'bg-blue-500/30 text-white' : 'bg-white/10 hover:bg-white/15'
-                }`}
-              >
-                {fieldLabel(f)}
-              </button>
+      {signing.kind === 'fill-only' ? (
+        <p className="mb-2 text-amber-200">{FILL_ONLY_NOTICE}</p>
+      ) : (
+        <p
+          role="status"
+          data-testid="signing-refusal"
+          className={`text-amber-200 ${hasFields ? 'mb-2' : ''}`}
+        >
+          {signing.message}
+        </p>
+      )}
+      {hasFields && (
+        <ul className="flex flex-col gap-1">
+          {eligible.map((f) => {
+            const isPicked = sameField(picked, f.ref);
+            return (
+              <li key={`${f.ref.objectNumber}-${f.ref.generationNumber}`}>
+                <button
+                  type="button"
+                  data-testid="field-option"
+                  aria-pressed={isPicked}
+                  onClick={() => onPick(f)}
+                  className={`w-full rounded px-2 py-1 text-left ${
+                    isPicked ? 'bg-blue-500/30 text-white' : 'bg-white/10 hover:bg-white/15'
+                  }`}
+                >
+                  {fieldLabel(f)}
+                </button>
+              </li>
+            );
+          })}
+          {signing.ineligible.map((f, i) => (
+            <li
+              key={`ineligible-${i}`}
+              data-testid="field-ineligible"
+              className="px-2 text-white/40"
+            >
+              {fieldLabel(f)}. {f.reason ? FIELD_REASON_TEXT[f.reason] : ''}
             </li>
-          );
-        })}
-        {signing.ineligible.map((f, i) => (
-          <li key={`ineligible-${i}`} data-testid="field-ineligible" className="px-2 text-white/40">
-            {fieldLabel(f)}. {f.reason ? FIELD_REASON_TEXT[f.reason] : ''}
-          </li>
-        ))}
-      </ul>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

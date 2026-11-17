@@ -373,6 +373,34 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
         w.root[name("/Perms")] = generic.DictionaryObject({name("/DocMDP"): sig})
         w.update_root()
 
+    def unknown_transform(w):
+        # Row R7: a signature that declares a transform this app does not recognise (UR3, usage
+        # rights). pyHanko cannot sign with one, so the signature dictionary is rewritten later.
+        fields = w.root["/AcroForm"]["/Fields"]
+        ref = next(
+            fields[i].raw_get("/V") for i in range(len(fields)) if fields[i]["/T"] == "Approval"
+        )
+        sig = ref.get_object()
+        sig[name("/Reference")] = generic.ArrayObject(
+            [
+                generic.DictionaryObject(
+                    {
+                        name("/Type"): name("/SigRef"),
+                        name("/TransformMethod"): name("/UR3"),
+                        name("/TransformParams"): generic.DictionaryObject(
+                            {name("/Type"): name("/TransformParams"), name("/V"): name("/2.2")}
+                        ),
+                    }
+                )
+            ]
+        )
+        w.mark_update(ref)
+
+    def js_action(script):
+        return generic.DictionaryObject(
+            {name("/S"): name("/JavaScript"), name("/JS"): generic.pdf_string(script)}
+        )
+
     t.update(
         {
             "certified-p1-empty-field.pdf": certified(MDPPerm.NO_CHANGES, one),
@@ -413,6 +441,22 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
                 certified(MDPPerm.FILL_FORMS, one), need_appearances
             ),
             "certified-p2-xfa.pdf": built(xfa),
+            # Row R7 (spec 004 T028).
+            "approval-unknown-transform.pdf": later_revision(
+                sign(built(certify=False), signer, "Approval", BOX), unknown_transform
+            ),
+            # Preview scripting (T9, research.md R7, task T030): the field's actions must not run.
+            "certified-p2-empty-field-aa-javascript.pdf": built(
+                set_on_field(
+                    "/AA",
+                    generic.DictionaryObject(
+                        {
+                            name("/E"): js_action("app.alert('field action ran');"),
+                            name("/PO"): js_action("app.alert('page-open action ran');"),
+                        }
+                    ),
+                )
+            ),
             # Geometry (research.md R6).
             "certified-p2-empty-field-rotated-page.pdf": built(rotate_page),
             "certified-p2-empty-field-mk-rotation.pdf": built(

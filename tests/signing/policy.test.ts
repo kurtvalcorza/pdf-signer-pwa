@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import signpdf from '@signpdf/signpdf';
@@ -16,10 +16,13 @@ import {
   reserveExistingObjectNumbers,
 } from '../../src/features/signing/incrementalUpdate';
 import { loadRevision, refKey } from '../../src/features/signing/revisions';
+import { BLOCK_MESSAGES } from '../../src/features/signing/signingPolicy';
 import { loadPdf } from '../../src/features/viewer/loadPdf';
 import {
   CertificationLockedError,
+  type BlockReason,
   type CandidateField,
+  type FieldIneligibleReason,
   type PlacementInput,
 } from '../../src/features/signing/types';
 import { makeSelfSignedP12 } from './fixtures/makeCert';
@@ -404,4 +407,158 @@ describe('the fill check refuses an output that is not exactly one fill (FR-015)
     expect(await checkFill(input, second, witness)).toMatch(/^changed-objects:/);
     writeFileSync(resolve(OUT, 'fill-chain-two-fields.pdf'), second);
   }, 40000);
+});
+
+/**
+ * Spec 004, User Story 2 (T028, FR-022): every refusal row of RFC 23-1 has a fixture and is
+ * refused for its own reason, with its own message, and nothing is written. Row R11 (free
+ * placement on a certified document) is the drawn-box refusal at the end.
+ */
+type Refusal = {
+  row: string;
+  fixture: string;
+  reason: BlockReason;
+  /** The per-field reason, for the rows that refuse one field (R3, R5, R6, R12-R16). */
+  field?: [name: string, reason: FieldIneligibleReason];
+};
+
+const REFUSALS: Refusal[] = [
+  { row: 'R1', fixture: 'certified-p1.pdf', reason: 'certified-no-changes' },
+  { row: 'R2', fixture: 'certified-p2.pdf', reason: 'certified-no-empty-field' },
+  {
+    row: 'R3',
+    fixture: 'certified-p2-empty-field-hidden.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'not-visible'],
+  },
+  { row: 'R4', fixture: 'fieldmdp-all.pdf', reason: 'field-locked' },
+  {
+    row: 'R5',
+    fixture: 'certified-p2-empty-field-lock.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'locked'],
+  },
+  {
+    row: 'R6',
+    fixture: 'certified-p2-empty-field-sv.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'seed-values'],
+  },
+  { row: 'R7', fixture: 'approval-unknown-transform.pdf', reason: 'unknown-policy' },
+  { row: 'R8', fixture: 'certified-p2-perms-without-reference.pdf', reason: 'unknown-policy' },
+  { row: 'R9', fixture: 'certified-p2-sigflags-1.pdf', reason: 'form-not-fillable' },
+  { row: 'R9', fixture: 'certified-p2-need-appearances.pdf', reason: 'form-not-fillable' },
+  { row: 'R10', fixture: 'certified-p2-xfa.pdf', reason: 'xfa-form' },
+  {
+    row: 'R12',
+    fixture: 'certified-p2-empty-field-kid-widget.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'separate-widget'],
+  },
+  {
+    row: 'R13',
+    fixture: 'certified-p2-duplicate-names.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'bad-name'],
+  },
+  {
+    row: 'R14',
+    fixture: 'certified-p2-inherited-v.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Group.Approver', 'inherited-value'],
+  },
+  {
+    row: 'R15',
+    fixture: 'certified-p2-widget-two-pages.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'on-several-pages'],
+  },
+  {
+    row: 'R16',
+    fixture: 'certified-p2-widget-oc.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'optional-content'],
+  },
+  {
+    row: 'R16',
+    fixture: 'certified-p2-readonly-field.pdf',
+    reason: 'certified-no-eligible-field',
+    field: ['Approver', 'read-only'],
+  },
+  // R17: a field added after certification can only arrive in a later revision, and rule 5d
+  // refuses that revision first, for the whole document. The field-level rule 5c is pinned on
+  // the same fixture in tests/unit/revisions.test.ts.
+  {
+    row: 'R17',
+    fixture: 'certified-p2-late-visible-field.pdf',
+    reason: 'changed-after-certification',
+  },
+  {
+    row: 'R18',
+    fixture: 'certified-p2-later-annotation.pdf',
+    reason: 'changed-after-certification',
+  },
+  { row: 'R18', fixture: 'certified-p2-two-revisions.pdf', reason: 'changed-after-certification' },
+];
+
+describe('every refusal row has a fixture, its own reason, and no output (spec 004, US2)', () => {
+  it('covers R1-R10 and R12-R18', () => {
+    const rows = new Set(REFUSALS.map((r) => r.row));
+    const want = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18].map((n) => `R${n}`);
+    expect([...rows].sort()).toEqual(want.sort());
+  });
+
+  it.each(REFUSALS.map((r) => [r.row, r.fixture, r] as const))(
+    '%s: %s',
+    async (_row, fixture, refusal) => {
+      const input = load(fixture);
+      const { signing } = await loadPdf(input);
+      expect(signing).toMatchObject({ kind: 'blocked', reason: refusal.reason });
+      if (signing.kind !== 'blocked') return;
+      expect(signing.message).toBe(BLOCK_MESSAGES[refusal.reason]);
+      if (refusal.field) {
+        const [name, reason] = refusal.field;
+        expect(signing.ineligible.find((f) => f.name === name)).toMatchObject({
+          eligible: false,
+          reason,
+        });
+      }
+
+      // No output: neither path will write anything, for any field the document names.
+      const refs = [
+        ...signing.ineligible.map((f) => f.ref),
+        { objectNumber: 1, generationNumber: 0 },
+      ];
+      for (const fieldRef of refs) {
+        await expect(
+          signIntoField(input, { imageBytes: PNG, format: 'png', fieldRef }, cert),
+        ).rejects.toThrow(CertificationLockedError);
+      }
+      await expect(signIncremental(input, placement, cert)).rejects.toThrow(
+        CertificationLockedError,
+      );
+    },
+    40000,
+  );
+
+  // R11: a drawn box is refused on EVERY certified fixture, whether or not it has a field the
+  // user could sign in instead.
+  const certifiedFixtures = readdirSync(POLICY)
+    .filter((f) => f.endsWith('.pdf'))
+    .filter((f) => f.startsWith('certified-') || f === 'violates-p1.pdf')
+    .sort();
+
+  it('finds the certified fixtures', () => {
+    expect(certifiedFixtures.length).toBeGreaterThan(50);
+  });
+
+  it.each(certifiedFixtures)(
+    'R11: refuses free placement on %s',
+    async (name) => {
+      await expect(signIncremental(load(name), placement, cert)).rejects.toThrow(
+        CertificationLockedError,
+      );
+    },
+    40000,
+  );
 });

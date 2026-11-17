@@ -37,7 +37,15 @@ export function renderPage(
   canvas: HTMLCanvasElement,
   cssWidth: number,
 ): RenderHandle {
-  const loading = pdfjsLib.getDocument({ data: bytes.slice() });
+  // No document code runs in the preview (spec 004 threat T9, research.md R7). pdf.js runs a
+  // document's JavaScript only through its viewer's scripting sandbox, which this app never
+  // loads; the options it does take at this call are pinned off rather than left to defaults:
+  // no string evaluation (`isEvalSupported`) and no XFA form rendering (`enableXfa`).
+  const loading = pdfjsLib.getDocument({
+    data: bytes.slice(),
+    isEvalSupported: false,
+    enableXfa: false,
+  });
   let task: { cancel(): void } | null = null;
   let cancelled = false;
   let timedOut = false;
