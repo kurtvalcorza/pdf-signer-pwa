@@ -15,7 +15,7 @@ import {
   addIncrementalPlaceholder,
   reserveExistingObjectNumbers,
 } from '../../src/features/signing/incrementalUpdate';
-import { loadRevision, refKey } from '../../src/features/signing/revisions';
+import { analyzeRevisions, loadRevision, refKey } from '../../src/features/signing/revisions';
 import { BLOCK_MESSAGES } from '../../src/features/signing/signingPolicy';
 import { loadPdf } from '../../src/features/viewer/loadPdf';
 import {
@@ -405,8 +405,130 @@ describe('the fill check refuses an output that is not exactly one fill (FR-015)
     expect(await checkFill(output, second, witness)).toBeNull();
     // Against the original input the same bytes are two fills, not one.
     expect(await checkFill(input, second, witness)).toMatch(/^changed-objects:/);
+  }, 40000);
+});
+
+/** The trailer /Info object of the certified revision and of the whole file, serialized. */
+async function infoAtCertificationAndEnd(bytes: Uint8Array): Promise<[string, string]> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const analysis = await analyzeRevisions(doc, bytes);
+  if (!analysis.ok) throw new Error(`not a chain of fills: ${analysis.reason}`);
+  const info = async (end: number) => {
+    const rev = await loadRevision(bytes, end);
+    const ref = rev.doc.context.trailerInfo.Info;
+    if (!(ref instanceof PDFRef)) throw new Error('no indirect /Info');
+    return Buffer.from(rev.objects.get(refKey(ref))!).toString('latin1');
+  };
+  return [await info(analysis.ends[0]), await info(bytes.length)];
+}
+
+describe('signing as the second signer of a certified PDF (spec 004, US3)', () => {
+  it('Approver, then Witness: the first fill leaves only Witness, the second leaves nothing (T034)', async () => {
+    const input = load('certified-p2-two-empty-fields.pdf');
+    const [approver] = await eligibleFields(input);
+    expect(approver.name).toBe('Approver');
+    const first = await signIntoField(
+      input,
+      { imageBytes: PNG, format: 'png', fieldRef: approver.ref },
+      cert,
+    );
+
+    // The app's own fill is an accepted transition; the filled field is no longer offered.
+    const remaining = await eligibleFields(first);
+    expect(remaining.map((f) => f.name)).toEqual(['Witness']);
+    const info = await loadPdf(first);
+    expect(info.signing.kind === 'fill-only' && info.signing.ineligible).toEqual([]);
+
+    const second = await signIntoField(
+      first,
+      { imageBytes: PNG, format: 'png', fieldRef: remaining[0].ref },
+      cert,
+    );
+    expect(Buffer.from(first.subarray(0, input.length))).toEqual(Buffer.from(input));
+    expect(second.length).toBeGreaterThan(first.length);
+    expect(Buffer.from(second.subarray(0, first.length))).toEqual(Buffer.from(first));
+
+    // Certification plus two fills, and no empty field left to offer.
+    const doc = await PDFDocument.load(second, { updateMetadata: false });
+    const analysis = await analyzeRevisions(doc, second);
+    expect(analysis).toMatchObject({ ok: true });
+    expect(analysis.ok && analysis.ends).toHaveLength(3);
+    expect((await loadPdf(second)).signing).toMatchObject({
+      kind: 'blocked',
+      reason: 'certified-no-empty-field',
+    });
     writeFileSync(resolve(OUT, 'fill-chain-two-fields.pdf'), second);
   }, 40000);
+
+  // C1 (owner, 2026-11-16): a first fill by another tool that also rewrote the trailer /Info is
+  // accepted. pyHanko wrote these fills; each fixture's /Info must really differ, or the case
+  // would pass by accident (research.md F1).
+  it.each([
+    'certified-p2-two-empty-fields-signed-once.pdf',
+    'certified-p2-two-empty-fields-signed-once-xref-stream.pdf',
+  ])(
+    '%s: a foreign first fill that rewrote /Info leaves Witness signable (T035, C1)',
+    async (name) => {
+      const input = load(name);
+      const [atCertification, atEnd] = await infoAtCertificationAndEnd(input);
+      expect(atEnd).not.toBe(atCertification);
+
+      const fields = await eligibleFields(input);
+      expect(fields.map((f) => f.name)).toEqual(['Witness']);
+      const out = await signIntoField(
+        input,
+        { imageBytes: PNG, format: 'png', fieldRef: fields[0].ref },
+        cert,
+      );
+      expect(Buffer.from(out.subarray(0, input.length))).toEqual(Buffer.from(input));
+      expect((await loadPdf(out)).signing).toMatchObject({
+        kind: 'blocked',
+        reason: 'certified-no-empty-field',
+      });
+      writeFileSync(resolve(OUT, `fill-second-${name}`), out);
+    },
+    40000,
+  );
+
+  it('certified-p2-empty-field-signed-once.pdf: accepted under C1, but nothing is left to sign (T035)', async () => {
+    const input = load('certified-p2-empty-field-signed-once.pdf');
+    const [atCertification, atEnd] = await infoAtCertificationAndEnd(input);
+    expect(atEnd).not.toBe(atCertification);
+    expect((await loadPdf(input)).signing).toMatchObject({
+      kind: 'blocked',
+      reason: 'certified-no-empty-field',
+    });
+  });
+
+  it.each(['certified-p3-annotation-then-fill.pdf', 'certified-p2-two-revisions.pdf'])(
+    '%s: a revision that is not one fill refuses the document (T035)',
+    async (name) => {
+      const input = load(name);
+      const { signing } = await loadPdf(input);
+      expect(signing).toMatchObject({ kind: 'blocked', reason: 'changed-after-certification' });
+      expect(signing.kind === 'blocked' && signing.message).toBe(
+        BLOCK_MESSAGES['changed-after-certification'],
+      );
+      // Not even the still-empty Witness of the annotation fixture may be filled.
+      const doc = await PDFDocument.load(input, { updateMetadata: false });
+      const fields = doc.catalog.lookup(N('AcroForm'), PDFDict).lookup(N('Fields'), PDFArray);
+      for (let i = 0; i < fields.size(); i++) {
+        const ref = fields.get(i) as PDFRef;
+        await expect(
+          signIntoField(
+            input,
+            {
+              imageBytes: PNG,
+              format: 'png',
+              fieldRef: { objectNumber: ref.objectNumber, generationNumber: ref.generationNumber },
+            },
+            cert,
+          ),
+        ).rejects.toThrow(CertificationLockedError);
+      }
+    },
+    40000,
+  );
 });
 
 /**
