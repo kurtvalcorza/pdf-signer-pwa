@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -116,6 +116,112 @@ test('a certified PDF is signed in the field its author prepared, and nowhere el
     { shell: false, encoding: 'utf8' },
   );
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+});
+
+/**
+ * Spec 004, User Story 3 (T037): the second signer. The two-field fixture is signed in
+ * "Approver"; the download is opened again, offers only "Witness", and is signed there. The
+ * final file carries the certification and both fills, and the validator classes it as form
+ * filling.
+ */
+const TWO_FIELD_PDF = resolve(HERE, '../signing/fixtures/policy/certified-p2-two-empty-fields.pdf');
+const fieldLabel = (name: string) => `Field name set by the document: "${name}" (page 1)`;
+
+async function signInField(
+  page: Page,
+  pdfPath: string,
+  offered: string[],
+  pick: string,
+  outPath: string,
+): Promise<void> {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(pdfPath);
+  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.getByText(
+      'This PDF is certified. It can only be signed in one of the signature fields its author prepared.',
+    ),
+  ).toBeVisible();
+
+  // Only the empty fields are offered; a filled one is neither offered nor listed as ineligible.
+  await expect(page.getByTestId('field-outline')).toHaveCount(offered.length);
+  await expect(page.getByTestId('field-option')).toHaveText(offered.map(fieldLabel));
+  await expect(page.getByTestId('field-ineligible')).toHaveCount(0);
+
+  await page
+    .locator('input[type="file"][accept="image/png,image/jpeg"]')
+    .setInputFiles(SIGNATURE_PNG);
+  await expect(page.getByRole('button', { name: /Clean up background/ })).toBeEnabled({
+    timeout: 10_000,
+  });
+  const option = page.getByTestId('field-option').filter({ hasText: `"${pick}"` });
+  await option.click();
+  await expect(option).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('img[alt="signature"]')).toBeVisible();
+
+  const openCertSheet = page.getByRole('button', { name: /Sign with a digital certificate/ });
+  await expect(openCertSheet).toBeEnabled();
+  await openCertSheet.click();
+  await page.locator('input[type="file"][accept=".p12,.pfx"]').setInputFiles(CERT_P12);
+  await page.getByPlaceholder('Certificate password').fill(CERT_PASSWORD);
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: /Sign & Download/ }).click(),
+  ]);
+  await download.saveAs(outPath);
+  await expect(
+    page.getByText(
+      `Signed in the existing field '${pick}'. No other part of the document was changed.`,
+    ),
+  ).toBeVisible();
+}
+
+test('the second signer of a certified PDF signs the field the first one left', async ({
+  page,
+}, testInfo) => {
+  const firstPath = testInfo.outputPath('certified-two-fields-approver.pdf');
+  const secondPath = testInfo.outputPath('certified-two-fields-approver-witness.pdf');
+  await signInField(page, TWO_FIELD_PDF, ['Approver', 'Witness'], 'Approver', firstPath);
+  await signInField(page, firstPath, ['Witness'], 'Witness', secondPath);
+
+  // Each file is a byte prefix of the next; the last carries three signatures.
+  const input = readFileSync(TWO_FIELD_PDF);
+  const first = readFileSync(firstPath);
+  const second = readFileSync(secondPath);
+  expect(first.subarray(0, input.length).equals(input)).toBe(true);
+  expect(second.length).toBeGreaterThan(first.length);
+  expect(second.subarray(0, first.length).equals(first)).toBe(true);
+  expect((second.toString('latin1').match(/\/ByteRange/g) ?? []).length).toBe(3);
+
+  // Opened once more, nothing is left to sign.
+  await page.goto('/');
+  await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(secondPath);
+  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('signing-refusal')).toHaveText(
+    'This PDF is certified and has no empty signature field to sign. Ask the sender for a ' +
+      'version that includes a signature field for you.',
+  );
+  await expect(page.getByTestId('field-option')).toHaveCount(0);
+
+  const hasValidator = spawnSync(PYTHON, ['-c', 'import pyhanko'], { shell: false }).status === 0;
+  if (!hasValidator) {
+    expect(
+      process.env.REQUIRE_PYHANKO,
+      'pyHanko is required here but is not installed (scripts/requirements-verify.txt)',
+    ).toBeFalsy();
+    testInfo.annotations.push({
+      type: 'validator-not-run',
+      description: 'pyHanko is not installed, so the download was not validated in this run.',
+    });
+    return;
+  }
+  const result = spawnSync(
+    PYTHON,
+    [VALIDATOR, '--expect-certification-level', 'FORM_FILLING', secondPath],
+    { shell: false, encoding: 'utf8' },
+  );
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  expect(result.stdout.match(/ sig\[\d+\]: integrity=True/g) ?? []).toHaveLength(3);
 });
 
 /**
