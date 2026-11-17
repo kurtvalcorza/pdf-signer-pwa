@@ -16,6 +16,7 @@ import hashlib
 import re
 import sys
 import tempfile
+import time
 import zlib
 from io import BytesIO
 from pathlib import Path
@@ -195,11 +196,19 @@ def certified_field_fixtures(signer) -> dict[str, bytes]:
     t["certified-p2-empty-field-signed-once.pdf"] = fill(
         t["certified-p2-empty-field.pdf"], signer, "Approver"
     )
-    t["certified-p2-two-empty-fields-signed-once.pdf"] = fill(
-        t["certified-p2-two-empty-fields.pdf"], signer, "Approver"
+    # pyHanko's fill rewrites the trailer /Info with the time of the fill. Written in the same
+    # second as the certification, that rewrite serializes identically and the C1 case (a
+    # foreign fill that rewrote /Info is accepted) would pass by accident (research.md F1).
+    # Waiting for the next second makes /ModDate move, as it does in real use.
+    def fill_a_second_later(pdf):
+        time.sleep(1.1)
+        return fill(pdf, signer, "Approver")
+
+    t["certified-p2-two-empty-fields-signed-once.pdf"] = fill_a_second_later(
+        t["certified-p2-two-empty-fields.pdf"]
     )
-    t["certified-p2-two-empty-fields-signed-once-xref-stream.pdf"] = fill(
-        certified(MDPPerm.FILL_FORMS, two, True), signer, "Approver"
+    t["certified-p2-two-empty-fields-signed-once-xref-stream.pdf"] = fill_a_second_later(
+        certified(MDPPerm.FILL_FORMS, two, True)
     )
     t["certified-p2-late-visible-field.pdf"] = append_empty_field(
         certified(MDPPerm.FILL_FORMS, []),
