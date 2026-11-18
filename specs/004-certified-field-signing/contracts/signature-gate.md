@@ -1,7 +1,9 @@
 # Contract: signature gate additions
 
 Applies to `scripts/validate_pdf.py`, `scripts/verify-signatures.mjs`,
-`scripts/make_policy_fixtures.py` and `scripts/android-gate.mjs`.
+`scripts/make_policy_fixtures.py`, `scripts/android-gate.mjs`, and the two T042 helpers
+`scripts/pyhanko_probe.py` (pyHanko's field enumeration and own fill) and `scripts/sig-fields.mjs`
+(the same enumeration through pdf-lib).
 
 ## `validate_pdf.py --expect-certification-level <NAME> <file.pdf> ...`
 
@@ -53,3 +55,10 @@ on it. Same airplane-mode precondition as the existing run.
 
 For every fixture, the set of fully qualified signature field names pyHanko enumerates
 (`enumerate_sig_fields`) must equal the set pdf-lib finds. A mismatch fails the gate.
+
+As built (T042): the lists are compared sorted, duplicates included, with pyHanko reading
+leniently. Three fixtures are listed as known differentials, the R11 cases where the two readers
+resolve a different trailer: `certified-p2-signed-xref-decode-parms.pdf` (pyHanko cannot read
+it), `-repeated-key-prev.pdf` and `-repeated-key-root.pdf`. The app refuses all three
+(`changed-after-certification`). A listed fixture that starts to agree also fails the gate, so the
+list cannot go stale.
