@@ -240,7 +240,10 @@ serially. Fixture, validator, picker and E2E tasks can go to a second builder.
 - Estimate: 6–8 working days for one implementer from T001, inside the RFC's 6–9. The spike
   removed the largest unknown (revision parsing); the remaining risk is the hand-built fixtures of
   T003 and the Android gate mode of T040.
-- 11 of the 32 planned fixtures already exist (spike commit).
+- 11 of the 32 planned fixtures already exist (spike commit). As built there are 61 (R9–R11).
+- Success criteria to tasks (added by T047): SC-001 T027 and the quickstart §4 manual run;
+  SC-002 T023, T026, T038, T039, T040; SC-003 T028–T033; SC-004 T034–T037; SC-005 T016, T023;
+  SC-006 every phase's gate run (T048); SC-007 T003, T004, T014; SC-008 T045.
 - If C1 is answered "refuse", T035's foreign-writer expectations flip to
   `changed-after-certification` for `certified-p2-empty-field-signed-once.pdf`, and the two-field
   `signed-once` fixtures must be regenerated so their `/ModDate` differs, or they would pass by

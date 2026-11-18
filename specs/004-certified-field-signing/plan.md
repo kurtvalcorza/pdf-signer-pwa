@@ -37,13 +37,14 @@ untouched.
 
 **Performance Goals**: classification on open adds one parse per signed revision. Target: under
 1 s added on a 10-page form on a mid-range phone; the largest allowed file at the revision cap is
-measured in T041 before the cap is fixed.
+measured in T041 before the cap is fixed. Measured 2026-11-18 (research.md F3): 4.5 s (one 99 MB
+stream) to 13.1 s (5,000 pages) median in Node at the cap of 8; the cap's fate is the owner's.
 
 **Constraints**: input bytes are a strict prefix of the output; fail closed on anything
 unclassifiable; no distribution-specific branch in the signing path; no network.
 
 **Scale/Scope**: about 7 source files changed, 2 added; 21 fixtures added to the 11 the spike
-produced; 48 tasks.
+produced (61 as built: the review rounds R9–R11 added more); 48 tasks.
 
 **Decided 2026-11-16 (owner)**: C1 (a) and C2 (a), see the table below. They were: FR-008 (`/Info` rewritten by a foreign fill) and FR-009 (revision cap). Each is
 one condition or one constant in `revisions.ts`; neither changes the structure below.
