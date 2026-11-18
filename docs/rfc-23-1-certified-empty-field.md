@@ -1,6 +1,6 @@
 # RFC 23-1: Sign a certified PDF through an existing empty signature field
 
-Status: **accepted 2026-11-15, not implemented**. Issue #23, item 1. Owner decisions recorded in
+Status: **accepted 2026-11-15, implemented in v0.3.0** (spec 004, `specs/004-certified-field-signing/`; release pending the owner's Acrobat check, T045, and the tag's Android emulator gate, T040). Issue #23, item 1. Owner decisions recorded in
 [§8](#8-owner-decisions): D1–D9 option (a), D10 option (a) (all three distributions together). Follows SEC-02 in [audit.md](audit.md).
 
 ## Summary

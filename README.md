@@ -16,6 +16,7 @@ Works offline once loaded, and installs like a normal app on Android.
 - [Sign a PDF — step by step](#sign-a-pdf--step-by-step)
 - [Create a Digital ID inside the app](#create-a-digital-id-inside-the-app)
 - [Sign a PDF that is already signed (counter-signing)](#sign-a-pdf-that-is-already-signed-counter-signing)
+- [Sign a certified PDF](#sign-a-certified-pdf)
 - [Handy extras](#handy-extras)
 - [Troubleshooting](#troubleshooting)
 - [Is my signature legally valid?](#is-my-signature-legally-valid)
@@ -107,7 +108,7 @@ document routed to several approvers.
 
 - Open the already-signed PDF. The app detects it and tells you it will **append** your signature
   **without altering the signed pages**, so the existing signatures **stay valid**. Certified PDFs
-  are the exception: they can't be signed here (see Troubleshooting).
+  work differently: see [Sign a certified PDF](#sign-a-certified-pdf).
 - Place your signature on **any page**, then sign with your Digital ID as usual.
 - Your signature is added as a new, **visible** signature field (with your image) on top of the
   document, and everyone's earlier signatures remain intact and verifiable.
@@ -115,6 +116,33 @@ document routed to several approvers.
 **One limitation:** on an already-signed PDF, only the signature you're adding gets a visible
 appearance. Extra decorative image *stamps* (beyond your signature) can't be baked in, because that
 would rewrite the already-signed pages and break the existing signatures — so those are skipped.
+
+---
+
+## Sign a certified PDF
+
+A **certified** PDF carries a signature from its author that says which later changes are allowed.
+Adding a new signature field is never one of them, so on a certified PDF the app signs **only into
+an empty signature field the author already prepared**, and the certification stays valid.
+
+- Open the certified PDF. The app shows a notice and outlines the empty signature fields it can
+  sign. There is no way to draw your own box.
+- Pick a field, add your signature image and Digital ID, and sign. Your signature fills that field.
+- A second signer opens your signed copy and signs the next empty field the same way.
+
+**What can be signed:** a PDF certified to allow **form filling** (with or without comments) that
+holds at least one empty signature field which was there when it was certified, is visible on one
+page, and is not locked or read-only.
+
+**What can't, and the app says why when you open the file:**
+
+- a PDF certified with **no changes allowed**;
+- a certified PDF with **no empty signature field**: ask the sender for a version with one;
+- a field the app can't safely sign (locked, hidden, read-only, on several pages, sharing its
+  appearance with another field, and similar): each one is listed with its reason;
+- a PDF **changed after it was certified** in a way the app can't check, or signed more than 8
+  times since it was certified;
+- XFA forms, and forms that are not set up the way a signed form must be.
 
 ---
 
@@ -132,9 +160,10 @@ would rewrite the already-signed pages and break the existing signatures — so 
 ## Troubleshooting
 
 - **"Incorrect certificate password."** Re-enter the password for your `.p12` / `.pfx` file.
-- **"…cannot be signed here."** The PDF has a certification or field-lock policy. This app signs by
-  adding a new signature field, which those policies don't permit, so it refuses rather than break
-  the existing signature. The app tells you when you open the file, and signing stays disabled.
+- **"…cannot be signed here."** The PDF has a certification or field-lock policy that the app can't
+  meet without breaking the existing signature, so it refuses. A certified PDF can still be signed
+  in an empty field its author prepared ([details](#sign-a-certified-pdf)). The app tells you the
+  reason when you open the file, and signing stays disabled.
 - **"This signed PDF could not be counter-signed…"** The file's structure could not take an appended
   signature without hiding the earlier one, so it was left unsigned.
 - **"…is too large."** The app works entirely in your device's memory, so it caps what it opens:
