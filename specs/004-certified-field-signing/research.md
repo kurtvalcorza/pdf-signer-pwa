@@ -117,6 +117,42 @@ files near the size limit the cost is linear in size times revisions **[inferred
 of signed revisions after certification needs a cap. The value is FR-009's open question; T041
 measures the largest allowed file at the chosen cap before it is fixed.
 
+**T041 measurement (2026-11-18) [run].** Two generated documents at the limits of
+`src/lib/limits.ts`, each certified at P=2 with nine empty fields and then filled eight times by
+pyHanko, so that eight signed revisions follow the certification (the C2 cap) and one field is
+left: the app classifies both `fill-only` after walking all eight revisions. *one-stream*: one
+page and one uncompressed random stream, 104,186,441 bytes (99.4 MB). *many-pages*: 5,000 pages
+(the page limit) with a ~20 KB content stream each, 103,688,021 bytes (98.9 MB), about 10,000
+indirect objects. Generated at bench time, not committed. Windows 11, one developer laptop.
+
+| Shape | Node 26, `classifySigning` alone (5 runs) | Node 26, whole `loadPdf` | Production web build in Chromium, file chosen to certified notice shown |
+| :-- | :-- | :-- | :-- |
+| one-stream | median 4.5 s, max 4.7 s | median 4.4 s, max 5.2 s | 6.4, 7.8, 12.0 s (3 runs); 16.4 s at 4x CPU throttle |
+| many-pages | median 13.1 s, max 15.9 s | median 13.0 s, max 15.6 s | 22.0, 31.5, 35.1 s (3 runs); 48.0 s at 4x CPU throttle |
+
+The parse itself is small (30 ms and 0.6–1.0 s): the cost is the eight extra revision loads and
+the object-by-object comparison, and it grows with object count more than with bytes. In the
+browser the runs slow down one after another on the same page (memory pressure is
+**[inferred]**), and the classification runs on the main thread, so the page does not respond for
+that long. The worst throttled figure is below the 60 s `loadMs` budget, which bounds the pdf.js
+load, not this check. The cap stays at 8; whether these times are acceptable, or whether the cap
+should be lowered or the check moved off the main thread, is the owner's call (T041 records it
+for that decision; nothing in `src/` changed). **Owner ruling (2026-11-18): keep 8.** Moving the
+classification off the main thread is a follow-up, not part of v0.3.0.
+
+To reproduce (opt-in; neither file is part of `vitest run` or the default Playwright run), with
+the gate's pyHanko installed and the outputs written outside the repository:
+
+```bash
+python tests/e2e-perf/t041/make_cap_pdf.py one-stream <dir>/cap-one-stream.pdf 99.3
+python tests/e2e-perf/t041/make_cap_pdf.py many-pages <dir>/cap-many-pages.pdf 98
+npx vite-node tests/e2e-perf/t041/classify-cap.bench.ts <dir>/cap-many-pages.pdf 5   # Node
+npm run build && T041_DIR=<dir> npx playwright test --config playwright.perf.config.ts t041-cap   # browser
+```
+
+The Playwright spec skips itself unless `T041_DIR` is set, so `npm run perf` reports its four
+cases as skipped.
+
 ### Finding F4 — things the real module must add that the spike skipped
 
 - Walk `/Kids` with the existing cycle guard and the 2,000-node cap; the spike reads root-level

@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-16
 
-**Status**: Draft
+**Status**: Implemented (US1–US4 merged or on `feat/004-us4-release-prep`); release v0.3.0 waits on T040, T045 and T046
 
 **Input**: User description: "Issue #23 item 1: sign a certified (DocMDP P=2/P=3) PDF by filling an existing empty signature field. The design is accepted in docs/rfc-23-1-certified-empty-field.md (owner decisions D1–D10, all option (a)). Owner decisions of 2026-11-16: run it as spec 004; build the full later-revision rule now, including a second signer after a first (no narrowing fallback); generated fixtures now and a real-world form later; the 'no eligible field' message suggests asking the sender for a version with a signature field; an Acrobat Reader spot-check before release, not before merge; release as v0.3.0 across all three distributions."
 
@@ -73,7 +73,8 @@ no stored data. It is bound by three principles in particular:
   the document `/Info` dictionary: accept or refuse? → A: (a) Accept a rewrite of the trailer
   `/Info` dictionary only. Still refuse XMP `/Metadata` and every other change.
 - Q (C2, FR-009): Cap on signed revisions after certification? → A: (a) 8. T041 measures the
-  largest allowed file and may confirm or lower it.
+  largest allowed file and may confirm or lower it. Measured 2026-11-18 (research.md F3): the cap
+  stays at 8 until the owner rules on the measured times.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -274,7 +275,7 @@ validate the file that distribution produced.
   2,000 form nodes (T10) and above a fixed number of signed revisions after certification.
   The limit is 8 signed revisions after certification (C2, decided 2026-11-16); each one costs a
   full re-read of the document, so T041 measures the largest allowed file and may confirm or
-  lower it.
+  lower it (measured 2026-11-18, research.md F3; cap unchanged pending the owner).
 - **FR-010**: Each ineligible empty field MUST carry one specific reason, shown to the user (R3,
   R5, R6, R12–R17).
 

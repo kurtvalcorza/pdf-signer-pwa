@@ -1,7 +1,9 @@
 # Contract: signature gate additions
 
 Applies to `scripts/validate_pdf.py`, `scripts/verify-signatures.mjs`,
-`scripts/make_policy_fixtures.py` and `scripts/android-gate.mjs`.
+`scripts/make_policy_fixtures.py`, `scripts/android-gate.mjs`, and the two T042 helpers
+`scripts/pyhanko_probe.py` (pyHanko's field enumeration and own fill) and `scripts/sig-fields.mjs`
+(the same enumeration through pdf-lib).
 
 ## `validate_pdf.py --expect-certification-level <NAME> <file.pdf> ...`
 
@@ -29,7 +31,7 @@ Exit 0 iff, for every file:
 | `certified-p2-signed-xref-repeated-key-field.pdf`, `-repeated-key-root.pdf`, `-repeated-key-prev.pdf`, `-size-low.pdf`, `-size-short.pdf`, `-decode-parms.pdf` | must not validate in the default mode |
 | `certified-p2-signed-xref-control.pdf`, `-control-xref-stream.pdf` | fill-only for the app, so validated as inputs (first row) |
 | `certified-p2-signed-xref-glued-definitions.pdf` | none: the validator passes it and the app refuses it (research.md R11) |
-| pyHanko's own fill of `certified-p2-empty-field-kid-widget.pdf` and of `certified-p2-late-visible-field.pdf` (written to a temp dir by the gate) | `--expect-policy-violation` |
+| pyHanko's own fill of `certified-p2-empty-field-kid-widget.pdf` (written to a temp dir by the gate). Not of `certified-p2-late-visible-field.pdf`: its unfilled input is already a policy violation (row above), so a control on its fill could not fail (review US4-R1) | `--expect-policy-violation` |
 
 The gate fails if any of these lists is empty (no vacuous pass), as it already does for the
 tampered set.
@@ -53,3 +55,10 @@ on it. Same airplane-mode precondition as the existing run.
 
 For every fixture, the set of fully qualified signature field names pyHanko enumerates
 (`enumerate_sig_fields`) must equal the set pdf-lib finds. A mismatch fails the gate.
+
+As built (T042): the lists are compared sorted, duplicates included, with pyHanko reading
+leniently. Three fixtures are listed as known differentials, the R11 cases where the two readers
+resolve a different trailer: `certified-p2-signed-xref-decode-parms.pdf` (pyHanko cannot read
+it), `-repeated-key-prev.pdf` and `-repeated-key-root.pdf`. The app refuses all three
+(`changed-after-certification`). A listed fixture that starts to agree also fails the gate, so the
+list cannot go stale.

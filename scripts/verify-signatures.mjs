@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { pdfLibSigFieldNames } from './sig-fields.mjs';
 
 const OUT = resolve('tests/signing/out');
 const OUT_VIOLATIONS = resolve('tests/signing/out-violations');
@@ -25,6 +26,7 @@ const POLICY = resolve('tests/signing/fixtures/policy');
 const PY = process.env.PYTHON || 'python';
 const VITEST_BIN = resolve('node_modules/vitest/vitest.mjs');
 const VALIDATOR = resolve('scripts/validate_pdf.py');
+const PROBE = resolve('scripts/pyhanko_probe.py');
 
 // shell:false + discrete argv so paths containing spaces (e.g. the user profile
 // path) are passed intact on Windows.
@@ -136,6 +138,78 @@ for (const f of [
     process.exit(1);
   }
 }
+
+// pyHanko's OWN fill of a field the app refuses must be a violation by pyHanko's reading as
+// well: a field split from its widget. Its input validates (modification NONE), so only the
+// fill can turn this red. If pyHanko accepted it, the app's refusal would rest on our rules alone.
+// certified-p2-late-visible-field.pdf is deliberately not here: the unfilled input is already a
+// policy violation (the late field itself is the disallowed change) and sits in the violations
+// list above, so a control on its fill could never fail (review US4-R1).
+console.log("› pyHanko's own fill of a refused field must be a policy violation…");
+const ownFillDir = mkdtempSync(join(tmpdir(), 'pdf-signer-ownfill-'));
+const ownFills = [
+  ['certified-p2-empty-field-kid-widget.pdf', 'Approver'],
+].map(([fixture, field]) => {
+  const out = join(ownFillDir, `own-fill-${fixture}`);
+  if (run(PY, [PROBE, 'fill', resolve(POLICY, fixture), field, out]) !== 0) {
+    console.error(`✗ pyHanko could not fill ${field} of ${fixture}`);
+    process.exit(1);
+  }
+  return out;
+});
+if (run(PY, [VALIDATOR, '--expect-policy-violation', ...ownFills]) !== 0) process.exit(1);
+rmSync(ownFillDir, { recursive: true, force: true });
+
+// Threat T8: pdf-lib reads objects in file order, pyHanko through the cross-reference data. On
+// every fixture both must name the same signature fields. The listed fixtures are the parser
+// differentials of research.md R11, each refused by the app (fixtureClassification.test.ts);
+// each must still differ, so the list cannot go stale.
+console.log('› Signature field enumeration: pyHanko and pdf-lib must agree on every fixture (T8)…');
+const KNOWN_DIVERGENT = new Set([
+  'certified-p2-signed-xref-decode-parms.pdf', // pyHanko fails to read the xref stream at all
+  'certified-p2-signed-xref-repeated-key-prev.pdf', // first /Prev wins for pyHanko, last for pdf-lib
+  'certified-p2-signed-xref-repeated-key-root.pdf', // likewise for /Root
+]);
+const fixtures = pdfsIn(POLICY);
+if (fixtures.length === 0) {
+  console.error('✗ no fixtures to cross-check (T8 would pass vacuously)');
+  process.exit(1);
+}
+const probe = spawnSync(PY, [PROBE, 'fields', ...fixtures], {
+  shell: false,
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'ignore'],
+  maxBuffer: 16 * 1024 * 1024,
+});
+if (probe.status !== 0) {
+  console.error('✗ pyHanko field enumeration failed to run');
+  process.exit(1);
+}
+const pyFields = JSON.parse(probe.stdout);
+let enumerationOk = true;
+for (const file of fixtures) {
+  const name = basename(file);
+  const py = pyFields[file];
+  let js;
+  try {
+    js = await pdfLibSigFieldNames(new Uint8Array(readFileSync(file)));
+  } catch (err) {
+    js = { error: String(err) };
+  }
+  const agree = py !== undefined && !py.error && JSON.stringify(py.fields) === JSON.stringify(js);
+  const expected = !KNOWN_DIVERGENT.has(name);
+  const shown = `pyHanko ${JSON.stringify(py?.fields ?? py?.error)} pdf-lib ${JSON.stringify(js)}`;
+  if (agree === expected) {
+    console.log(`  ${agree ? 'same' : 'differs (known)'} ${name}${agree ? '' : `: ${shown}`}`);
+  } else {
+    enumerationOk = false;
+    console.error(
+      `✗ ${name}: ${agree ? 'listed as divergent but now agrees' : `enumerations differ: ${shown}`}`,
+    );
+  }
+}
+if (!enumerationOk) process.exit(1);
+console.log(`  ${fixtures.length} fixtures, ${KNOWN_DIVERGENT.size} known differentials`);
 
 // Negative controls written by the tests (FR-021): the append-a-field path forced onto a
 // certified PDF, and a fill output with one more disallowed revision. If either passed, the

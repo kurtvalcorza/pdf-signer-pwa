@@ -12,7 +12,22 @@ digital signature). Installable on Android, deployed static on Vercel.
 - **Design notes (technical origin)**: [DESIGN.md](DESIGN.md) — the original technical design doc; the formal, technology-agnostic spec is `specs/001-pdf-signer/spec.md`.
 
 <!-- SPECKIT START -->
-## Active feature: 003-android-packaging (US1–US4 implemented and gated locally; release pending)
+## Active feature: 004-certified-field-signing (US1–US4 built; release v0.3.0 pending)
+
+Sign a certified PDF (DocMDP P=2/P=3) only through an empty signature field its author prepared,
+after checking the field and every revision since the certification; everything else certified is
+refused with a reason. Issue #23 item 1, [RFC 23-1](docs/rfc-23-1-certified-empty-field.md).
+
+- **Tasks: [specs/004-certified-field-signing/tasks.md](specs/004-certified-field-signing/tasks.md)**.
+  Open: T040 (first Android emulator run on the v0.3.0 tag), Kurt's T045 (Acrobat Reader check) and
+  T046 (publish v0.3.0 from one commit), T048's manual app run.
+- Spec, plan, research, data model, contracts, quickstart: same folder. Gate:
+  `REQUIRE_PYHANKO=1 npm run verify:signatures`; cap `MAX_SIGNED_REVISIONS_AFTER_CERTIFICATION = 8`
+  (owner ruling 2026-11-18, research F3).
+- Rulings: C1 accept a foreign writer's trailer `/Info` rewrite only; object streams after the
+  certification are refused; rule 5d in full.
+
+## Previous feature: 003-android-packaging (v0.2.0 shipped)
 
 - **Tasks: [specs/003-android-packaging/tasks.md](specs/003-android-packaging/tasks.md)**: 49 tasks.
   Release key (T039), `android-release` environment (T040) and pinned fingerprint (T041) done
