@@ -31,7 +31,7 @@ Exit 0 iff, for every file:
 | `certified-p2-signed-xref-repeated-key-field.pdf`, `-repeated-key-root.pdf`, `-repeated-key-prev.pdf`, `-size-low.pdf`, `-size-short.pdf`, `-decode-parms.pdf` | must not validate in the default mode |
 | `certified-p2-signed-xref-control.pdf`, `-control-xref-stream.pdf` | fill-only for the app, so validated as inputs (first row) |
 | `certified-p2-signed-xref-glued-definitions.pdf` | none: the validator passes it and the app refuses it (research.md R11) |
-| pyHanko's own fill of `certified-p2-empty-field-kid-widget.pdf` and of `certified-p2-late-visible-field.pdf` (written to a temp dir by the gate) | `--expect-policy-violation` |
+| pyHanko's own fill of `certified-p2-empty-field-kid-widget.pdf` (written to a temp dir by the gate). Not of `certified-p2-late-visible-field.pdf`: its unfilled input is already a policy violation (row above), so a control on its fill could not fail (review US4-R1) | `--expect-policy-violation` |
 
 The gate fails if any of these lists is empty (no vacuous pass), as it already does for the
 tampered set.

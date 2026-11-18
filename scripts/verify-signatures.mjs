@@ -139,14 +139,16 @@ for (const f of [
   }
 }
 
-// pyHanko's OWN fill of two fields the app refuses must be a violation by pyHanko's reading as
-// well: a field split from its widget, and a field added after certification. If pyHanko
-// accepted its own fill of either, the app's refusal would rest on our rules alone.
+// pyHanko's OWN fill of a field the app refuses must be a violation by pyHanko's reading as
+// well: a field split from its widget. Its input validates (modification NONE), so only the
+// fill can turn this red. If pyHanko accepted it, the app's refusal would rest on our rules alone.
+// certified-p2-late-visible-field.pdf is deliberately not here: the unfilled input is already a
+// policy violation (the late field itself is the disallowed change) and sits in the violations
+// list above, so a control on its fill could never fail (review US4-R1).
 console.log("› pyHanko's own fill of a refused field must be a policy violation…");
 const ownFillDir = mkdtempSync(join(tmpdir(), 'pdf-signer-ownfill-'));
 const ownFills = [
   ['certified-p2-empty-field-kid-widget.pdf', 'Approver'],
-  ['certified-p2-late-visible-field.pdf', 'Late'],
 ].map(([fixture, field]) => {
   const out = join(ownFillDir, `own-fill-${fixture}`);
   if (run(PY, [PROBE, 'fill', resolve(POLICY, fixture), field, out]) !== 0) {
