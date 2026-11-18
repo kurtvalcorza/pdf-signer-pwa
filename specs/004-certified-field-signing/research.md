@@ -137,7 +137,8 @@ browser the runs slow down one after another on the same page (memory pressure i
 that long. The worst throttled figure is below the 60 s `loadMs` budget, which bounds the pdf.js
 load, not this check. The cap stays at 8; whether these times are acceptable, or whether the cap
 should be lowered or the check moved off the main thread, is the owner's call (T041 records it
-for that decision; nothing in `src/` changed).
+for that decision; nothing in `src/` changed). **Owner ruling (2026-11-18): keep 8.** Moving the
+classification off the main thread is a follow-up, not part of v0.3.0.
 
 To reproduce (opt-in; neither file is part of `vitest run` or the default Playwright run), with
 the gate's pyHanko installed and the outputs written outside the repository:
