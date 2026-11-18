@@ -139,6 +139,19 @@ load, not this check. The cap stays at 8; whether these times are acceptable, or
 should be lowered or the check moved off the main thread, is the owner's call (T041 records it
 for that decision; nothing in `src/` changed).
 
+To reproduce (opt-in; neither file is part of `vitest run` or the default Playwright run), with
+the gate's pyHanko installed and the outputs written outside the repository:
+
+```bash
+python tests/e2e-perf/t041/make_cap_pdf.py one-stream <dir>/cap-one-stream.pdf 99.3
+python tests/e2e-perf/t041/make_cap_pdf.py many-pages <dir>/cap-many-pages.pdf 98
+npx vite-node tests/e2e-perf/t041/classify-cap.bench.ts <dir>/cap-many-pages.pdf 5   # Node
+npm run build && T041_DIR=<dir> npx playwright test --config playwright.perf.config.ts t041-cap   # browser
+```
+
+The Playwright spec skips itself unless `T041_DIR` is set, so `npm run perf` reports its four
+cases as skipped.
+
 ### Finding F4 — things the real module must add that the spike skipped
 
 - Walk `/Kids` with the existing cycle guard and the 2,000-node cap; the spike reads root-level
