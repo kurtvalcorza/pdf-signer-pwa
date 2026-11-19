@@ -176,6 +176,7 @@ T049 deletes it.
   - choose Forget and confirm the item is gone (AS2);
   - uninstall, reinstall and confirm nothing remains (AS3).
 - [ ] T036 [OWNER] [US3] Run Q9 on two physical phones (device-to-device setup with a remembered certificate on the old phone) and report the result. An agent then records it in `research.md` R10 and updates SC-004's "mechanism only" note in `plan.md`
+  - **Timed step (SC-001):** on the phone that is closer to mid-range, with every network disabled since install, time a first-time sign from opening a PDF to the saved, signed copy. Report the phone model, the Android and WebView versions, and the seconds. SC-001 passes under 60 s. The agent records the timing in `research.md` next to R10.
 
 **Checkpoint**: US3's cloud half is behavioural, and the D2D half is by mechanism until T036.
 
