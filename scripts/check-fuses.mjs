@@ -26,12 +26,13 @@ const ENABLED = 49;
 
 // The release set. Every fuse @electron/fuses knows is listed, so a new one cannot slip in unlisted
 // (the loop below fails on a fuse this table does not name). All are hardened except
-// EnableCookieEncryption, kept at Electron's default (off) as on main: turning it on is a separate
-// follow-up (on Linux it may create a desktop-keyring entry; unverified). Asar integrity validation
-// is burned on, but Electron enforces it on Windows (and macOS) only, not on Linux.
+// EnableCookieEncryption, kept at Electron's default (off) by decision (#36): the app sets no cookies,
+// and on Linux it may create a desktop-keyring entry, which no real GNOME/KDE run has ruled out.
+// Asar integrity validation is burned on, but Electron enforces it on Windows (and macOS) only, not
+// on Linux.
 export const HARDENED = {
   RunAsNode: DISABLED, // ELECTRON_RUN_AS_NODE would turn the binary into a plain Node runtime
-  EnableCookieEncryption: DISABLED, // Electron default; the app sets no cookies (follow-up to harden)
+  EnableCookieEncryption: DISABLED, // Electron default, kept off by decision (#36); the app sets no cookies
   EnableNodeOptionsEnvironmentVariable: DISABLED, // NODE_OPTIONS could --require arbitrary code
   EnableNodeCliInspectArguments: DISABLED, // --inspect would attach a debugger to the main process
   EnableEmbeddedAsarIntegrityValidation: ENABLED, // Windows checks app.asar against its embedded hash
