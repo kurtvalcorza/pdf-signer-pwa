@@ -550,6 +550,28 @@ account, machine name, SID, DNS suffix or private address. The gate has still no
 - Not done: an IPv6 positive control. An IPv6 attempt by the app is judged like any other, but
   no control proves the block and audit path for IPv6 on the runner.
 
+### Window 3's quit budget (2026-11-20)
+
+The first armed run inside `release-desktop.yml`,
+[44760981065](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/44760981065) on c18b632,
+saw no egress but failed because the release exe was killed 10 s after its window was closed.
+Nothing in `electron/` had changed since run 43814441249. The runner image had (win25-vs2026
+20261103.298 to 20261116.315), and on it every armed quit was slow. From the renderer's exit to the
+browser process's exit took 22.1 s (control) and 24.3 s (real-run) on the probe, against 0.09 to
+0.22 s in run 43814441249 (process audit events in each run's evidence). Playwright waits for those
+two exits with no timeout, so no kill cut them short. In window 3 the release root was gone 29.6 s
+after the close, 19.5 s after `taskkill /F`, so even a forced teardown was slow: **[inferred]** the
+slowness is the host's, not the app's own quit, and it is not explained. The gate step's preamble
+also took 50 s (job log: step start 15:20:05, gate start 15:20:55). The renderer exited first, at
+about the time the close was sent **[inferred]**: the run recorded no close timestamp, which window
+3 now records. Unarmed on the same runner, the packaged probe's whole launch, sign and quit took
+6.6 s.
+
+The budget is now `-QuitSeconds 60` (1 to 600), about 2 times the slowest exit seen. Window 3 now
+writes `releaseIdleQuit` to `verdict.json`: the return value of `CloseMainWindow`, the pid it
+closed, each tree process's time to exit, and whether and when a kill was needed. A kill still
+fails the gate.
+
 ## Sources
 
 - Microsoft Learn, _WFP auditing_: subcategory GUIDs and event IDs 5152–5159.
