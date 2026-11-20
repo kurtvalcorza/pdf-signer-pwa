@@ -32,6 +32,12 @@ param(
   # Attempts per Node TCP/UDP control. 3 on every release; 20 for the evidence run (RFC section 6.1).
   [int]$Repeat = 3,
   [int]$IdleSeconds = 15,
+  # How long window 3 waits for the release exe to exit after its window is closed. Was 10 s. In run
+  # 44760981065 (image win25-vs2026 20261116.315) every armed quit was slow, with no code change since
+  # the passing run: the probe's quits, which Playwright waits for without a timeout, took 22.1 s and
+  # 24.3 s from the window closing to the browser process exiting, so 10 s killed a quit that was still
+  # going. 60 s is about 2.5 times the slowest natural quit seen. Each quit's timing goes in verdict.json.
+  [int]$QuitSeconds = 60,
   # DNS names (wildcards allowed) an in-tree process may look up without failing the gate. Empty by
   # default: every entry is a recorded residual and an owner decision, never a convenience.
   [string[]]$AllowDnsName = @(),
@@ -227,6 +233,31 @@ function Test-AuditArmed {
 
 function Format-Failure($f) { "pid $($f.Pid) at $($f.Time): $($f.Detail)" }
 
+# How window 3's quit went, from what the caller measured. Pure, so -SelfTest covers it. Exits holds
+# one record per process of the tree, captured before the close: Pid, Root, and ExitedAfter (seconds
+# from the close to the exit; $null if it was still running when measured). KilledAfter is when the
+# kill was sent, $null if none was needed. Returns the detail line and the problem ($null if none).
+function Get-QuitReport {
+  param([int]$ClosedPid, [bool]$CloseSent, [object[]]$Exits = @(), $KilledAfter = $null, [int]$BudgetSeconds)
+  $killed = $null -ne $KilledAfter
+  $parts = @($Exits | Sort-Object @{ Expression = { -not $_.Root } }, Pid | ForEach-Object {
+      $who = if ($_.Root) { "root pid $($_.Pid)" } else { "child pid $($_.Pid)" }
+      if ($null -eq $_.ExitedAfter) { "$who still running" }
+      else {
+        $when = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:F1} s', [double]$_.ExitedAfter)
+        if ($killed -and $_.ExitedAfter -ge $KilledAfter) { "$who exited at $when, after the kill" } else { "$who exited at $when" }
+      }
+    })
+  $detail = "CloseMainWindow on pid $ClosedPid returned $CloseSent; " + $(if ($parts) { $parts -join ', ' } else { 'no process measured' }) +
+    '; ' + $(if ($killed) { [string]::Format([Globalization.CultureInfo]::InvariantCulture, 'kill needed at {0:F1} s', [double]$KilledAfter) } else { 'no kill needed' })
+  $problem = if (-not $CloseSent) {
+    "release-idle: CloseMainWindow found no main window to close, so the quit was never requested and the exe was killed ($detail)."
+  } elseif ($killed) {
+    "release-idle: the release exe did not quit within $BudgetSeconds s of its window being closed and had to be killed, so the quit path was not measured ($detail)."
+  } else { $null }
+  [pscustomobject]@{ Detail = $detail; Problem = $problem }
+}
+
 # ----------------------------------------------------------------------------------------------------
 # -SelfTest: replay events recorded on the runner, plus synthetic edge cases. No elevation, no changes.
 # ----------------------------------------------------------------------------------------------------
@@ -349,6 +380,19 @@ if ($SelfTest) {
   $v = Get-EgressVerdict -Sec $fx.control.sec -Dns $fx.control.dns -PackageDirs $dirs
   $text = $v.Evidence | ConvertTo-Json -Depth 4 -Compress
   Check 'evidence holds no out-of-tree process, account, SID or local address' ($text -notmatch 'guestagent|svchost|runner|SubjectUser|S-1-5-|SourceAddress|10\.0\.0\.4' -and $text -match '192\.0\.2\.1')
+
+  # Window 3's quit report. Timings are those of run 44760981065's release-idle tree.
+  $exits = @(
+    [pscustomobject]@{ Pid = 8944; Root = $true; ExitedAfter = 29.56 }
+    [pscustomobject]@{ Pid = 8236; Root = $false; ExitedAfter = 0.02 }
+    [pscustomobject]@{ Pid = 8000; Root = $false; ExitedAfter = 10.02 }
+  )
+  $q = Get-QuitReport -ClosedPid 8944 -CloseSent $true -Exits $exits -BudgetSeconds 60
+  Check 'a natural quit within the budget is no problem, and its timings are reported' ($null -eq $q.Problem -and $q.Detail -match 'returned True' -and $q.Detail -match 'root pid 8944 exited at 29\.6 s' -and $q.Detail -match 'no kill needed')
+  $q = Get-QuitReport -ClosedPid 8944 -CloseSent $true -Exits $exits -KilledAfter 10.0 -BudgetSeconds 10
+  Check 'a killed quit fails and says which exits came after the kill' ($q.Problem -like 'release-idle: *did not quit within 10 s*had to be killed*' -and $q.Problem -match 'root pid 8944 exited at 29\.6 s, after the kill' -and $q.Problem -match 'child pid 8236 exited at 0\.0 s[,;]' -and $q.Problem -match 'kill needed at 10\.0 s')
+  $q = Get-QuitReport -ClosedPid 8944 -CloseSent $false -Exits @([pscustomobject]@{ Pid = 8944; Root = $true; ExitedAfter = $null }) -KilledAfter 0.0 -BudgetSeconds 60
+  Check 'no main window to close fails as a quit never requested' ($q.Problem -like '*found no main window*never requested*' -and $q.Problem -match 'returned False' -and $q.Problem -match 'root pid 8944 still running')
 
   if ($failed) { throw "windows-egress-gate self-test: $failed check(s) failed" }
   Write-Host 'windows-egress-gate self-test: all checks passed'
@@ -536,11 +580,30 @@ try {
     Start-Sleep -Seconds $IdleSeconds
     if ($p.HasExited) { $problems.Add("release-idle: the release exe exited on its own (exit $($p.ExitCode)) before the idle period ended.") }
     else {
-      $null = $p.CloseMainWindow()
-      if (-not $p.WaitForExit(10000)) {
-        taskkill /PID $p.Id /T /F | Out-Null
-        $problems.Add('release-idle: the release exe did not quit when its window was closed and had to be killed, so the quit path was not measured.')
+      # The tree as it stands before the close, each with a handle held so its exit time can still be
+      # read once it is gone: a failed quit then says which process held it up, and for how long.
+      $tree = @($p) + @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" | ForEach-Object {
+          try { $c = [Diagnostics.Process]::GetProcessById([int]$_.ProcessId); $null = $c.Handle; $c } catch { $null = $_ }
+        })
+      $closedAt = Get-Date
+      $sent = $p.CloseMainWindow()
+      $killedAfter = $null
+      if (-not $sent -or -not $p.WaitForExit($QuitSeconds * 1000)) {
+        $killedAfter = ((Get-Date) - $closedAt).TotalSeconds
+        taskkill /PID $p.Id /T /F 2>$null | Out-Null
       }
+      foreach ($c in $tree) { $null = $c.WaitForExit(5000) }
+      $exits = @($tree | ForEach-Object {
+          [pscustomobject]@{ Pid = $_.Id; Root = ($_.Id -eq $p.Id); ExitedAfter = if ($_.HasExited) { [Math]::Round(($_.ExitTime - $closedAt).TotalSeconds, 3) } else { $null } }
+        })
+      $quit = Get-QuitReport -ClosedPid $p.Id -CloseSent $sent -Exits $exits -KilledAfter $killedAfter -BudgetSeconds $QuitSeconds
+      Write-Host "[release-idle] quit: $($quit.Detail)"
+      $summary.releaseIdleQuit = [ordered]@{
+        closedPid = $p.Id; closeMainWindow = $sent; budgetSeconds = $QuitSeconds
+        killedAfter = if ($null -ne $killedAfter) { [Math]::Round($killedAfter, 3) } else { $null }
+        exits = $exits; detail = $quit.Detail
+      }
+      if ($quit.Problem) { $problems.Add($quit.Problem) }
     }
   } finally {
     Remove-Item Env:PORTABLE_EXECUTABLE_DIR -ErrorAction SilentlyContinue
