@@ -16,7 +16,7 @@ inherited from the review.
 | SEC-11 | Claims corrected; `vercel.json` sends CSP and frame protections on documents only. | `tests/e2e-pwa/deploy-headers.spec.ts` applies those rules to the real build. Not yet observed on a deployment. |
 | SEC-12 | Actions pinned, permissions scoped per job. | Runs on the next release. Tag protection is a repository setting. |
 | SEC-13 | New certificates use AES-256 with 12-character passwords. | Opened with OpenSSL-backed `cryptography`. Acrobat import needs a manual check. |
-| SEC-14 | Lint, audit and policy gates in CI. | The Windows release gate now decides at connect time (`scripts/windows-egress-gate.ps1`, RFC 23-2): drafted, measured on the runner, not yet merged. Scope and residuals below. |
+| SEC-14 | Lint, audit and policy gates in CI. | The Windows release gate now decides at connect time (`scripts/windows-egress-gate.ps1`, RFC 23-2): merged (#38) and passed 3 consecutive `release-desktop.yml` dry runs (#46). Scope and residuals below. |
 
 ### SEC-14: what the Windows no-egress gate checks, and what it does not
 
