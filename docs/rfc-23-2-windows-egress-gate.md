@@ -556,15 +556,18 @@ The first armed run inside `release-desktop.yml`,
 [44760981065](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/44760981065) on c18b632,
 saw no egress but failed because the release exe was killed 10 s after its window was closed.
 Nothing in `electron/` had changed since run 43814441249. The runner image had (win25-vs2026
-20261103.298 to 20261116.315), and on it every armed quit was slow. From the window closing to the
-browser process exiting took 22.1 s (control) and 24.3 s (real-run) on the probe, against 0.1 to
-0.2 s in run 43814441249. Playwright waits for those two exits with no timeout, so they were the
-app's own quit finishing. The gate's own preamble also took 50 s against 3 s. The renderer exited
-20 ms after `CloseMainWindow`, so the close reached the right window. Why the image is slow under
-the armed state is **[inferred]** host-side and not explained. Unarmed on the same runner, the
-packaged probe's whole launch, sign and quit took 6.6 s.
+20261103.298 to 20261116.315), and on it every armed quit was slow. From the renderer's exit to the
+browser process's exit took 22.1 s (control) and 24.3 s (real-run) on the probe, against 0.09 to
+0.22 s in run 43814441249 (process audit events in each run's evidence). Playwright waits for those
+two exits with no timeout, so no kill cut them short. In window 3 the release root was gone 29.6 s
+after the close, 19.5 s after `taskkill /F`, so even a forced teardown was slow: **[inferred]** the
+slowness is the host's, not the app's own quit, and it is not explained. The gate step's preamble
+also took 50 s (job log: step start 15:20:05, gate start 15:20:55). The renderer exited first, at
+about the time the close was sent **[inferred]**: the run recorded no close timestamp, which window
+3 now records. Unarmed on the same runner, the packaged probe's whole launch, sign and quit took
+6.6 s.
 
-The budget is now `-QuitSeconds 60`, about 2.5 times the slowest natural quit seen. Window 3 now
+The budget is now `-QuitSeconds 60` (1 to 600), about 2 times the slowest exit seen. Window 3 now
 writes `releaseIdleQuit` to `verdict.json`: the return value of `CloseMainWindow`, the pid it
 closed, each tree process's time to exit, and whether and when a kill was needed. A kill still
 fails the gate.

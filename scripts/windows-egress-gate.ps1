@@ -35,9 +35,11 @@ param(
   # How long window 3 waits for the release exe to exit after its window is closed. Was 10 s. In run
   # 44760981065 (image win25-vs2026 20261116.315) every armed quit was slow, with no code change since
   # the passing run: the probe's quits, which Playwright waits for without a timeout, took 22.1 s and
-  # 24.3 s from the window closing to the browser process exiting, so 10 s killed a quit that was still
-  # going. 60 s is about 2.5 times the slowest natural quit seen. Each quit's timing goes in verdict.json.
-  [int]$QuitSeconds = 60,
+  # 24.3 s from the renderer's exit to the browser process's exit, and the killed release tree's root
+  # was gone only 29.6 s after the close (19.5 s after taskkill /F), so teardown itself was slow on that
+  # host. 60 s is about 2 times the slowest exit seen; a kill still fails the gate. Each quit's timing
+  # goes in verdict.json.
+  [ValidateRange(1, 600)][int]$QuitSeconds = 60,
   # DNS names (wildcards allowed) an in-tree process may look up without failing the gate. Empty by
   # default: every entry is a recorded residual and an owner decision, never a convenience.
   [string[]]$AllowDnsName = @(),
@@ -392,7 +394,7 @@ if ($SelfTest) {
   $q = Get-QuitReport -ClosedPid 8944 -CloseSent $true -Exits $exits -KilledAfter 10.0 -BudgetSeconds 10
   Check 'a killed quit fails and says which exits came after the kill' ($q.Problem -like 'release-idle: *did not quit within 10 s*had to be killed*' -and $q.Problem -match 'root pid 8944 exited at 29\.6 s, after the kill' -and $q.Problem -match 'child pid 8236 exited at 0\.0 s[,;]' -and $q.Problem -match 'kill needed at 10\.0 s')
   $q = Get-QuitReport -ClosedPid 8944 -CloseSent $false -Exits @([pscustomobject]@{ Pid = 8944; Root = $true; ExitedAfter = $null }) -KilledAfter 0.0 -BudgetSeconds 60
-  Check 'no main window to close fails as a quit never requested' ($q.Problem -like '*found no main window*never requested*' -and $q.Problem -match 'returned False' -and $q.Problem -match 'root pid 8944 still running')
+  Check 'no main window to close fails as a quit never requested' ($q.Problem -like '*found no main window*never requested*' -and $q.Problem -match 'returned False' -and $q.Problem -match 'root pid 8944 still running' -and $q.Problem -match 'kill needed at 0\.0 s')
 
   if ($failed) { throw "windows-egress-gate self-test: $failed check(s) failed" }
   Write-Host 'windows-egress-gate self-test: all checks passed'
@@ -574,6 +576,7 @@ try {
   $from = Get-Date
   $idleData = New-Item -ItemType Directory -Force (Join-Path ([IO.Path]::GetTempPath()) "pdfsigner-egress-idle-$PID")
   $env:PORTABLE_EXECUTABLE_DIR = $idleData.FullName
+  $p = $null
   try {
     $p = Start-Process $releaseExe -PassThru
     $null = $p.Handle
@@ -582,9 +585,14 @@ try {
     else {
       # The tree as it stands before the close, each with a handle held so its exit time can still be
       # read once it is gone: a failed quit then says which process held it up, and for how long.
-      $tree = @($p) + @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" | ForEach-Object {
-          try { $c = [Diagnostics.Process]::GetProcessById([int]$_.ProcessId); $null = $c.Handle; $c } catch { $null = $_ }
-        })
+      # Diagnostics only: if listing the children fails, measure the root alone rather than leave the
+      # exe running while the block rules come down.
+      $tree = @($p)
+      try {
+        $tree += @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" | ForEach-Object {
+            try { $c = [Diagnostics.Process]::GetProcessById([int]$_.ProcessId); $null = $c.Handle; $c } catch { $null = $_ }
+          })
+      } catch { Write-Host "[release-idle] could not list the tree before the close: $($_.Exception.Message)" }
       $closedAt = Get-Date
       $sent = $p.CloseMainWindow()
       $killedAfter = $null
@@ -606,6 +614,9 @@ try {
       if ($quit.Problem) { $problems.Add($quit.Problem) }
     }
   } finally {
+    # Never leave the release exe running past this window, whatever threw above: the block rules
+    # are removed during cleanup.
+    if ($p -and -not $p.HasExited) { taskkill /PID $p.Id /T /F 2>$null | Out-Null }
     Remove-Item Env:PORTABLE_EXECUTABLE_DIR -ErrorAction SilentlyContinue
     Remove-Item $idleData.FullName -Recurse -Force -ErrorAction SilentlyContinue
   }
