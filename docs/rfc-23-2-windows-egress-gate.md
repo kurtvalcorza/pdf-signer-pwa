@@ -1,6 +1,6 @@
 # RFC 23-2: Packet-level no-egress gate on Windows, scoped to the app's process tree
 
-Status: **accepted 2026-11-15; gate drafted and measured on the runner 2026-11-16, not yet merged**
+Status: **accepted 2026-11-15; gate merged 2026-11-16 (#38); §6 step 5's three dry runs passed 2026-11-21 (#46, [§10](#window-3s-quit-budget-2026-11-20))**
 (evidence in [§10](#10-runner-evidence-phase-0-2026-11-16); its one finding, F1, is fixed in
 `electron/main.js` by owner decision of 2026-11-16, [§8](#8-open-questions-for-kurt) question 3). Issue #23, item 2; it came from #12 and SEC-14
 ([audit.md](audit.md)). Owner decisions recorded in [§7](#7-owner-decisions): B1 (a), B2 (a),
@@ -405,9 +405,10 @@ today (`verify-packaged.mjs:37-43`).
    read, or the Security log read, from an unelevated session was **not tested**. The gate
    requires elevation anyway (audit policy and firewall rules), so this only matters if a
    reduced, unelevated variant is ever wanted, for example on a developer machine.
-5. **Open, minor.** The three-consecutive-dry-run bar of §6 step 5 is not met yet: two strict
-   passes exist (runs 43805710270 and 43806349805, both with the F1 fix applied on a throwaway
-   branch). The rest belong on `release-desktop.yml` dry runs of the branch that carries the fix.
+5. **Closed 2026-11-21.** The three-consecutive-dry-run bar of §6 step 5 is met: runs 44769989677,
+   44771478297 and 44772969024 of `release-desktop.yml` passed on the branch of #46 (see the end of
+   §10). Before that, two strict passes existed (runs 43805710270 and 43806349805, both with the F1
+   fix applied on a throwaway branch).
    The committed `electron/main.js` line passed the armed gate once, in run 43814441249, in a
    temporary workflow that invokes the gate as the release workflow does.
 
@@ -555,8 +556,9 @@ account, machine name, SID, DNS suffix or private address. The gate has still no
 The first armed run inside `release-desktop.yml`,
 [44760981065](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/44760981065) on c18b632,
 saw no egress but failed because the release exe was killed 10 s after its window was closed.
-Nothing in `electron/` had changed since run 43814441249. The runner image had (win25-vs2026
-20261103.298 to 20261116.315), and on it every armed quit was slow. From the renderer's exit to the
+Nothing in `electron/` had changed since run 43814441249. On that run's runner every armed quit was
+slow. (Its image was win25-vs2026 20261116.315, against 20261103.298 for run 43814441249, but the
+image is not the cause: see the dry runs below, on the same image.) From the renderer's exit to the
 browser process's exit took 22.1 s (control) and 24.3 s (real-run) on the probe, against 0.09 to
 0.22 s in run 43814441249 (process audit events in each run's evidence). Playwright waits for those
 two exits with no timeout, so no kill cut them short. In window 3 the release root was gone 29.6 s
@@ -571,6 +573,16 @@ The budget is now `-QuitSeconds 60` (1 to 600), about 2 times the slowest exit s
 writes `releaseIdleQuit` to `verdict.json`: the return value of `CloseMainWindow`, the pid it
 closed, each tree process's time to exit, and whether and when a kill was needed. A kill still
 fails the gate.
+
+The three consecutive `workflow_dispatch` dry runs of §6 step 5 then passed on the branch carrying
+that change (`9309282`, merged as #46):
+[44769989677](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/44769989677),
+[44771478297](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/44771478297) and
+[44772969024](https://github.com/kurtvalcorza/pdf-signer-pwa/actions/runs/44772969024), all on
+image win25-vs2026 20261116.315, the same as the failed run. Window 3's release root exited 0.1 s,
+0.1 s and 0.9 s after `CloseMainWindow` returned true, with no kill. So the 22–30 s quits of run
+44760981065 belong to that one runner, not to the image or the app; why is **[inferred]** host load
+and not explained. The 60 s budget stays as headroom for such a runner, and a kill still fails.
 
 ## Sources
 
