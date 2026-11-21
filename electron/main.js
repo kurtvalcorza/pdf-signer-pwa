@@ -30,7 +30,9 @@ app.commandLine.appendSwitch('no-proxy-server');
 // Headless (automation) runs only: a window that is never shown waits about a second for each
 // animation frame once it has drawn something, and pdf.js paints every page step on
 // requestAnimationFrame, so a hidden window renders a page ~10x slower and a slow CI runner times
-// out (issue #51; backgroundThrottling:false does not help). A shown window is unchanged.
+// out (issue #51; backgroundThrottling:false does not help). A shown window is unchanged. The
+// Windows egress gate's windows 1-2 drive the probe headless and so run with this switch; window 3
+// launches the shipped exe without PDFSIGNER_HEADLESS, so it still measures the shipped switch set.
 if (process.env.PDFSIGNER_HEADLESS) app.commandLine.appendSwitch('disable-frame-rate-limit');
 
 // --- Runs synchronously at load, before `ready` ---
