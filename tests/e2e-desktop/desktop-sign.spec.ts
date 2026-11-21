@@ -56,7 +56,10 @@ test('desktop: signs a PDF that pyHanko validates, and keeps state adjacent', as
       .setInputFiles(resolve(FIX, 'sample.pdf'));
     // The <canvas> is in the DOM, half-transparent, before pdf.js draws; aria-busy="false" is the
     // app's signal that the page is painted and the overlay/field outlines can appear (issue #51).
-    await page.locator('canvas[aria-busy="false"]').first().waitFor({ state: 'visible', timeout: 20_000 });
+    await page
+      .locator('canvas[aria-busy="false"]')
+      .first()
+      .waitFor({ state: 'visible', timeout: 20_000 });
 
     await page
       .locator('input[type="file"][accept="image/png,image/jpeg"]')
@@ -125,7 +128,10 @@ test('desktop: signs a certified PDF in its prepared field, classed as form fill
     await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(CERTIFIED_PDF);
     // The <canvas> is in the DOM, half-transparent, before pdf.js draws; aria-busy="false" is the
     // app's signal that the page is painted and the overlay/field outlines can appear (issue #51).
-    await page.locator('canvas[aria-busy="false"]').first().waitFor({ state: 'visible', timeout: 20_000 });
+    await page
+      .locator('canvas[aria-busy="false"]')
+      .first()
+      .waitFor({ state: 'visible', timeout: 20_000 });
 
     // The app says what kind of document this is and offers the prepared field, not picked.
     await expect(
