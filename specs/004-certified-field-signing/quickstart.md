@@ -74,3 +74,21 @@ Each run validates the file that distribution produced.
 
 Open the P=2 and P=3 fill outputs in Acrobat Reader. The certification and the new signature both
 show as valid. Record the Reader version and the result in `docs/audit.md` (SEC-02).
+
+Then, in order (T045, T040, T046):
+
+1. **T045.** Do the Acrobat check above and replace the SEC-02 placeholder in `docs/audit.md`
+   (_version and result not yet recorded_) with the Reader version and the result. Merge that.
+2. **Pick the commit.** Use the `main` head that includes step 1. `package.json` already says
+   `0.3.0`, and the release job refuses a tag that doesn't match it.
+3. **Tag it** (`v0.3.0`, pushed: an outward step, owner's yes). This runs `release-desktop.yml`:
+   desktop builds, the Windows egress gate, and the `android` job. The `android` job runs
+   `android-gate.mjs --certified-field` on the emulator for the first time (T040). If any gate
+   fails, `publish` is blocked and no release is made.
+4. **Check the release.** Its notes are `docs/desktop.md` followed by `docs/android.md`, so they
+   start with *What's new in v0.3.0*. Run `sha256sum -c SHA256SUMS` and the
+   `gh attestation verify` command from `docs/desktop.md`, with `--source-digest` set to the
+   tagged commit.
+5. **Web.** Confirm that Vercel's production deployment is the tagged commit.
+6. **Tick the tasks.** Mark T040 (with the run ID), T045 and T046 done in `tasks.md`, and update
+   the status line in `spec.md`. The audit's SEC-02 *Pending: Android* clause goes too.

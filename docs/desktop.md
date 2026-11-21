@@ -8,6 +8,28 @@ unit tests and pyHanko gate already validate.
 - **Windows**: `PDF.Signer.<version>.exe` — a portable single file, no installer, no registry.
 - **Linux**: `PDF.Signer-<version>.AppImage` — a single file; `chmod +x` then run.
 
+## What's new in v0.3.0
+
+The web app, the desktop builds and the Android app all get these changes, from the same commit.
+
+- **Some certified PDFs can be signed again.** If the author certified the PDF to allow form
+  filling and prepared an empty signature field, the app signs into that field and the
+  certification stays valid. It never adds a field of its own to a certified PDF. Everything else
+  that is certified is still refused, and the app says why when you open the file. The README's
+  *Sign a certified PDF* section lists what can and can't be signed.
+- **Clearer certificate errors.** A `.p12` that holds an ECDSA certificate, or an RSA ID issued by
+  an ECDSA authority, is refused with a message that names the ECDSA certificate. It used to fail
+  with an unrelated error.
+- **Windows: no more `wpad` lookup.** The app now starts with proxy autodiscovery off, so it no
+  longer sends a DNS query when it launches.
+- **Windows: a stricter no-network check before release.** The release build has to pass a gate
+  that watches the app's connections as they're attempted, not just samples them. What it covers
+  is in `docs/audit.md` (SEC-14).
+- **No debugger can attach to the release binary.** The inspector fuse is now off in published
+  builds (see *Hardening* below).
+
+Issue #23 records this work.
+
 ## Security fixes since v0.1.1 (do not use v0.1.0)
 
 **Stop using v0.1.0 and download v0.1.1 or later.** v0.1.0 ships node-forge 1.4.0, which accepts a crafted
@@ -17,7 +39,8 @@ What changes for you:
 
 - **Certified PDFs can no longer be signed.** v0.1.0 let you counter-sign some of them and said earlier
   signatures stayed valid, but the certification would actually break. The app now explains this when
-  you open the file. PDFs signed without certification still work.
+  you open the file. PDFs signed without certification still work. (v0.3.0 narrows this; see
+  above.)
 - **Renderer sandbox on**, Electron updated to 43.8.7, and fuses burned into the binary.
 - **A remembered certificate follows your choices.** Picking another certificate no longer inherits
   the opt-in, and a failed Forget tells you so.
@@ -75,7 +98,7 @@ None of these are your documents, certificates, or signatures.
 
 This build **does not update itself**. These builds **never contact a network**. One exception was found in issue #23: on Windows, builds up to v0.2.0 are expected to send a
 `wpad` proxy-autodiscovery lookup to your DNS server at launch (inferred from the code; not
-measured on those binaries). From the next release the app starts with `no-proxy-server` and
+measured on those binaries). From v0.3.0 the app starts with `no-proxy-server` and
 does not make it. There is no update
 feed to misconfigure — the guarantee is the *absence* of one. A build past ~180 days shows a passive,
 offline notice that its bundled browser engine is ageing and a newer build should be fetched
