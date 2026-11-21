@@ -32,7 +32,7 @@ test('counter-signing an already-signed PDF preserves the earlier signature (no 
 
   // First person signs the document.
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   const firstDownload = await signWithCert(page);
   const signed1Path = testInfo.outputPath('signed-1.pdf');
   await firstDownload.saveAs(signed1Path);
@@ -42,7 +42,7 @@ test('counter-signing an already-signed PDF preserves the earlier signature (no 
   // Re-open that signed PDF: the app must detect it and warn honestly about invalidation,
   // pointing to the certificate path as the non-invalidating option.
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(signed1Path);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/already signed/)).toBeVisible();
   await expect(page.getByText(/without altering the signed pages/)).toBeVisible();
 

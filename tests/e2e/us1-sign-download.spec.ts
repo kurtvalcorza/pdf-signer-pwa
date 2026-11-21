@@ -30,8 +30,8 @@ test('US1: open a PDF, place a signature, sign & download — on-device, no exte
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
 
   // The page renders to a canvas.
-  const canvas = page.locator('canvas');
-  await expect(canvas).toBeVisible({ timeout: 15_000 });
+  const canvas = page.locator('canvas[aria-busy="false"]'); // the painted page, not the empty canvas
+  await expect(canvas).toBeVisible({ timeout: 20_000 });
 
   // SC-006: the document dominates the viewport (majority of width on mobile).
   const box = await canvas.boundingBox();

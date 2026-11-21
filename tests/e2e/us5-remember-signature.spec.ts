@@ -20,7 +20,7 @@ test('US: opt-in remember signature persists across a reload and can be reused, 
 
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
 
   // Add a signature; the remember checkbox appears only once one is selected.
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
@@ -39,7 +39,7 @@ test('US: opt-in remember signature persists across a reload and can be reused, 
   // Persisted across a full reload (fresh session, no in-memory state).
   await page.reload();
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
 
   // The saved signature can be placed without re-uploading.
   await expect(useSaved).toBeVisible();
@@ -58,7 +58,7 @@ test('cleaning the background of a remembered signature drops the stale saved co
 }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
