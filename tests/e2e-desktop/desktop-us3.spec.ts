@@ -104,7 +104,9 @@ test('FR-011b: read-only media disables opt-in persistence and tells the user', 
     await expect(page.locator('#desktop-readonly-notice')).toBeVisible({ timeout: 10_000 });
     // …and the signature "remember" affordance is not offered.
     await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(resolve(ROOT, 'tests/e2e/fixtures/sample.pdf'));
-    await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 20_000 });
+    // The <canvas> is in the DOM, half-transparent, before pdf.js draws; aria-busy="false" is the
+    // app's signal that the page is painted and the overlay/field outlines can appear (issue #51).
+    await page.locator('canvas[aria-busy="false"]').first().waitFor({ state: 'visible', timeout: 20_000 });
     await page
       .locator('input[type="file"][accept="image/png,image/jpeg"]')
       .setInputFiles(resolve(ROOT, 'tests/e2e/fixtures/signature.png'));

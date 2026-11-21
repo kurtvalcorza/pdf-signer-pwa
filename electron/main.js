@@ -27,6 +27,13 @@ app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-breakpad'); // no crash-dump uploader armed at all
 // No proxy autodiscovery: without this Chromium looks up `wpad` in DNS on every launch (issue #23, RFC 23-2 F1).
 app.commandLine.appendSwitch('no-proxy-server');
+// Headless (automation) runs only: a window that is never shown waits about a second for each
+// animation frame once it has drawn something, and pdf.js paints every page step on
+// requestAnimationFrame, so a hidden window renders a page ~10x slower and a slow CI runner times
+// out (issue #51; backgroundThrottling:false does not help). A shown window is unchanged. The
+// Windows egress gate's windows 1-2 drive the probe headless and so run with this switch; window 3
+// launches the shipped exe without PDFSIGNER_HEADLESS, so it still measures the shipped switch set.
+if (process.env.PDFSIGNER_HEADLESS) app.commandLine.appendSwitch('disable-frame-rate-limit');
 
 // --- Runs synchronously at load, before `ready` ---
 registerAppScheme();
