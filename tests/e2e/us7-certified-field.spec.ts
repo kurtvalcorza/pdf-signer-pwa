@@ -26,7 +26,7 @@ test('a certified PDF is signed in the field its author prepared, and nowhere el
 }, testInfo) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(CERTIFIED_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
 
   // The app says what kind of document this is and offers the prepared field, not picked.
   await expect(
@@ -136,7 +136,7 @@ async function signInField(
 ): Promise<void> {
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(pdfPath);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   await expect(
     page.getByText(
       'This PDF is certified. It can only be signed in one of the signature fields its author prepared.',
@@ -196,7 +196,7 @@ test('the second signer of a certified PDF signs the field the first one left', 
   // Opened once more, nothing is left to sign.
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(secondPath);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('signing-refusal')).toHaveText(
     'This PDF is certified and has no empty signature field to sign. Ask the sender for a ' +
       'version that includes a signature field for you.',
@@ -311,7 +311,7 @@ test('an uncertified, approval-signed PDF still offers free placement (D7)', asy
   await page
     .locator('input[type="file"][accept=".pdf"]')
     .setInputFiles(resolve(POLICY, 'approval.pdf'));
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('signing-refusal')).toHaveCount(0);
   await expect(page.getByTestId('field-list')).toHaveCount(0);
 
@@ -342,7 +342,7 @@ test("a field's JavaScript actions do not run when the page is shown", async ({ 
   await page
     .locator('input[type="file"][accept=".pdf"]')
     .setInputFiles(resolve(POLICY, 'certified-p2-empty-field-aa-javascript.pdf'));
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   const outline = page.getByTestId('field-outline');
   await expect(outline).toHaveCount(1);
   // Enter the field's box, which is what its /E action is bound to in a scripting viewer.

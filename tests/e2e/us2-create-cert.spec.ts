@@ -9,7 +9,7 @@ const SIGNATURE_PNG = resolve(HERE, 'fixtures/signature.png');
 test('US2: create a certificate in-app, then sign with it', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 

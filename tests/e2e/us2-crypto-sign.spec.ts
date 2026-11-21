@@ -20,7 +20,7 @@ test('US2: sign a placed signature with a .p12 and download a signed PDF', async
 
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
 
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
@@ -52,7 +52,7 @@ test('US2: a wrong certificate password shows an error and produces no download'
 }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(SAMPLE_PDF);
-  await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('canvas[aria-busy="false"]')).toBeVisible({ timeout: 20_000 });
   await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles(SIGNATURE_PNG);
   await expect(page.locator('img[alt="signature"]')).toBeVisible({ timeout: 10_000 });
 
