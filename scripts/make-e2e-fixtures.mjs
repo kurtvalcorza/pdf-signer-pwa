@@ -10,7 +10,17 @@ export const E2E_CERT_PASSWORD = 'e2e-pass';
 const DIR = resolve('tests/e2e/fixtures');
 mkdirSync(DIR, { recursive: true });
 
+// pdf-lib stamps CreationDate/ModDate with the current time, which changed the
+// committed PDFs' bytes on every E2E run (#54). Pin both so the output is
+// byte-identical and a run leaves `git status` clean.
+const FIXED_DATE = new Date('2026-01-01T00:00:00Z');
+const pinDates = (pdf) => {
+  pdf.setCreationDate(FIXED_DATE);
+  pdf.setModificationDate(FIXED_DATE);
+};
+
 const doc = await PDFDocument.create();
+pinDates(doc);
 const font = await doc.embedFont(StandardFonts.Helvetica);
 for (let i = 1; i <= 2; i++) {
   const page = doc.addPage([595, 842]); // A4
@@ -22,6 +32,7 @@ writeFileSync(resolve(DIR, 'sample.pdf'), await doc.save());
 
 // A large document for the performance benchmark (T050).
 const big = await PDFDocument.create();
+pinDates(big);
 const bigFont = await big.embedFont(StandardFonts.Helvetica);
 for (let i = 1; i <= 60; i++) {
   const page = big.addPage([595, 842]);
