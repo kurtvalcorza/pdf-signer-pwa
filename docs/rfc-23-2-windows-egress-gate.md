@@ -532,8 +532,8 @@ account, machine name, SID, DNS suffix or private address. The gate has still no
 
 - A window fails if any tree member has no exit event, or if a package image is still running
   when the window is read. A process `Win32_Process` reports with no `ExecutablePath`, as one
-  being torn down can be, still counts as running when its pid and creation time match a tree
-  member with no exit event yet (issue #48). A release exe that has to be killed fails the gate. The control
+  being torn down can be, still counts as running when its pid matches a package-image tree member
+  with no exit event yet and it was created no later than 1 s after that member's 4688 (issue #48). A release exe that has to be killed fails the gate. The control
   driver reports a failed `app.close()` instead of swallowing it.
 - Windows are read with no upper time bound, and window 3 is read a second time just before the
   rules are removed, after confirming that no package process is left.

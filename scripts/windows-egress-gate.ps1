@@ -218,19 +218,23 @@ function Test-EgressControls {
 
 # Processes whose image lies under a package directory. Pure: the caller supplies the process list.
 # Win32_Process can report a null ExecutablePath for a process that is being torn down (issue #48), so
-# a process with no path still counts when it is a tree member with no exit event yet: same pid, and a
-# CreationDate within a second of the member's 4688, so an unrelated process that reused the pid is not
-# counted. Members are Get-EgressVerdict members (Pid, Start, End).
+# a process with no path still counts when it is a package-image tree member with no exit event yet:
+# same pid, and created no later than a second after the member's 4688. A process created earlier
+# with that pid and still alive can only be the member itself (a 4688 can be logged late on a slow
+# host); one that reused the pid after the member exited was created later and is not counted.
+# Members are Get-EgressVerdict members (Pid, Image, Start, End); only those whose image lies under a
+# package directory qualify, as a process with a path is judged by its image.
 function Get-RunningPackageProcesses {
   param([object[]]$Processes = @(), [string[]]$PackageDirs, [object[]]$Members = @())
   $dirTails = @($PackageDirs | ForEach-Object { (Get-PathTail $_).TrimEnd('\') + '\' })
-  $open = @($Members | Where-Object { -not $_.End })
+  $inPackage = { param($path) $t = Get-PathTail $path; [bool]($dirTails | Where-Object { $t.StartsWith($_) }) }
+  $open = @($Members | Where-Object { -not $_.End -and $_.Image -and (& $inPackage $_.Image) })
   @($Processes | Where-Object {
-      if ($_.ExecutablePath) { $t = Get-PathTail $_.ExecutablePath; [bool]($dirTails | Where-Object { $t.StartsWith($_) }) }
+      if ($_.ExecutablePath) { & $inPackage $_.ExecutablePath }
       elseif ($_.CreationDate) {
         $created = ([datetimeoffset]$_.CreationDate).UtcDateTime
         $procId = $_.ProcessId
-        [bool]($open | Where-Object { $_.Pid -eq $procId -and [Math]::Abs(($created - ([datetimeoffset]$_.Start).UtcDateTime).TotalSeconds) -le 1 })
+        [bool]($open | Where-Object { $_.Pid -eq $procId -and ($created - ([datetimeoffset]$_.Start).UtcDateTime).TotalSeconds -le 1 })
       } else { $false }
     })
 }
@@ -394,6 +398,18 @@ if ($SelfTest) {
   Check 'a pathless process on the pid of a member that already exited is not counted' (@(Get-RunningPackageProcesses -Processes @($tearing[0]) -PackageDirs $dirs -Members $exited).Count -eq 0)
   $undated = @([pscustomobject]@{ ProcessId = 100; ExecutablePath = $null; CreationDate = $null })
   Check 'a pathless process with no creation date is not counted (the RequireExit read still catches a member)' (@(Get-RunningPackageProcesses -Processes $undated -PackageDirs $dirs -Members $open).Count -eq 0)
+  # The bound is one-sided (review R48-1, R48-2): created up to 1 s after the 4688 counts, 1.5 s after
+  # does not; created 1.5 s before it (a 4688 logged late) still counts. Offsets other than UTC agree.
+  $pathless = { param($when) @([pscustomobject]@{ ProcessId = 100; ExecutablePath = $null; CreationDate = $when }) }
+  $count = { param($when) @(Get-RunningPackageProcesses -Processes (& $pathless $when) -PackageDirs $dirs -Members $open).Count }
+  Check 'a pathless member created 1.5 s after its 4688 is taken for a reused pid' ((& $count (& $at '02.5')) -eq 0)
+  Check 'a pathless member created 1.5 s before its 4688 (logged late) still counts' ((& $count ([datetimeoffset]'2025-12-31T23:59:59.5Z').LocalDateTime) -eq 1)
+  Check 'a creation date with a +08:00 offset is compared in UTC' ((& $count ([datetimeoffset]'2026-01-01T08:00:01.2+08:00')) -eq 1)
+  # Only package-image members qualify (review R48-3): a pathless pid of an allowed helper such as
+  # conhost.exe is not a package process.
+  $helper = @((Get-EgressVerdict -Sec @($sec[0], (& $ev 4688 1 @{ NewProcessId = '0xc8'; ProcessId = '0x64'; NewProcessName = 'C:\Windows\System32\conhost.exe' })) -PackageDirs $dirs -AllowImage 'conhost.exe').Members)
+  $helperProc = @([pscustomobject]@{ ProcessId = 200; ExecutablePath = $null; CreationDate = (& $at '01.2') })
+  Check 'a pathless pid of a helper outside the package is not counted' ($helper.Count -eq 2 -and @(Get-RunningPackageProcesses -Processes $helperProc -PackageDirs $dirs -Members $helper).Count -eq 0)
   $report = $fx.control.report | ConvertTo-Json -Depth 8 | ConvertFrom-Json
   $v = Get-EgressVerdict -Sec $fx.control.sec -Dns $fx.control.dns -PackageDirs $dirs -AllowImage 'cmd.exe', 'conhost.exe' -RequireExit
   Check 'recorded controls hold with the attempt count checked' (@(Test-EgressControls $v $report -Repeat 20).Count -eq 0)
