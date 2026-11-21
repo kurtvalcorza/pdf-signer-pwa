@@ -87,7 +87,8 @@ try {
   }
 
   await page.locator('input[type="file"][accept=".pdf"]').setInputFiles(resolve(FIX, 'sample.pdf'));
-  await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 25_000 });
+  // Wait for the page to be painted (aria-busy="false"), not for the bare <canvas> (issue #51).
+  await page.locator('canvas[aria-busy="false"]').first().waitFor({ state: 'visible', timeout: 25_000 });
   await page
     .locator('input[type="file"][accept="image/png,image/jpeg"]')
     .setInputFiles(resolve(FIX, 'signature.png'));
