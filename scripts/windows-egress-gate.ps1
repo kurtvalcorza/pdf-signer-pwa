@@ -217,10 +217,26 @@ function Test-EgressControls {
 }
 
 # Processes whose image lies under a package directory. Pure: the caller supplies the process list.
+# Win32_Process can report a null ExecutablePath for a process that is being torn down (issue #48), so
+# a process with no path still counts when it is a package-image tree member with no exit event yet:
+# same pid, and created no later than a second after the member's 4688. A process created earlier
+# with that pid and still alive can only be the member itself (a 4688 can be logged late on a slow
+# host); one that reused the pid after the member exited was created later and is not counted.
+# Members are Get-EgressVerdict members (Pid, Image, Start, End); only those whose image lies under a
+# package directory qualify, as a process with a path is judged by its image.
 function Get-RunningPackageProcesses {
-  param([object[]]$Processes = @(), [string[]]$PackageDirs)
+  param([object[]]$Processes = @(), [string[]]$PackageDirs, [object[]]$Members = @())
   $dirTails = @($PackageDirs | ForEach-Object { (Get-PathTail $_).TrimEnd('\') + '\' })
-  @($Processes | Where-Object { $_.ExecutablePath -and ($t = Get-PathTail $_.ExecutablePath) -and ($dirTails | Where-Object { $t.StartsWith($_) }) })
+  $inPackage = { param($path) $t = Get-PathTail $path; [bool]($dirTails | Where-Object { $t.StartsWith($_) }) }
+  $open = @($Members | Where-Object { -not $_.End -and $_.Image -and (& $inPackage $_.Image) })
+  @($Processes | Where-Object {
+      if ($_.ExecutablePath) { & $inPackage $_.ExecutablePath }
+      elseif ($_.CreationDate) {
+        $created = ([datetimeoffset]$_.CreationDate).UtcDateTime
+        $procId = $_.ProcessId
+        [bool]($open | Where-Object { $_.Pid -eq $procId -and ($created - ([datetimeoffset]$_.Start).UtcDateTime).TotalSeconds -le 1 })
+      } else { $false }
+    })
 }
 
 # The four audit subcategories must be set to success AND failure (value 3 in an `auditpol /backup`
@@ -365,6 +381,35 @@ if ($SelfTest) {
   )
   $left = @(Get-RunningPackageProcesses -Processes $running -PackageDirs $dirs)
   Check 'a package image still running is found; other processes are not' ($left.Count -eq 1 -and $left[0].ProcessId -eq 11)
+  # Issue #48: a tree member being torn down can have no ExecutablePath. CreationDate is local time,
+  # as Get-CimInstance returns it; member pid 100 started at 00:00:01 ($sec[0]).
+  $at = { param($s) ([datetimeoffset]"2026-01-01T00:00:$s`Z").LocalDateTime }
+  $open = @((Get-EgressVerdict -Sec @($sec[0]) -PackageDirs $dirs).Members)
+  $exited = @((Get-EgressVerdict -Sec @($sec[0], $sec[5]) -PackageDirs $dirs).Members)
+  $tearing = @(
+    [pscustomobject]@{ ProcessId = 100; ExecutablePath = $null; CreationDate = (& $at '01.2') },
+    [pscustomobject]@{ ProcessId = 13; ExecutablePath = $null; CreationDate = (& $at '01.2') },
+    [pscustomobject]@{ ProcessId = 12; ExecutablePath = 'C:\Windows\System32\svchost.exe'; CreationDate = (& $at '01.2') }
+  )
+  $left = @(Get-RunningPackageProcesses -Processes $tearing -PackageDirs $dirs -Members $open)
+  Check 'a tree member with no ExecutablePath is still running; an unrelated pid with none is not' ($left.Count -eq 1 -and $left[0].ProcessId -eq 100)
+  $reused = @([pscustomobject]@{ ProcessId = 100; ExecutablePath = $null; CreationDate = (& $at '04.0') })
+  Check 'a pathless process that reused a tree pid later is not counted' (@(Get-RunningPackageProcesses -Processes $reused -PackageDirs $dirs -Members $open).Count -eq 0)
+  Check 'a pathless process on the pid of a member that already exited is not counted' (@(Get-RunningPackageProcesses -Processes @($tearing[0]) -PackageDirs $dirs -Members $exited).Count -eq 0)
+  $undated = @([pscustomobject]@{ ProcessId = 100; ExecutablePath = $null; CreationDate = $null })
+  Check 'a pathless process with no creation date is not counted (the RequireExit read still catches a member)' (@(Get-RunningPackageProcesses -Processes $undated -PackageDirs $dirs -Members $open).Count -eq 0)
+  # The bound is one-sided (review R48-1, R48-2): created up to 1 s after the 4688 counts, 1.5 s after
+  # does not; created 1.5 s before it (a 4688 logged late) still counts. Offsets other than UTC agree.
+  $pathless = { param($when) @([pscustomobject]@{ ProcessId = 100; ExecutablePath = $null; CreationDate = $when }) }
+  $count = { param($when) @(Get-RunningPackageProcesses -Processes (& $pathless $when) -PackageDirs $dirs -Members $open).Count }
+  Check 'a pathless member created 1.5 s after its 4688 is taken for a reused pid' ((& $count (& $at '02.5')) -eq 0)
+  Check 'a pathless member created 1.5 s before its 4688 (logged late) still counts' ((& $count ([datetimeoffset]'2025-12-31T23:59:59.5Z').LocalDateTime) -eq 1)
+  Check 'a creation date with a +08:00 offset is compared in UTC' ((& $count ([datetimeoffset]'2026-01-01T08:00:01.2+08:00')) -eq 1)
+  # Only package-image members qualify (review R48-3): a pathless pid of an allowed helper such as
+  # conhost.exe is not a package process.
+  $helper = @((Get-EgressVerdict -Sec @($sec[0], (& $ev 4688 1 @{ NewProcessId = '0xc8'; ProcessId = '0x64'; NewProcessName = 'C:\Windows\System32\conhost.exe' })) -PackageDirs $dirs -AllowImage 'conhost.exe').Members)
+  $helperProc = @([pscustomobject]@{ ProcessId = 200; ExecutablePath = $null; CreationDate = (& $at '01.2') })
+  Check 'a pathless pid of a helper outside the package is not counted' ($helper.Count -eq 2 -and @(Get-RunningPackageProcesses -Processes $helperProc -PackageDirs $dirs -Members $helper).Count -eq 0)
   $report = $fx.control.report | ConvertTo-Json -Depth 8 | ConvertFrom-Json
   $v = Get-EgressVerdict -Sec $fx.control.sec -Dns $fx.control.dns -PackageDirs $dirs -AllowImage 'cmd.exe', 'conhost.exe' -RequireExit
   Check 'recorded controls hold with the attempt count checked' (@(Test-EgressControls $v $report -Repeat 20).Count -eq 0)
@@ -456,8 +501,11 @@ function Read-Events([string]$Log, [int[]]$Ids, [datetime]$From) {
     [pscustomobject]$row
   }
 }
-function Get-PackageProcesses {
-  Get-RunningPackageProcesses -Processes @(Get-CimInstance Win32_Process | Select-Object ProcessId, ExecutablePath) -PackageDirs $packageDirs
+# The window's tree is read from the Security log first, so a member Win32_Process reports without a
+# path is still found (see Get-RunningPackageProcesses).
+function Get-PackageProcesses([datetime]$From) {
+  $tree = (Get-EgressVerdict -Sec @(Read-Events 'Security' (4688, 4689) $From) -PackageDirs $packageDirs -AllowImage $AllowImage).Members
+  Get-RunningPackageProcesses -Processes @(Get-CimInstance Win32_Process | Select-Object ProcessId, ExecutablePath, CreationDate) -PackageDirs $packageDirs -Members @($tree)
 }
 # Pid 4 is the SMB redirector. WebClient (WebDAV) is trigger-started, so its pid is read again for
 # every window rather than once at arm time.
@@ -476,7 +524,7 @@ $state = @{ webClientPids = [Collections.Generic.HashSet[int]]::new() }
 # a clean result would mean nothing. Every app process must be gone when the window is read.
 function Get-WindowVerdict([string]$Name, [datetime]$From) {
   Start-Sleep -Seconds 3 # let the last events reach the logs
-  $alive = @(Get-PackageProcesses)
+  $alive = @(Get-PackageProcesses $From)
   if ($alive) {
     $script:problems.Add("${Name}: $($alive.Count) package process(es) still running when the window closed (pid $($alive.ProcessId -join ', ')); what they do next would be in no window.")
     $alive | ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null | Out-Null }
@@ -626,7 +674,7 @@ try {
   # The block rules are about to go. Confirm nothing of the app is left to use the network once they
   # do, check the instruments stayed on, and read window 3 once more so its final second is covered.
   Start-Sleep -Seconds 1
-  $left = @(Get-PackageProcesses)
+  $left = @(Get-PackageProcesses $state.armed)
   if ($left) { $problems.Add("before disarm: $($left.Count) package process(es) still running (pid $($left.ProcessId -join ', ')); refusing to call the run clean.") }
   Assert-StillArmed 'before disarm'
   Assert-Clean 'release-idle' (Get-WindowVerdict 'release-idle' $from)
